@@ -1,15 +1,13 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
-import { randomBytes } from "node:crypto";
-import { db } from "../db/index.js";
+import { eq } from "drizzle-orm";
+import { getDb } from "../db/index.js";
 import { shares, playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
-import { limits, isLimited } from "../lib/limits.js";
+import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
 
-// Create a share link
 sharesRouter.post("/", requireAuth, async (c) => {
   const { playlistId, permission, email } = await c.req.json();
   const userId = c.get("user").id;
@@ -21,7 +19,8 @@ sharesRouter.post("/", requireAuth, async (c) => {
     return c.json({ error: "permission must be 'listen' or 'edit'" }, 400);
   }
 
-  // verify playlist ownership
+  const db = getDb(c.env.DATABASE_URL);
+
   const [playlist] = await db
     .select()
     .from(playlists)
@@ -32,7 +31,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  // check collaborator limit (only enforced on hosted version)
+  const limits = getLimits(c.env);
   if (isLimited(limits.maxCollaborators)) {
     const existing = await db
       .select()
@@ -47,7 +46,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
     }
   }
 
-  const token = randomBytes(16).toString("hex");
+  const token = crypto.randomUUID().replace(/-/g, "");
   const [share] = await db
     .insert(shares)
     .values({
@@ -61,10 +60,10 @@ sharesRouter.post("/", requireAuth, async (c) => {
   return c.json({ share }, 201);
 });
 
-// List shares for a playlist
 sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
   const playlistId = c.req.param("playlistId");
   const userId = c.get("user").id;
+  const db = getDb(c.env.DATABASE_URL);
 
   const [playlist] = await db
     .select()
@@ -84,10 +83,10 @@ sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
   return c.json({ shares: result });
 });
 
-// Revoke a share
 sharesRouter.delete("/:id", requireAuth, async (c) => {
   const shareId = c.req.param("id");
   const userId = c.get("user").id;
+  const db = getDb(c.env.DATABASE_URL);
 
   const [share] = await db
     .select()
@@ -97,7 +96,6 @@ sharesRouter.delete("/:id", requireAuth, async (c) => {
 
   if (!share) return c.json({ error: "not found" }, 404);
 
-  // verify ownership through playlist
   const [playlist] = await db
     .select()
     .from(playlists)
@@ -112,9 +110,9 @@ sharesRouter.delete("/:id", requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-// Resolve an invite token — public, no auth required
 sharesRouter.get("/invite/:token", async (c) => {
   const token = c.req.param("token");
+  const db = getDb(c.env.DATABASE_URL);
 
   const [share] = await db
     .select()

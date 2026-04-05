@@ -13,22 +13,7 @@ export default function Upload({ playlistId, onUpload }: Props) {
     if (!files) return;
 
     for (const file of Array.from(files)) {
-      // get presigned URL
-      const { uploadUrl, track } = await tracksApi.getUploadUrl(
-        playlistId,
-        file.name,
-        file.type || "audio/mpeg"
-      );
-
-      // upload directly to S3
-      await fetch(uploadUrl, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type || "audio/mpeg" },
-      });
-
-      // confirm and trigger processing
-      await tracksApi.confirm(track.id);
+      await tracksApi.upload(playlistId, file);
     }
 
     onUpload();

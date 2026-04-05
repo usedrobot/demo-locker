@@ -1,15 +1,15 @@
 import { Hono } from "hono";
 import { eq, asc } from "drizzle-orm";
-import { db } from "../db/index.js";
+import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
-import { limits, isLimited } from "../lib/limits.js";
+import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
 const playlistsRouter = new Hono<Env>();
 
-// List user's playlists
 playlistsRouter.get("/", requireAuth, async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
   const userId = c.get("user").id;
   const result = await db
     .select()
@@ -20,14 +20,14 @@ playlistsRouter.get("/", requireAuth, async (c) => {
   return c.json({ playlists: result });
 });
 
-// Create playlist
 playlistsRouter.post("/", requireAuth, async (c) => {
   const { name } = await c.req.json();
   if (!name) return c.json({ error: "name required" }, 400);
 
+  const db = getDb(c.env.DATABASE_URL);
   const userId = c.get("user").id;
+  const limits = getLimits(c.env);
 
-  // check playlist limit
   if (isLimited(limits.maxPlaylists)) {
     const existing = await db
       .select({ id: playlists.id })
@@ -49,8 +49,8 @@ playlistsRouter.post("/", requireAuth, async (c) => {
   return c.json({ playlist }, 201);
 });
 
-// Get playlist with tracks
 playlistsRouter.get("/:id", async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
 
   const [playlist] = await db
@@ -70,8 +70,8 @@ playlistsRouter.get("/:id", async (c) => {
   return c.json({ playlist, tracks: trackList });
 });
 
-// Update playlist
 playlistsRouter.patch("/:id", requireAuth, async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
   const userId = c.get("user").id;
   const body = await c.req.json();
@@ -99,8 +99,8 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   return c.json({ playlist: updated });
 });
 
-// Delete playlist
 playlistsRouter.delete("/:id", requireAuth, async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
   const userId = c.get("user").id;
 
@@ -118,8 +118,8 @@ playlistsRouter.delete("/:id", requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-// Reorder tracks in a playlist
 playlistsRouter.patch("/:id/reorder", requireAuth, async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
   const userId = c.get("user").id;
   const { trackIds } = await c.req.json();
@@ -138,7 +138,6 @@ playlistsRouter.patch("/:id/reorder", requireAuth, async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  // update each track's position
   for (let i = 0; i < trackIds.length; i++) {
     await db
       .update(tracks)

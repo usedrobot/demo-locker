@@ -10,7 +10,7 @@ RUN npm install
 FROM base AS api
 COPY packages/api packages/api
 WORKDIR /app/packages/api
-CMD ["npx", "tsx", "src/index.ts"]
+CMD ["npx", "tsx", "src/server.ts"]
 
 # --- Web build ---
 FROM base AS web-build

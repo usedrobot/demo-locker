@@ -95,15 +95,26 @@ export const playlists = {
 
 // Tracks
 export const tracks = {
-  getUploadUrl: (playlistId: string, filename: string, contentType: string) =>
-    request<{ uploadUrl: string; track: Track }>("/tracks/upload-url", {
+  upload: async (playlistId: string, file: File): Promise<{ track: Track }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("playlistId", playlistId);
+
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_URL}/tracks/upload`, {
       method: "POST",
-      body: JSON.stringify({ playlistId, filename, contentType }),
-    }),
-  confirm: (id: string) =>
-    request(`/tracks/${id}/confirm`, { method: "POST" }),
-  streamUrl: (id: string) =>
-    request<{ url: string }>(`/tracks/${id}/stream`),
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `upload failed: ${res.status}`);
+    }
+    return res.json();
+  },
+  streamUrl: (id: string) => `${API_URL}/tracks/${id}/stream`,
 };
 
 // Comments

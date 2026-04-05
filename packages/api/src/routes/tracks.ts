@@ -1,25 +1,24 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
-import { randomBytes } from "node:crypto";
-import { db } from "../db/index.js";
+import { getDb } from "../db/index.js";
 import { tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
-import { getUploadUrl, getDownloadUrl, getObjectStream, putObject } from "../lib/storage.js";
-import { transcodeToAAC, generateWaveform } from "../lib/transcode.js";
 import type { Env } from "../types.js";
 
 const tracksRouter = new Hono<Env>();
 
-// TODO: storage limit enforcement — need to track file sizes in the tracks table
-// and sum per-user to enforce MAX_STORAGE_BYTES (only on hosted version)
+// Upload a track — receives the file directly, stores in R2
+tracksRouter.post("/upload", requireAuth, async (c) => {
+  const formData = await c.req.formData();
+  const file = formData.get("file") as File | null;
+  const playlistId = formData.get("playlistId") as string | null;
 
-// Get a presigned upload URL
-tracksRouter.post("/upload-url", requireAuth, async (c) => {
-  const { playlistId, filename, contentType } = await c.req.json();
-
-  if (!playlistId || !filename || !contentType) {
-    return c.json({ error: "playlistId, filename, and contentType required" }, 400);
+  if (!file || !playlistId) {
+    return c.json({ error: "file and playlistId required" }, 400);
   }
+
+  const db = getDb(c.env.DATABASE_URL);
+  const bucket = c.env.DEMOS_BUCKET;
 
   // verify playlist ownership
   const [playlist] = await db
@@ -32,9 +31,6 @@ tracksRouter.post("/upload-url", requireAuth, async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  const key = `originals/${playlistId}/${randomBytes(8).toString("hex")}/${filename}`;
-  const url = await getUploadUrl(key, contentType);
-
   // get next position
   const existing = await db
     .select({ position: tracks.position })
@@ -46,54 +42,33 @@ tracksRouter.post("/upload-url", requireAuth, async (c) => {
     ? existing[existing.length - 1].position + 1
     : 0;
 
-  // create track record (pending processing)
+  const key = `${playlistId}/${crypto.randomUUID()}/${file.name}`;
+
+  // store original in R2
+  await bucket.put(key, file.stream(), {
+    httpMetadata: { contentType: file.type || "audio/mpeg" },
+  });
+
+  // create track — no transcoding for now, serve original
+  const title = file.name.replace(/\.[^.]+$/, "");
   const [track] = await db
     .insert(tracks)
     .values({
       playlistId,
-      title: filename.replace(/\.[^.]+$/, ""),
+      title,
       position,
       originalKey: key,
+      streamKey: key, // serve original directly until transcoding is added
     })
     .returning();
 
-  return c.json({ uploadUrl: url, track });
+  return c.json({ track }, 201);
 });
 
-// Confirm upload and trigger processing
-tracksRouter.post("/:id/confirm", requireAuth, async (c) => {
-  const trackId = c.req.param("id");
-
-  const [track] = await db
-    .select()
-    .from(tracks)
-    .where(eq(tracks.id, trackId))
-    .limit(1);
-
-  if (!track) return c.json({ error: "not found" }, 404);
-
-  // verify ownership through playlist
-  const [playlist] = await db
-    .select()
-    .from(playlists)
-    .where(eq(playlists.id, track.playlistId))
-    .limit(1);
-
-  if (!playlist || playlist.ownerId !== c.get("user").id) {
-    return c.json({ error: "not found" }, 404);
-  }
-
-  // process in background (don't block the response)
-  processTrack(track.id, track.originalKey).catch((err) => {
-    console.error(`failed to process track ${track.id}:`, err);
-  });
-
-  return c.json({ ok: true, message: "processing started" });
-});
-
-// Get stream URL for a track
+// Stream a track from R2
 tracksRouter.get("/:id/stream", async (c) => {
   const trackId = c.req.param("id");
+  const db = getDb(c.env.DATABASE_URL);
 
   const [track] = await db
     .select()
@@ -102,45 +77,40 @@ tracksRouter.get("/:id/stream", async (c) => {
     .limit(1);
 
   if (!track || !track.streamKey) {
-    return c.json({ error: "not found or not yet processed" }, 404);
+    return c.json({ error: "not found" }, 404);
   }
 
-  const url = await getDownloadUrl(track.streamKey);
-  return c.json({ url });
+  const object = await c.env.DEMOS_BUCKET.get(track.streamKey);
+  if (!object) return c.json({ error: "file not found" }, 404);
+
+  const headers = new Headers();
+  headers.set("Content-Type", object.httpMetadata?.contentType || "audio/mpeg");
+  headers.set("Accept-Ranges", "bytes");
+  headers.set("Cache-Control", "public, max-age=3600");
+
+  // handle range requests for seeking
+  const range = c.req.header("Range");
+  if (range && object.size) {
+    const match = range.match(/bytes=(\d+)-(\d*)/);
+    if (match) {
+      const start = parseInt(match[1], 10);
+      const end = match[2] ? parseInt(match[2], 10) : object.size - 1;
+      const sliced = await c.env.DEMOS_BUCKET.get(track.streamKey, {
+        range: { offset: start, length: end - start + 1 },
+      });
+      if (sliced) {
+        headers.set("Content-Range", `bytes ${start}-${end}/${object.size}`);
+        headers.set("Content-Length", String(end - start + 1));
+        return new Response(sliced.body, { status: 206, headers });
+      }
+    }
+  }
+
+  if (object.size) {
+    headers.set("Content-Length", String(object.size));
+  }
+
+  return new Response(object.body, { headers });
 });
-
-async function processTrack(trackId: string, originalKey: string) {
-  // download original from S3
-  const stream = await getObjectStream(originalKey);
-  if (!stream) throw new Error("original file not found in storage");
-
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of stream as AsyncIterable<Uint8Array>) {
-    chunks.push(chunk);
-  }
-  const inputBuffer = Buffer.concat(chunks);
-
-  // transcode to AAC
-  const { buffer: aacBuffer, duration } = await transcodeToAAC(inputBuffer);
-
-  // generate waveform
-  const waveformData = await generateWaveform(inputBuffer);
-
-  // upload transcoded file
-  const streamKey = originalKey.replace("originals/", "streams/").replace(/\.[^.]+$/, ".m4a");
-  await putObject(streamKey, aacBuffer, "audio/mp4");
-
-  // update track record
-  await db
-    .update(tracks)
-    .set({
-      streamKey,
-      duration,
-      waveformData: JSON.stringify(waveformData),
-    })
-    .where(eq(tracks.id, trackId));
-
-  console.log(`track ${trackId} processed: ${duration}s`);
-}
 
 export default tracksRouter;

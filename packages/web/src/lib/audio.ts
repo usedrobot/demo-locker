@@ -40,14 +40,13 @@ audio.addEventListener("ended", () => {
   }
 });
 
-async function playIndex(index: number) {
+function playIndex(index: number) {
   if (index < 0 || index >= playlist.length) return;
   currentIndex = index;
   const track = playlist[index];
   if (!track.streamKey) return;
 
-  const { url } = await tracksApi.streamUrl(track.id);
-  audio.src = url;
+  audio.src = tracksApi.streamUrl(track.id);
   audio.play();
 }
 

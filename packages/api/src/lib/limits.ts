@@ -1,17 +1,11 @@
-// Free tier limits — only enforced on the hosted version.
-// Self-hosted: leave these env vars unset for unlimited.
+import type { Bindings } from "../types.js";
 
-export const limits = {
-  maxPlaylists: env("MAX_PLAYLISTS", 0), // 0 = unlimited
-  maxStorageBytes: env("MAX_STORAGE_BYTES", 0),
-  maxCollaborators: env("MAX_COLLABORATORS", 0),
-};
-
-function env(key: string, fallback: number): number {
-  const val = process.env[key];
-  if (!val) return fallback;
-  const n = parseInt(val, 10);
-  return isNaN(n) ? fallback : n;
+export function getLimits(env: Bindings) {
+  return {
+    maxPlaylists: parseInt(env.MAX_PLAYLISTS || "0", 10) || 0,
+    maxStorageBytes: parseInt(env.MAX_STORAGE_BYTES || "0", 10) || 0,
+    maxCollaborators: parseInt(env.MAX_COLLABORATORS || "0", 10) || 0,
+  };
 }
 
 export function isLimited(limit: number): boolean {

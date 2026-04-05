@@ -1,12 +1,11 @@
 import { Hono } from "hono";
 import { eq, and, isNull, asc } from "drizzle-orm";
-import { db } from "../db/index.js";
+import { getDb } from "../db/index.js";
 import { comments, tracks, playlists } from "../db/schema.js";
 import type { Env } from "../types.js";
 
 const commentsRouter = new Hono<Env>();
 
-// Create a comment (track-level with timestamp, or playlist-level)
 commentsRouter.post("/", async (c) => {
   const { trackId, playlistId, authorName, body, timestampSec, parentId } =
     await c.req.json();
@@ -18,7 +17,8 @@ commentsRouter.post("/", async (c) => {
     return c.json({ error: "trackId or playlistId required" }, 400);
   }
 
-  // verify the track/playlist exists
+  const db = getDb(c.env.DATABASE_URL);
+
   if (trackId) {
     const [track] = await db
       .select({ id: tracks.id })
@@ -51,9 +51,9 @@ commentsRouter.post("/", async (c) => {
   return c.json({ comment }, 201);
 });
 
-// Get comments for a track (with replies nested)
 commentsRouter.get("/track/:trackId", async (c) => {
   const trackId = c.req.param("trackId");
+  const db = getDb(c.env.DATABASE_URL);
 
   const all = await db
     .select()
@@ -61,21 +61,20 @@ commentsRouter.get("/track/:trackId", async (c) => {
     .where(eq(comments.trackId, trackId))
     .orderBy(asc(comments.createdAt));
 
-  // separate top-level and replies
-  const topLevel = all.filter((c) => !c.parentId);
-  const replies = all.filter((c) => c.parentId);
+  const topLevel = all.filter((row: any) => !row.parentId);
+  const replies = all.filter((row: any) => row.parentId);
 
-  const threaded = topLevel.map((comment) => ({
+  const threaded = topLevel.map((comment: any) => ({
     ...comment,
-    replies: replies.filter((r) => r.parentId === comment.id),
+    replies: replies.filter((r: any) => r.parentId === comment.id),
   }));
 
   return c.json({ comments: threaded });
 });
 
-// Get playlist-level comments (not track comments)
 commentsRouter.get("/playlist/:playlistId", async (c) => {
   const playlistId = c.req.param("playlistId");
+  const db = getDb(c.env.DATABASE_URL);
 
   const all = await db
     .select()
@@ -85,12 +84,12 @@ commentsRouter.get("/playlist/:playlistId", async (c) => {
     )
     .orderBy(asc(comments.createdAt));
 
-  const topLevel = all.filter((c) => !c.parentId);
-  const replies = all.filter((c) => c.parentId);
+  const topLevel = all.filter((row: any) => !row.parentId);
+  const replies = all.filter((row: any) => row.parentId);
 
-  const threaded = topLevel.map((comment) => ({
+  const threaded = topLevel.map((comment: any) => ({
     ...comment,
-    replies: replies.filter((r) => r.parentId === comment.id),
+    replies: replies.filter((r: any) => r.parentId === comment.id),
   }));
 
   return c.json({ comments: threaded });

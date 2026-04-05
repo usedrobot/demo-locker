@@ -137,3 +137,30 @@ export const comments = {
       body: JSON.stringify(data),
     }),
 };
+
+// Shares
+export type Share = {
+  id: string;
+  playlistId: string;
+  token: string;
+  permission: "listen" | "edit";
+  email: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+};
+
+export const shares = {
+  create: (playlistId: string, permission: "listen" | "edit", email?: string) =>
+    request<{ share: Share }>("/shares", {
+      method: "POST",
+      body: JSON.stringify({ playlistId, permission, email }),
+    }),
+  forPlaylist: (playlistId: string) =>
+    request<{ shares: Share[] }>(`/shares/playlist/${playlistId}`),
+  revoke: (id: string) =>
+    request(`/shares/${id}`, { method: "DELETE" }),
+  resolveInvite: (token: string) =>
+    request<{ permission: string; playlist: Playlist; tracks: Track[] }>(
+      `/shares/invite/${token}`
+    ),
+};

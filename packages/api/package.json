@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1024.0",
+    "@aws-sdk/s3-request-presigner": "3.1024.0",
     "@hono/node-server": "^1.14.0",
     "drizzle-orm": "0.45.2",
     "hono": "^4.7.0",

@@ -3,6 +3,7 @@ import { eq, asc } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
+import { limits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
 const playlistsRouter = new Hono<Env>();
@@ -25,6 +26,21 @@ playlistsRouter.post("/", requireAuth, async (c) => {
   if (!name) return c.json({ error: "name required" }, 400);
 
   const userId = c.get("user").id;
+
+  // check playlist limit
+  if (isLimited(limits.maxPlaylists)) {
+    const existing = await db
+      .select({ id: playlists.id })
+      .from(playlists)
+      .where(eq(playlists.ownerId, userId));
+    if (existing.length >= limits.maxPlaylists) {
+      return c.json(
+        { error: `free tier limited to ${limits.maxPlaylists} playlist(s)` },
+        403
+      );
+    }
+  }
+
   const [playlist] = await db
     .insert(playlists)
     .values({ name, ownerId: userId })

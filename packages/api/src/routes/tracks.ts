@@ -10,6 +10,9 @@ import type { Env } from "../types.js";
 
 const tracksRouter = new Hono<Env>();
 
+// TODO: storage limit enforcement — need to track file sizes in the tracks table
+// and sum per-user to enforce MAX_STORAGE_BYTES (only on hosted version)
+
 // Get a presigned upload URL
 tracksRouter.post("/upload-url", requireAuth, async (c) => {
   const { playlistId, filename, contentType } = await c.req.json();

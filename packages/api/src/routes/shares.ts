@@ -4,11 +4,10 @@ import { randomBytes } from "node:crypto";
 import { db } from "../db/index.js";
 import { shares, playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
+import { limits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
-
-const FREE_TIER_MAX_COLLABORATORS = 4;
 
 // Create a share link
 sharesRouter.post("/", requireAuth, async (c) => {
@@ -33,17 +32,19 @@ sharesRouter.post("/", requireAuth, async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  // check collaborator limit (free tier)
-  const existing = await db
-    .select()
-    .from(shares)
-    .where(eq(shares.playlistId, playlistId));
+  // check collaborator limit (only enforced on hosted version)
+  if (isLimited(limits.maxCollaborators)) {
+    const existing = await db
+      .select()
+      .from(shares)
+      .where(eq(shares.playlistId, playlistId));
 
-  if (existing.length >= FREE_TIER_MAX_COLLABORATORS) {
-    return c.json(
-      { error: `free tier limited to ${FREE_TIER_MAX_COLLABORATORS} collaborators` },
-      403
-    );
+    if (existing.length >= limits.maxCollaborators) {
+      return c.json(
+        { error: `limited to ${limits.maxCollaborators} collaborators on this plan` },
+        403
+      );
+    }
   }
 
   const token = randomBytes(16).toString("hex");

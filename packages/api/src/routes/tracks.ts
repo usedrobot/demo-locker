@@ -113,4 +113,37 @@ tracksRouter.get("/:id/stream", async (c) => {
   return new Response(object.body, { headers });
 });
 
+// Delete a track
+tracksRouter.delete("/:id", requireAuth, async (c) => {
+  const trackId = c.req.param("id");
+  const db = getDb(c.env.DATABASE_URL);
+
+  const [track] = await db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+
+  if (!track) return c.json({ error: "not found" }, 404);
+
+  const [playlist] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.id, track.playlistId))
+    .limit(1);
+
+  if (!playlist || playlist.ownerId !== c.get("user").id) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  // delete from R2
+  await c.env.DEMOS_BUCKET.delete(track.originalKey);
+  if (track.streamKey && track.streamKey !== track.originalKey) {
+    await c.env.DEMOS_BUCKET.delete(track.streamKey);
+  }
+
+  await db.delete(tracks).where(eq(tracks.id, trackId));
+  return c.json({ ok: true });
+});
+
 export default tracksRouter;

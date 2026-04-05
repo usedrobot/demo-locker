@@ -11,6 +11,14 @@ const app = new Hono<Env>();
 
 app.use("/*", cors());
 
+// no caching on API responses
+app.use("/*", async (c, next) => {
+  await next();
+  if (!c.req.path.includes("/stream")) {
+    c.header("Cache-Control", "no-store");
+  }
+});
+
 app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });

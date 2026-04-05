@@ -1,7 +1,7 @@
 :root {
   --bg: #0a0a0a;
-  --fg: #c8c8c8;
-  --fg-dim: #555;
+  --fg: #ffffff;
+  --fg-dim: #ccc;
   --accent: #4af;
   --accent-dim: rgba(68, 170, 255, 0.08);
   --border: #282828;

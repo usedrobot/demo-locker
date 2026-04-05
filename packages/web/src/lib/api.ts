@@ -115,6 +115,8 @@ export const tracks = {
     return res.json();
   },
   streamUrl: (id: string) => `${API_URL}/tracks/${id}/stream`,
+  delete: (id: string) =>
+    request(`/tracks/${id}`, { method: "DELETE" }),
 };
 
 // Comments

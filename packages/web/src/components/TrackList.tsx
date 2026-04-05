@@ -5,9 +5,11 @@ import { player } from "../lib/audio";
 type Props = {
   tracks: Track[];
   onReorder: (trackIds: string[]) => void;
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
 };
 
-export default function TrackList({ tracks, onReorder }: Props) {
+export default function TrackList({ tracks, onReorder, selectedId, onSelect }: Props) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   function handleDragStart(index: number) {
@@ -46,7 +48,10 @@ export default function TrackList({ tracks, onReorder }: Props) {
           onDragStart={() => handleDragStart(i)}
           onDragOver={(e) => handleDragOver(e, i)}
           onDragEnd={handleDragEnd}
-          onClick={() => player.play(track.id)}
+          onClick={() => {
+            onSelect?.(track.id);
+            player.play(track.id);
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -55,6 +60,7 @@ export default function TrackList({ tracks, onReorder }: Props) {
             borderBottom: "1px solid var(--border)",
             cursor: "pointer",
             opacity: dragIndex === i ? 0.5 : 1,
+            background: selectedId === track.id ? "rgba(68,170,255,0.05)" : "transparent",
           }}
         >
           <span style={{ color: "var(--fg-dim)", width: "2ch", textAlign: "right" }}>

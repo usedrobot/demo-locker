@@ -105,3 +105,35 @@ export const tracks = {
   streamUrl: (id: string) =>
     request<{ url: string }>(`/tracks/${id}/stream`),
 };
+
+// Comments
+export type Comment = {
+  id: string;
+  trackId: string | null;
+  playlistId: string | null;
+  parentId: string | null;
+  authorName: string;
+  body: string;
+  timestampSec: number | null;
+  createdAt: string;
+  replies?: Comment[];
+};
+
+export const comments = {
+  forTrack: (trackId: string) =>
+    request<{ comments: Comment[] }>(`/comments/track/${trackId}`),
+  forPlaylist: (playlistId: string) =>
+    request<{ comments: Comment[] }>(`/comments/playlist/${playlistId}`),
+  create: (data: {
+    trackId?: string;
+    playlistId?: string;
+    authorName: string;
+    body: string;
+    timestampSec?: number;
+    parentId?: string;
+  }) =>
+    request<{ comment: Comment }>("/comments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+};

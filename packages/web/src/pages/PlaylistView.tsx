@@ -1,0 +1,75 @@
+import { useEffect, useState, useCallback } from "react";
+import { playlists as api, type Playlist, type Track } from "../lib/api";
+import { player } from "../lib/audio";
+import TrackList from "../components/TrackList";
+import Upload from "../components/Upload";
+
+type Props = {
+  playlistId: string;
+  onBack: () => void;
+};
+
+export default function PlaylistView({ playlistId, onBack }: Props) {
+  const [playlist, setPlaylist] = useState<Playlist | null>(null);
+  const [tracks, setTracks] = useState<Track[]>([]);
+
+  const load = useCallback(() => {
+    api.get(playlistId).then((r) => {
+      setPlaylist(r.playlist);
+      setTracks(r.tracks);
+      player.setPlaylist(r.tracks);
+    });
+  }, [playlistId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleReorder(trackIds: string[]) {
+    // optimistic reorder
+    const reordered = trackIds
+      .map((id) => tracks.find((t) => t.id === id)!)
+      .filter(Boolean);
+    setTracks(reordered);
+    player.setPlaylist(reordered);
+    await api.reorder(playlistId, trackIds);
+  }
+
+  if (!playlist) {
+    return <div style={{ padding: "2rem", color: "var(--fg-dim)" }}>loading...</div>;
+  }
+
+  return (
+    <div style={{ padding: "2rem", paddingBottom: "5rem" }}>
+      <div style={{ marginBottom: "1rem" }}>
+        <button onClick={onBack} style={linkStyle}>
+          [&lt; back]
+        </button>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
+        <div>
+          <div className="box-header">playlist</div>
+          <h2 style={{ color: "var(--fg)", fontSize: "18px", fontFamily: "var(--font)", fontWeight: "normal" }}>
+            {playlist.name}
+          </h2>
+        </div>
+        <Upload playlistId={playlistId} onUpload={load} />
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--border)" }}>
+        <TrackList tracks={tracks} onReorder={handleReorder} />
+      </div>
+    </div>
+  );
+}
+
+const linkStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "var(--fg-dim)",
+  fontFamily: "var(--font)",
+  fontSize: "13px",
+  cursor: "pointer",
+  padding: 0,
+};

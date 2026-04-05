@@ -1,0 +1,23 @@
+{
+  "name": "@demo-locker/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "drizzle-orm": "0.45.2",
+    "hono": "^4.7.0",
+    "postgres": "3.4.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "0.31.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,52 @@
+:root {
+  --bg: #0a0a0a;
+  --fg: #c8c8c8;
+  --fg-dim: #666;
+  --accent: #4af;
+  --border: #333;
+  --font: "Berkeley Mono", "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.box {
+  border: 1px solid var(--border);
+  padding: 1rem;
+}
+
+.box-header {
+  color: var(--fg-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.5rem;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+}

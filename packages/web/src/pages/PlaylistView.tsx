@@ -1,17 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   playlists as api,
-  comments as commentsApi,
   tracks as tracksApi,
   type Playlist,
   type Track,
-  type Comment,
 } from "../lib/api";
 import { player } from "../lib/audio";
 import { extractPeaks } from "../lib/peaks";
 import TrackList from "../components/TrackList";
 import Upload from "../components/Upload";
-import Waveform from "../components/Waveform";
 import Comments from "../components/Comments";
 import SharePanel from "../components/SharePanel";
 
@@ -36,7 +33,6 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [trackComments, setTrackComments] = useState<Comment[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
 
   function queueUploads(files: File[]) {
@@ -111,23 +107,6 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
   useEffect(() => player.subscribe(setPlayerState), []);
 
-  // load comments when a track is selected
-  useEffect(() => {
-    let cancelled = false;
-    if (selectedTrackId) {
-      commentsApi.forTrack(selectedTrackId).then((r) => {
-        if (!cancelled) setTrackComments(r.comments);
-      });
-    } else {
-      Promise.resolve().then(() => {
-        if (!cancelled) setTrackComments([]);
-      });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTrackId]);
-
   // auto-select playing track — adjust state during render
   const playingTrackId = playerState.track?.id ?? null;
   const [lastPlayingTrackId, setLastPlayingTrackId] = useState<string | null>(playingTrackId);
@@ -148,9 +127,6 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   }
 
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId);
-  const peaks = selectedTrack?.waveformData
-    ? JSON.parse(selectedTrack.waveformData)
-    : [];
 
   if (!playlist) {
     return <div style={{ padding: "2rem", color: "var(--fg-dim)" }}>loading...</div>;
@@ -203,28 +179,12 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         ))}
       </div>
 
-      {/* Waveform + track comments for selected track */}
+      {/* Track comments for selected track */}
       {selectedTrack && (
         <div style={{ marginTop: "1.5rem" }}>
           <div className="box-header">
             {selectedTrack.title}
           </div>
-          <Waveform
-            peaks={peaks}
-            duration={selectedTrack.duration || 0}
-            currentTime={
-              playerState.track?.id === selectedTrack.id
-                ? playerState.currentTime
-                : 0
-            }
-            comments={trackComments}
-            onSeek={(time) => {
-              if (playerState.track?.id !== selectedTrack.id) {
-                player.play(selectedTrack.id);
-              }
-              player.seek(time);
-            }}
-          />
           <Comments
             trackId={selectedTrack.id}
             currentTime={

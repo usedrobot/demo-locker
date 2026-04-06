@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   shares as sharesApi,
-  comments as commentsApi,
   type Playlist,
   type Track,
-  type Comment,
 } from "../lib/api";
 import { player } from "../lib/audio";
 import TrackList from "../components/TrackList";
-import Waveform from "../components/Waveform";
 import Comments from "../components/Comments";
 
 type Props = {
@@ -22,7 +19,6 @@ export default function Invite({ token }: Props) {
   const [error, setError] = useState("");
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [trackComments, setTrackComments] = useState<Comment[]>([]);
 
   useEffect(() => {
     sharesApi
@@ -39,22 +35,6 @@ export default function Invite({ token }: Props) {
   }, [token]);
 
   useEffect(() => player.subscribe(setPlayerState), []);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (selectedTrackId) {
-      commentsApi.forTrack(selectedTrackId).then((r) => {
-        if (!cancelled) setTrackComments(r.comments);
-      });
-    } else {
-      Promise.resolve().then(() => {
-        if (!cancelled) setTrackComments([]);
-      });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTrackId]);
 
   // adjust state during render to mirror the currently-playing track
   const playingTrackId = playerState.track?.id ?? null;
@@ -82,9 +62,6 @@ export default function Invite({ token }: Props) {
   }
 
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId);
-  const peaks = selectedTrack?.waveformData
-    ? JSON.parse(selectedTrack.waveformData)
-    : [];
 
   return (
     <div style={{ padding: "2rem", paddingBottom: "5rem" }}>
@@ -113,22 +90,6 @@ export default function Invite({ token }: Props) {
       {selectedTrack && (
         <div style={{ marginTop: "1.5rem" }}>
           <div className="box-header">{selectedTrack.title}</div>
-          <Waveform
-            peaks={peaks}
-            duration={selectedTrack.duration || 0}
-            currentTime={
-              playerState.track?.id === selectedTrack.id
-                ? playerState.currentTime
-                : 0
-            }
-            comments={trackComments}
-            onSeek={(time) => {
-              if (playerState.track?.id !== selectedTrack.id) {
-                player.play(selectedTrack.id);
-              }
-              player.seek(time);
-            }}
-          />
           <Comments
             trackId={selectedTrack.id}
             currentTime={

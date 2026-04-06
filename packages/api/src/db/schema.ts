@@ -61,6 +61,9 @@ export const comments = pgTable("comments", {
   body: text("body").notNull(),
   timestampSec: real("timestamp_sec"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: uuid("resolved_by").references(() => users.id),
+  deleteToken: text("delete_token"),
 });
 
 export const shares = pgTable("shares", {

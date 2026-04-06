@@ -1,12 +1,38 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { comments as api, type Comment } from "../lib/api";
+import { avatarColor } from "../lib/avatar";
 
 type Props = {
   trackId?: string;
   playlistId?: string;
+  isOwner?: boolean;
   currentTime?: number;
   onSeek?: (time: number) => void;
 };
+
+type Filter = "open" | "all";
+
+const DELETE_TOKENS_KEY = "commentDeleteTokens";
+
+function loadDeleteTokens(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(DELETE_TOKENS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveDeleteToken(commentId: string, token: string) {
+  const all = loadDeleteTokens();
+  all[commentId] = token;
+  localStorage.setItem(DELETE_TOKENS_KEY, JSON.stringify(all));
+}
+
+function removeDeleteToken(commentId: string) {
+  const all = loadDeleteTokens();
+  delete all[commentId];
+  localStorage.setItem(DELETE_TOKENS_KEY, JSON.stringify(all));
+}
 
 function formatTime(s: number): string {
   const m = Math.floor(s / 60);
@@ -14,13 +40,20 @@ function formatTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-export default function Comments({ trackId, playlistId, currentTime, onSeek }: Props) {
+export default function Comments({
+  trackId,
+  playlistId,
+  isOwner = false,
+  currentTime,
+  onSeek,
+}: Props) {
   const [items, setItems] = useState<Comment[]>([]);
   const [body, setBody] = useState("");
   const [authorName, setAuthorName] = useState(
     () => localStorage.getItem("commentName") || ""
   );
   const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("open");
 
   const load = useCallback(() => {
     if (trackId) {
@@ -34,13 +67,21 @@ export default function Comments({ trackId, playlistId, currentTime, onSeek }: P
     load();
   }, [load]);
 
+  // Counts (top-level only — replies aren't part of the resolve workflow)
+  const { openCount, totalCount, visible } = useMemo(() => {
+    const open = items.filter((c) => c.resolvedAt == null).length;
+    const total = items.length;
+    const v = filter === "open" ? items.filter((c) => c.resolvedAt == null) : items;
+    return { openCount: open, totalCount: total, visible: v };
+  }, [items, filter]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!body.trim() || !authorName.trim()) return;
 
     localStorage.setItem("commentName", authorName);
 
-    await api.create({
+    const r = await api.create({
       trackId: trackId || undefined,
       playlistId: playlistId || undefined,
       authorName: authorName.trim(),
@@ -49,29 +90,94 @@ export default function Comments({ trackId, playlistId, currentTime, onSeek }: P
       parentId: replyTo || undefined,
     });
 
+    if (r.comment.deleteToken) {
+      saveDeleteToken(r.comment.id, r.comment.deleteToken);
+    }
+
     setBody("");
     setReplyTo(null);
     load();
+    window.dispatchEvent(
+      new CustomEvent("comments:updated", { detail: { trackId, playlistId } })
+    );
+  }
+
+  async function handleResolve(comment: Comment) {
+    await api.resolve(comment.id);
+    load();
+    window.dispatchEvent(
+      new CustomEvent("comments:updated", { detail: { trackId, playlistId } })
+    );
+  }
+
+  async function handleDelete(comment: Comment) {
+    const tokens = loadDeleteTokens();
+    const token = tokens[comment.id];
+    if (!isOwner && !token) return;
+    if (!confirm("Delete this comment?")) return;
+    try {
+      await api.remove(comment.id, token);
+      if (token) removeDeleteToken(comment.id);
+      load();
+      window.dispatchEvent(
+        new CustomEvent("comments:updated", { detail: { trackId, playlistId } })
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "delete failed");
+    }
   }
 
   return (
     <div style={{ marginTop: "1rem" }}>
-      <div className="box-header">
-        {trackId ? "track comments" : "playlist comments"}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "1rem",
+          marginBottom: "0.4rem",
+        }}
+      >
+        <div className="box-header" style={{ marginBottom: 0 }}>
+          {trackId ? "track comments" : "playlist comments"}
+          {totalCount > 0 && (
+            <span style={{ marginLeft: "0.5rem", color: "var(--fg-dim)" }}>
+              ({openCount} open / {totalCount})
+            </span>
+          )}
+        </div>
+        {totalCount > 0 && (
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <FilterChip active={filter === "open"} onClick={() => setFilter("open")}>
+              open
+            </FilterChip>
+            <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
+              all
+            </FilterChip>
+          </div>
+        )}
       </div>
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
-        {items.length === 0 && (
+        {visible.length === 0 && (
           <div style={{ color: "var(--fg-dim)", padding: "0.5rem 0" }}>
-            no comments yet
+            {totalCount === 0
+              ? "no comments yet"
+              : filter === "open"
+                ? "no open comments — all clear ✓"
+                : "no comments"}
           </div>
         )}
-        {items.map((comment) => (
+        {visible.map((comment) => (
           <CommentThread
             key={comment.id}
             comment={comment}
+            isOwner={isOwner}
+            ownDeleteTokens={loadDeleteTokens()}
             onReply={(id) => setReplyTo(id)}
             onSeek={onSeek}
+            onResolve={handleResolve}
+            onDelete={handleDelete}
             isTrack={!!trackId}
           />
         ))}
@@ -121,38 +227,160 @@ export default function Comments({ trackId, playlistId, currentTime, onSeek }: P
   );
 }
 
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: active ? "var(--accent)" : "transparent",
+        color: active ? "#000" : "var(--fg-dim)",
+        border: "1px solid var(--border)",
+        fontFamily: "var(--font)",
+        fontSize: "11px",
+        padding: "2px 8px",
+        cursor: "pointer",
+        textTransform: "lowercase",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function CommentThread({
   comment,
+  isOwner,
+  ownDeleteTokens,
   onReply,
   onSeek,
+  onResolve,
+  onDelete,
   isTrack,
 }: {
   comment: Comment;
+  isOwner: boolean;
+  ownDeleteTokens: Record<string, string>;
   onReply: (id: string) => void;
   onSeek?: (time: number) => void;
+  onResolve: (c: Comment) => void;
+  onDelete: (c: Comment) => void;
   isTrack: boolean;
 }) {
+  const initial = (comment.authorName?.trim()?.[0] ?? "?").toUpperCase();
+  const color = avatarColor(comment.authorName || "?");
+  const resolved = comment.resolvedAt != null;
+  const canDelete = isOwner || !!ownDeleteTokens[comment.id];
+
   return (
-    <div style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", gap: "0.75rem", alignItems: "baseline" }}>
+    <div
+      style={{
+        padding: "0.5rem 0",
+        borderBottom: "1px solid var(--border)",
+        opacity: resolved ? 0.5 : 1,
+      }}
+    >
+      <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+        <span
+          aria-hidden
+          style={{
+            position: "relative",
+            width: 22,
+            height: 22,
+            borderRadius: "50%",
+            background: color,
+            color: "#000",
+            fontFamily: "var(--font)",
+            fontSize: 11,
+            fontWeight: 700,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flex: "none",
+          }}
+        >
+          {initial}
+          {resolved && (
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                bottom: -3,
+                right: -3,
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                background: "#6c6",
+                color: "#000",
+                fontSize: 9,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "1px solid var(--bg)",
+              }}
+              title="Resolved"
+            >
+              ✓
+            </span>
+          )}
+        </span>
         {isTrack && comment.timestampSec != null && (
           <button
             onClick={() => onSeek?.(comment.timestampSec!)}
-            style={{ ...linkBtn, color: "var(--accent)", fontSize: "12px" }}
+            style={{ ...linkBtn, color: "var(--accent)", fontSize: "12px", fontVariantNumeric: "tabular-nums" }}
+            title="Jump to this moment"
           >
-            [{formatTime(comment.timestampSec)}]
+            {formatTime(comment.timestampSec)}
           </button>
         )}
-        <span style={{ color: "var(--accent)", fontSize: "12px" }}>
+        <span style={{ color: "var(--fg)", fontSize: "12px" }}>
           {comment.authorName}
         </span>
-        <span style={{ flex: 1 }}>{comment.body}</span>
+        <span
+          style={{
+            flex: 1,
+            textDecoration: resolved ? "line-through" : "none",
+          }}
+        >
+          {comment.body}
+        </span>
+        {isOwner && (
+          <button
+            onClick={() => onResolve(comment)}
+            style={{
+              ...linkBtn,
+              color: resolved ? "var(--fg-dim)" : "#6c6",
+              fontSize: "12px",
+            }}
+            title={resolved ? "Mark as open" : "Mark as resolved"}
+          >
+            {resolved ? "[reopen]" : "[✓ resolve]"}
+          </button>
+        )}
         <button
           onClick={() => onReply(comment.id)}
           style={{ ...linkBtn, color: "var(--fg-dim)", fontSize: "12px" }}
         >
           [reply]
         </button>
+        {canDelete && (
+          <button
+            onClick={() => onDelete(comment)}
+            style={{ ...linkBtn, color: "var(--fg-dim)", fontSize: "12px" }}
+            title="Delete comment"
+          >
+            [x]
+          </button>
+        )}
       </div>
 
       {comment.replies && comment.replies.length > 0 && (

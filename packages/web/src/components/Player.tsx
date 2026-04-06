@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { player } from "../lib/audio";
-import { playlists as playlistsApi } from "../lib/api";
+import { playlists as playlistsApi, comments as commentsApi, type Comment } from "../lib/api";
+import { avatarColor } from "../lib/avatar";
 
 function formatTime(s: number): string {
   if (!s || isNaN(s)) return "0:00";
@@ -9,11 +10,47 @@ function formatTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
+const WAVEFORM_HEIGHT = 88;
+const MARKER_SIZE = 26;
+
 export default function Player() {
   const [state, setState] = useState(player.getState());
+  const [trackComments, setTrackComments] = useState<Comment[]>([]);
+  const [hoverScrub, setHoverScrub] = useState<{ x: number; time: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => player.subscribe(setState), []);
+
+  // load comments with timestamps for the current track
+  const trackId = state.track?.id;
+  useEffect(() => {
+    if (!trackId) {
+      setTrackComments([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchComments = () => {
+      commentsApi.forTrack(trackId).then((r) => {
+        if (cancelled) return;
+        const flat: Comment[] = [];
+        for (const c of r.comments) {
+          if (c.timestampSec != null) flat.push(c);
+          if (c.replies) for (const rep of c.replies) if (rep.timestampSec != null) flat.push(rep);
+        }
+        setTrackComments(flat);
+      });
+    };
+    fetchComments();
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || detail.trackId === trackId) fetchComments();
+    };
+    window.addEventListener("comments:updated", handler);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("comments:updated", handler);
+    };
+  }, [trackId]);
 
   const duration = state.duration;
   const currentTime = state.currentTime;
@@ -47,8 +84,7 @@ export default function Player() {
     ctx.clearRect(0, 0, cssWidth, cssHeight);
 
     if (peaks.length === 0) {
-      // fallback: progress bar
-      ctx.fillStyle = "#282828";
+      ctx.fillStyle = "#3f3f3f";
       ctx.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
       ctx.fillStyle = "#4af";
       ctx.fillRect(0, cssHeight / 2 - 1, cssWidth * progress, 2);
@@ -63,23 +99,29 @@ export default function Player() {
       const normalized = Math.abs(peaks[i]) / maxPeak;
       const barHeight = normalized * (cssHeight * 0.85);
       const barProgress = i / peaks.length;
-      ctx.fillStyle = barProgress < progress ? "#4af" : "#333";
+      ctx.fillStyle = barProgress < progress ? "#4af" : "#3f3f3f";
       ctx.fillRect(x, (cssHeight - barHeight) / 2, Math.max(barWidth - 1, 1), barHeight);
     }
   }, [waveformData, progress]);
 
-  function handleScrub(e: React.MouseEvent<HTMLCanvasElement>) {
+  function handleScrub(e: React.MouseEvent<HTMLDivElement>) {
     if (!duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const pct = x / rect.width;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
     player.seek(pct * duration);
+  }
+
+  function handleHover(e: React.MouseEvent<HTMLDivElement>) {
+    if (!duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    setHoverScrub({ x, time: pct * duration });
   }
 
   if (!state.track) return null;
 
-  // playlistId is on the track; the player doesn't know whether artwork exists,
-  // so always set src and hide on error
   const artworkSrc = playlistsApi.artworkUrlUnchecked(state.track.playlistId);
 
   return (
@@ -96,27 +138,9 @@ export default function Player() {
         zIndex: 100,
       }}
     >
-      <div
-        style={{
-          maxWidth: "880px",
-          margin: "0 auto",
-          padding: "0.75rem 1.5rem 1rem",
-          display: "flex",
-          alignItems: "center",
-          gap: "1rem",
-        }}
-      >
+      <div className="player-inner">
         {/* Artwork thumb */}
-        <div
-          style={{
-            width: "56px",
-            height: "56px",
-            flex: "none",
-            border: "1px solid var(--border)",
-            background: "var(--bg)",
-            overflow: "hidden",
-          }}
-        >
+        <div className="player-artwork">
           {artworkSrc && (
             <img
               src={artworkSrc}
@@ -131,55 +155,157 @@ export default function Player() {
 
         {/* Controls + waveform column */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
-            <button onClick={() => player.prev()} style={btnStyle} title="Previous track">
-              [&lt;&lt;]
+          <div className="player-controls-row">
+            <button onClick={() => player.prev()} className="player-btn" title="Previous track" aria-label="Previous track">
+              ⏮
             </button>
-            <button onClick={() => player.toggle()} style={btnStyle} title={state.playing ? "Pause" : "Play"}>
-              {state.playing ? "[||]" : "[▶]"}
-            </button>
-            <button onClick={() => player.next()} style={btnStyle} title="Next track">
-              [&gt;&gt;]
-            </button>
-            <span
-              style={{
-                color: "var(--fg)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                flex: 1,
-              }}
+            <button
+              onClick={() => player.toggle()}
+              className="player-btn player-btn-primary"
+              title={state.playing ? "Pause" : "Play"}
+              aria-label={state.playing ? "Pause" : "Play"}
             >
-              {state.track.title}
-            </span>
-            <span style={{ color: "var(--fg-dim)" }}>
+              {state.playing ? "⏸" : "⏵"}
+            </button>
+            <button onClick={() => player.next()} className="player-btn" title="Next track" aria-label="Next track">
+              ⏭
+            </button>
+            <span className="player-title">{state.track.title}</span>
+            <span className="player-time">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
           </div>
 
-          <canvas
-            ref={canvasRef}
+          <div
+            className="player-waveform-wrap"
+            style={{ position: "relative", width: "100%", height: WAVEFORM_HEIGHT }}
             onClick={handleScrub}
-            title="Click to seek"
-            style={{
-              width: "100%",
-              height: "44px",
-              display: "block",
-              cursor: "pointer",
-            }}
-          />
+            onMouseMove={handleHover}
+            onMouseLeave={() => setHoverScrub(null)}
+          >
+            <canvas
+              ref={canvasRef}
+              title="Click to seek"
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "block",
+                cursor: "pointer",
+              }}
+            />
+
+            {/* Hover scrub indicator */}
+            {hoverScrub && (
+              <>
+                <div
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    left: hoverScrub.x,
+                    top: 0,
+                    bottom: 0,
+                    width: 1,
+                    background: "rgba(255,255,255,0.25)",
+                    pointerEvents: "none",
+                  }}
+                />
+                <div
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    left: hoverScrub.x,
+                    top: -22,
+                    transform: "translateX(-50%)",
+                    background: "var(--bg)",
+                    border: "1px solid var(--border)",
+                    color: "var(--fg)",
+                    fontFamily: "var(--font)",
+                    fontSize: 11,
+                    padding: "2px 6px",
+                    borderRadius: 3,
+                    pointerEvents: "none",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {formatTime(hoverScrub.time)}
+                </div>
+              </>
+            )}
+
+            {/* Comment avatar markers */}
+            {duration > 0 &&
+              trackComments.map((c) => {
+                const pct = Math.max(0, Math.min(1, (c.timestampSec ?? 0) / duration));
+                const initial = (c.authorName?.trim()?.[0] ?? "?").toUpperCase();
+                const color = avatarColor(c.authorName || "?");
+                const resolved = c.resolvedAt != null;
+                return (
+                  <div
+                    key={c.id}
+                    className="player-marker-group"
+                    style={{
+                      position: "absolute",
+                      left: `${pct * 100}%`,
+                      top: 0,
+                      bottom: 0,
+                      width: 0,
+                      pointerEvents: "none",
+                      zIndex: 2,
+                      opacity: resolved ? 0.35 : 1,
+                    }}
+                  >
+                    {/* Drop guide line */}
+                    <div
+                      aria-hidden
+                      className="player-marker-line"
+                      style={{
+                        position: "absolute",
+                        left: -1,
+                        top: MARKER_SIZE - 4,
+                        bottom: 0,
+                        width: 2,
+                        background: color,
+                        opacity: 0.35,
+                      }}
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        player.seek(c.timestampSec ?? 0);
+                      }}
+                      title={`${c.authorName} @ ${formatTime(c.timestampSec ?? 0)}: ${c.body}`}
+                      className="player-marker"
+                      style={{
+                        position: "absolute",
+                        left: -MARKER_SIZE / 2,
+                        top: 2,
+                        width: MARKER_SIZE,
+                        height: MARKER_SIZE,
+                        borderRadius: "50%",
+                        background: color,
+                        color: "#000",
+                        border: "2px solid var(--bg)",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.7)",
+                        fontFamily: "var(--font)",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        cursor: "pointer",
+                        padding: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        pointerEvents: "auto",
+                      }}
+                    >
+                      {initial}
+                    </button>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-const btnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: "var(--accent)",
-  fontFamily: "var(--font)",
-  fontSize: "13px",
-  cursor: "pointer",
-  padding: 0,
-};

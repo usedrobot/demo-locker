@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   playlists as api,
   tracks as tracksApi,
+  auth,
   type Playlist,
   type Track,
 } from "../lib/api";
@@ -34,6 +35,22 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    auth
+      .me()
+      .then((r) => {
+        if (!cancelled) setCurrentUserId(r.user.id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
 
   function queueUploads(files: File[]) {
     const items: PendingUpload[] = files.map((file) => ({
@@ -181,12 +198,22 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
       {/* Track comments for selected track */}
       {selectedTrack && (
-        <div style={{ marginTop: "1.5rem" }}>
-          <div className="box-header">
+        <div style={{ marginTop: "2rem" }}>
+          <div className="box-header">track</div>
+          <h3
+            style={{
+              color: "var(--fg)",
+              fontSize: "15px",
+              fontFamily: "var(--font)",
+              fontWeight: "normal",
+              margin: "0 0 0.5rem",
+            }}
+          >
             {selectedTrack.title}
-          </div>
+          </h3>
           <Comments
             trackId={selectedTrack.id}
+            isOwner={isOwner}
             currentTime={
               playerState.track?.id === selectedTrack.id
                 ? playerState.currentTime
@@ -203,11 +230,13 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
       )}
 
       {/* Sharing */}
-      <SharePanel playlistId={playlistId} />
+      <div style={{ marginTop: "2rem" }}>
+        <SharePanel playlistId={playlistId} />
+      </div>
 
       {/* Playlist-level comments */}
-      <div style={{ marginTop: "2rem" }}>
-        <Comments playlistId={playlistId} />
+      <div style={{ marginTop: "2.5rem" }}>
+        <Comments playlistId={playlistId} isOwner={isOwner} />
       </div>
     </div>
   );
@@ -233,6 +262,7 @@ function PlaylistArtwork({
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const src = api.artworkUrl(playlist.id, playlist.artworkKey);
 
@@ -252,12 +282,22 @@ function PlaylistArtwork({
     }
   }
 
+  // Esc to close lightbox
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxOpen]);
+
   return (
     <div style={{ flex: "none" }}>
       <button
         type="button"
-        onClick={() => inputRef.current?.click()}
-        title="Click to upload artwork"
+        onClick={() => (src ? setLightboxOpen(true) : inputRef.current?.click())}
+        title={src ? "Click to view larger" : "Click to upload artwork"}
         style={{
           width: "120px",
           height: "120px",
@@ -289,6 +329,20 @@ function PlaylistArtwork({
         onChange={handleFile}
         style={{ display: "none" }}
       />
+      {src && (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          style={{
+            ...linkStyle,
+            color: "var(--accent)",
+            marginTop: "0.4rem",
+            display: "block",
+          }}
+        >
+          [update cover]
+        </button>
+      )}
       {uploading && (
         <div
           className="dots"
@@ -299,6 +353,58 @@ function PlaylistArtwork({
       )}
       {error && (
         <div style={{ color: "#f44", fontSize: "11px", marginTop: "0.25rem" }}>{error}</div>
+      )}
+
+      {lightboxOpen && src && (
+        <div
+          onClick={() => setLightboxOpen(false)}
+          role="dialog"
+          aria-label="Cover artwork"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+            cursor: "zoom-out",
+            padding: "2rem",
+          }}
+        >
+          <img
+            src={src}
+            alt=""
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: "90vw",
+              maxHeight: "90vh",
+              objectFit: "contain",
+              border: "1px solid var(--border)",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.8)",
+              cursor: "default",
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(false)}
+            aria-label="Close"
+            style={{
+              position: "absolute",
+              top: "1.25rem",
+              right: "1.5rem",
+              background: "none",
+              border: "1px solid var(--border)",
+              color: "var(--fg)",
+              fontFamily: "var(--font)",
+              fontSize: "13px",
+              padding: "0.3rem 0.6rem",
+              cursor: "pointer",
+            }}
+          >
+            [close]
+          </button>
+        </div>
       )}
     </div>
   );

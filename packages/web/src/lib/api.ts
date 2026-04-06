@@ -177,6 +177,8 @@ export type Comment = {
   body: string;
   timestampSec: number | null;
   createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
   replies?: Comment[];
 };
 
@@ -193,9 +195,18 @@ export const comments = {
     timestampSec?: number;
     parentId?: string;
   }) =>
-    request<{ comment: Comment }>("/comments", {
+    request<{ comment: Comment & { deleteToken?: string } }>("/comments", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+  resolve: (id: string) =>
+    request<{ comment: Comment }>(`/comments/${id}/resolve`, {
+      method: "PATCH",
+    }),
+  remove: (id: string, deleteToken?: string) =>
+    request<{ ok: true }>(`/comments/${id}`, {
+      method: "DELETE",
+      headers: deleteToken ? { "X-Delete-Token": deleteToken } : undefined,
     }),
 };
 

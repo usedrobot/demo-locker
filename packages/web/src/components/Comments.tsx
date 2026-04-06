@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { comments as api, type Comment } from "../lib/api";
 
 type Props = {
@@ -22,17 +22,17 @@ export default function Comments({ trackId, playlistId, currentTime, onSeek }: P
   );
   const [replyTo, setReplyTo] = useState<string | null>(null);
 
-  useEffect(() => {
-    load();
-  }, [trackId, playlistId]);
-
-  function load() {
+  const load = useCallback(() => {
     if (trackId) {
       api.forTrack(trackId).then((r) => setItems(r.comments));
     } else if (playlistId) {
       api.forPlaylist(playlistId).then((r) => setItems(r.comments));
     }
-  }
+  }, [trackId, playlistId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

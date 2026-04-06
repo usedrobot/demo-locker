@@ -41,18 +41,30 @@ export default function Invite({ token }: Props) {
   useEffect(() => player.subscribe(setPlayerState), []);
 
   useEffect(() => {
+    let cancelled = false;
     if (selectedTrackId) {
-      commentsApi.forTrack(selectedTrackId).then((r) => setTrackComments(r.comments));
+      commentsApi.forTrack(selectedTrackId).then((r) => {
+        if (!cancelled) setTrackComments(r.comments);
+      });
     } else {
-      setTrackComments([]);
+      Promise.resolve().then(() => {
+        if (!cancelled) setTrackComments([]);
+      });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [selectedTrackId]);
 
-  useEffect(() => {
-    if (playerState.track && playerState.track.id !== selectedTrackId) {
-      setSelectedTrackId(playerState.track.id);
+  // adjust state during render to mirror the currently-playing track
+  const playingTrackId = playerState.track?.id ?? null;
+  const [lastPlayingTrackId, setLastPlayingTrackId] = useState<string | null>(playingTrackId);
+  if (playingTrackId !== lastPlayingTrackId) {
+    setLastPlayingTrackId(playingTrackId);
+    if (playingTrackId && playingTrackId !== selectedTrackId) {
+      setSelectedTrackId(playingTrackId);
     }
-  }, [playerState.track?.id]);
+  }
 
   if (error) {
     return (

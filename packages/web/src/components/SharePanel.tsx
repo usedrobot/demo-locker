@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { shares as api, type Share } from "../lib/api";
 
 type Props = {
@@ -11,13 +11,13 @@ export default function SharePanel({ playlistId }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    load();
+  const load = useCallback(() => {
+    api.forPlaylist(playlistId).then((r) => setItems(r.shares));
   }, [playlistId]);
 
-  function load() {
-    api.forPlaylist(playlistId).then((r) => setItems(r.shares));
-  }
+  useEffect(() => {
+    load();
+  }, [load]);
 
   async function handleCreate() {
     setError("");

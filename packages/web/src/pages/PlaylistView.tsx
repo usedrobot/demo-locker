@@ -41,19 +41,30 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
   // load comments when a track is selected
   useEffect(() => {
+    let cancelled = false;
     if (selectedTrackId) {
-      commentsApi.forTrack(selectedTrackId).then((r) => setTrackComments(r.comments));
+      commentsApi.forTrack(selectedTrackId).then((r) => {
+        if (!cancelled) setTrackComments(r.comments);
+      });
     } else {
-      setTrackComments([]);
+      Promise.resolve().then(() => {
+        if (!cancelled) setTrackComments([]);
+      });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [selectedTrackId]);
 
-  // auto-select playing track
-  useEffect(() => {
-    if (playerState.track && playerState.track.id !== selectedTrackId) {
-      setSelectedTrackId(playerState.track.id);
+  // auto-select playing track — adjust state during render
+  const playingTrackId = playerState.track?.id ?? null;
+  const [lastPlayingTrackId, setLastPlayingTrackId] = useState<string | null>(playingTrackId);
+  if (playingTrackId !== lastPlayingTrackId) {
+    setLastPlayingTrackId(playingTrackId);
+    if (playingTrackId && playingTrackId !== selectedTrackId) {
+      setSelectedTrackId(playingTrackId);
     }
-  }, [playerState.track?.id]);
+  }
 
   async function handleReorder(trackIds: string[]) {
     const reordered = trackIds

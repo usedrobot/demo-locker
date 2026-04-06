@@ -12,6 +12,7 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
   const formData = await c.req.formData();
   const file = formData.get("file") as File | null;
   const playlistId = formData.get("playlistId") as string | null;
+  const customTitle = formData.get("title") as string | null;
 
   if (!file || !playlistId) {
     return c.json({ error: "file and playlistId required" }, 400);
@@ -50,7 +51,9 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
   });
 
   // create track — no transcoding for now, serve original
-  const title = file.name.replace(/\.[^.]+$/, "");
+  const title =
+    (customTitle && customTitle.trim()) ||
+    file.name.replace(/\.[^.]+$/, "");
   const [track] = await db
     .insert(tracks)
     .values({

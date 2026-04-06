@@ -114,25 +114,47 @@ export const playlists = {
 
 // Tracks
 export const tracks = {
-  upload: async (playlistId: string, file: File): Promise<{ track: Track }> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("playlistId", playlistId);
+  upload: (
+    playlistId: string,
+    file: File,
+    opts?: { title?: string; onProgress?: (pct: number) => void }
+  ): Promise<{ track: Track }> =>
+    new Promise((resolve, reject) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("playlistId", playlistId);
+      if (opts?.title) formData.append("title", opts.title);
 
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const res = await fetch(`${API_URL}/tracks/upload`, {
-      method: "POST",
-      headers,
-      body: formData,
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `upload failed: ${res.status}`);
-    }
-    return res.json();
-  },
+      const xhr = new XMLHttpRequest();
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable && opts?.onProgress) {
+          opts.onProgress(e.loaded / e.total);
+        }
+      });
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error("invalid response"));
+          }
+        } else {
+          let msg = `upload failed: ${xhr.status}`;
+          try {
+            const body = JSON.parse(xhr.responseText);
+            if (body.error) msg = body.error;
+          } catch {
+            // ignore
+          }
+          reject(new Error(msg));
+        }
+      });
+      xhr.addEventListener("error", () => reject(new Error("upload failed")));
+      xhr.addEventListener("abort", () => reject(new Error("upload aborted")));
+      xhr.open("POST", `${API_URL}/tracks/upload`);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.send(formData);
+    }),
   streamUrl: (id: string) => `${API_URL}/tracks/${id}/stream`,
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),

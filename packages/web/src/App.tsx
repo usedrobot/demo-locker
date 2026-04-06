@@ -23,35 +23,43 @@ function App() {
   const [view, setView] = useState<View>(() => getInitialView() || { page: "login" });
 
   useEffect(() => {
-    // skip auth check if viewing an invite
-    if (view.page === "invite") return;
-
-    if (getToken()) {
-      auth
-        .me()
-        .then(() => setView({ page: "home" }))
-        .catch(() => setView({ page: "login" }));
-    }
+    // skip auth check if viewing an invite (read from URL, not state, so deps stay empty)
+    if (window.location.pathname.startsWith("/invite/")) return;
+    if (!getToken()) return;
+    let cancelled = false;
+    auth
+      .me()
+      .then(() => {
+        if (!cancelled) setView({ page: "home" });
+      })
+      .catch(() => {
+        if (!cancelled) setView({ page: "login" });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
     <>
-      {view.page === "login" && (
-        <Login onAuth={() => setView({ page: "home" })} />
-      )}
-      {view.page === "home" && (
-        <Home
-          onSelect={(id) => setView({ page: "playlist", id })}
-          onLogout={() => setView({ page: "login" })}
-        />
-      )}
-      {view.page === "playlist" && (
-        <PlaylistView
-          playlistId={view.id}
-          onBack={() => setView({ page: "home" })}
-        />
-      )}
-      {view.page === "invite" && <Invite token={view.token} />}
+      <div className="app-container">
+        {view.page === "login" && (
+          <Login onAuth={() => setView({ page: "home" })} />
+        )}
+        {view.page === "home" && (
+          <Home
+            onSelect={(id) => setView({ page: "playlist", id })}
+            onLogout={() => setView({ page: "login" })}
+          />
+        )}
+        {view.page === "playlist" && (
+          <PlaylistView
+            playlistId={view.id}
+            onBack={() => setView({ page: "home" })}
+          />
+        )}
+        {view.page === "invite" && <Invite token={view.token} />}
+      </div>
       <Player />
     </>
   );

@@ -43,7 +43,7 @@ Frontend at `localhost:5173`, API at `localhost:3001`.
 ## Self-Host
 
 ```bash
-git clone https://github.com/fldl/demo-locker.git
+git clone https://github.com/usedrobot/demo-locker.git
 cd demo-locker
 cp .env.example .env    # point at your own Postgres + S3 bucket
 docker compose up

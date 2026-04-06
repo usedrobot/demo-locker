@@ -92,24 +92,46 @@ export default function Home({ onSelect, onLogout }: Props) {
             no playlists yet
           </div>
         )}
-        {playlists.map((p) => (
-          <div
-            key={p.id}
-            onClick={() => onSelect(p.id)}
-            style={{
-              padding: "0.5rem 0",
-              borderBottom: "1px solid var(--border)",
-              cursor: "pointer",
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>{p.name}</span>
-            <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
-              {new Date(p.updatedAt).toLocaleDateString()}
-            </span>
-          </div>
-        ))}
+        {playlists.map((p) => {
+          const art = api.artworkUrl(p.id, p.artworkKey);
+          return (
+            <div
+              key={p.id}
+              onClick={() => onSelect(p.id)}
+              style={{
+                padding: "0.5rem 0",
+                borderBottom: "1px solid var(--border)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+              }}
+            >
+              <div
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  flex: "none",
+                  border: "1px solid var(--border)",
+                  background: "var(--bg)",
+                  overflow: "hidden",
+                }}
+              >
+                {art && (
+                  <img
+                    src={art}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                )}
+              </div>
+              <span style={{ flex: 1 }}>{p.name}</span>
+              <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+                {new Date(p.updatedAt).toLocaleDateString()}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       <form

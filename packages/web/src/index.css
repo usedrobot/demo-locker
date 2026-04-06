@@ -37,6 +37,13 @@ a {
   text-decoration: none;
 }
 
+/* centered desktop layout */
+.app-container {
+  max-width: 880px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 /* TUI box */
 .box {
   border: 1px solid var(--border);

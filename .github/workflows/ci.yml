@@ -48,7 +48,7 @@ jobs:
       - run: npm install
       - run: npm run build -w packages/web
         env:
-          VITE_API_URL: https://demo-locker-api.fldl.workers.dev
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

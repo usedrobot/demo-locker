@@ -99,6 +99,71 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   return c.json({ playlist: updated });
 });
 
+// Upload playlist artwork — multipart, stored in R2 under playlist-art/<id>
+playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const id = c.req.param("id");
+  const userId = c.get("user").id;
+
+  const [playlist] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.id, id))
+    .limit(1);
+
+  if (!playlist || playlist.ownerId !== userId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const formData = await c.req.formData();
+  const file = formData.get("file") as File | null;
+  if (!file) return c.json({ error: "file required" }, 400);
+
+  const ext = file.name.match(/\.[a-zA-Z0-9]+$/)?.[0] || "";
+  const key = `playlist-art/${id}${ext}`;
+
+  await c.env.DEMOS_BUCKET.put(key, file.stream(), {
+    httpMetadata: { contentType: file.type || "image/jpeg" },
+  });
+
+  const [updated] = await db
+    .update(playlists)
+    .set({ artworkKey: key, updatedAt: new Date() })
+    .where(eq(playlists.id, id))
+    .returning();
+
+  return c.json({ playlist: updated });
+});
+
+// Stream playlist artwork — public so invitees can see it too
+playlistsRouter.get("/:id/artwork", async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const id = c.req.param("id");
+
+  const [playlist] = await db
+    .select()
+    .from(playlists)
+    .where(eq(playlists.id, id))
+    .limit(1);
+
+  if (!playlist || !playlist.artworkKey) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const object = await c.env.DEMOS_BUCKET.get(playlist.artworkKey);
+  if (!object) return c.json({ error: "not found" }, 404);
+
+  const headers = new Headers();
+  headers.set(
+    "Content-Type",
+    object.httpMetadata?.contentType || "image/jpeg"
+  );
+  headers.set("Cache-Control", "public, max-age=3600");
+  if (object.size) headers.set("Content-Length", String(object.size));
+
+  return new Response(object.body, { headers });
+});
+
 playlistsRouter.delete("/:id", requireAuth, async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");

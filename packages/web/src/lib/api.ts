@@ -91,6 +91,25 @@ export const playlists = {
       method: "PATCH",
       body: JSON.stringify({ trackIds }),
     }),
+  uploadArtwork: async (id: string, file: File): Promise<{ playlist: Playlist }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_URL}/playlists/${id}/artwork`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `upload failed: ${res.status}`);
+    }
+    return res.json();
+  },
+  artworkUrl: (id: string, artworkKey: string | null) =>
+    artworkKey ? `${API_URL}/playlists/${id}/artwork?v=${encodeURIComponent(artworkKey)}` : null,
+  artworkUrlUnchecked: (id: string) => `${API_URL}/playlists/${id}/artwork`,
 };
 
 // Tracks

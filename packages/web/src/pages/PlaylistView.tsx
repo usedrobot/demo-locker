@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   playlists as api,
   comments as commentsApi,
@@ -92,14 +92,20 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         </button>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
-        <div>
-          <div className="box-header">playlist</div>
-          <h2 style={{ color: "var(--fg)", fontSize: "18px", fontFamily: "var(--font)", fontWeight: "normal" }}>
-            {playlist.name}
-          </h2>
+      <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start", marginBottom: "1rem" }}>
+        <PlaylistArtwork
+          playlist={playlist}
+          onUpdated={(p) => setPlaylist(p)}
+        />
+        <div style={{ flex: 1, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div className="box-header">playlist</div>
+            <h2 style={{ color: "var(--fg)", fontSize: "18px", fontFamily: "var(--font)", fontWeight: "normal" }}>
+              {playlist.name}
+            </h2>
+          </div>
+          <Upload playlistId={playlistId} onUpload={load} />
         </div>
-        <Upload playlistId={playlistId} onUpload={load} />
       </div>
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
@@ -174,3 +180,81 @@ const linkStyle: React.CSSProperties = {
   cursor: "pointer",
   padding: 0,
 };
+
+function PlaylistArtwork({
+  playlist,
+  onUpdated,
+}: {
+  playlist: Playlist;
+  onUpdated: (p: Playlist) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  const src = api.artworkUrl(playlist.id, playlist.artworkKey);
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      const r = await api.uploadArtwork(playlist.id, file);
+      onUpdated(r.playlist);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "upload failed");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div style={{ flex: "none" }}>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        title="Click to upload artwork"
+        style={{
+          width: "120px",
+          height: "120px",
+          padding: 0,
+          background: "var(--bg)",
+          border: "1px solid var(--border)",
+          color: "var(--fg-dim)",
+          fontFamily: "var(--font)",
+          fontSize: "11px",
+          cursor: "pointer",
+          overflow: "hidden",
+          display: "block",
+        }}
+      >
+        {src ? (
+          <img
+            src={src}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          <span>[+ artwork]</span>
+        )}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFile}
+        style={{ display: "none" }}
+      />
+      {uploading && (
+        <div style={{ color: "var(--fg-dim)", fontSize: "11px", marginTop: "0.25rem" }}>
+          uploading...
+        </div>
+      )}
+      {error && (
+        <div style={{ color: "#f44", fontSize: "11px", marginTop: "0.25rem" }}>{error}</div>
+      )}
+    </div>
+  );
+}

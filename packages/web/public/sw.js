@@ -1,4 +1,4 @@
-const CACHE_NAME = "demo-locker-v1";
+const CACHE_NAME = "demo-locker-v2";
 const SHELL_ASSETS = ["/", "/index.html"];
 
 self.addEventListener("install", (event) => {
@@ -22,9 +22,9 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
-  // skip non-GET and API requests
+  // skip non-GET and any cross-origin request (API, R2, etc.)
   if (request.method !== "GET") return;
-  if (request.url.includes("/api/") || request.url.includes(":3001")) return;
+  if (new URL(request.url).origin !== self.location.origin) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {

@@ -117,13 +117,20 @@ export const tracks = {
   upload: (
     playlistId: string,
     file: File,
-    opts?: { title?: string; onProgress?: (pct: number) => void }
+    opts?: {
+      title?: string;
+      waveformData?: string;
+      duration?: number;
+      onProgress?: (pct: number) => void;
+    }
   ): Promise<{ track: Track }> =>
     new Promise((resolve, reject) => {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("playlistId", playlistId);
       if (opts?.title) formData.append("title", opts.title);
+      if (opts?.waveformData) formData.append("waveformData", opts.waveformData);
+      if (opts?.duration != null) formData.append("duration", String(opts.duration));
 
       const xhr = new XMLHttpRequest();
       xhr.upload.addEventListener("progress", (e) => {

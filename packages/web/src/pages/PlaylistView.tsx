@@ -8,6 +8,7 @@ import {
   type Comment,
 } from "../lib/api";
 import { player } from "../lib/audio";
+import { extractPeaks } from "../lib/peaks";
 import TrackList from "../components/TrackList";
 import Upload from "../components/Upload";
 import Waveform from "../components/Waveform";
@@ -24,8 +25,10 @@ type PendingUpload = {
   file: File;
   title: string;
   progress: number; // 0..1
-  status: "ready" | "uploading" | "error";
+  status: "decoding" | "ready" | "uploading" | "error";
   error?: string;
+  waveformData?: string;
+  duration?: number;
 };
 
 export default function PlaylistView({ playlistId, onBack }: Props) {
@@ -42,9 +45,25 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
       file,
       title: file.name.replace(/\.[^.]+$/, ""),
       progress: 0,
-      status: "ready",
+      status: "decoding",
     }));
     setPendingUploads((prev) => [...prev, ...items]);
+
+    // decode peaks in the background so they're ready by the time the user
+    // hits [upload] — failures here are non-fatal, the upload still works
+    // without waveform data.
+    items.forEach(async (item) => {
+      try {
+        const { peaks, duration } = await extractPeaks(item.file);
+        updatePending(item.id, {
+          status: "ready",
+          waveformData: JSON.stringify(peaks),
+          duration,
+        });
+      } catch {
+        updatePending(item.id, { status: "ready" });
+      }
+    });
   }
 
   function updatePending(id: string, patch: Partial<PendingUpload>) {
@@ -64,6 +83,8 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     try {
       await tracksApi.upload(playlistId, item.file, {
         title: item.title.trim() || undefined,
+        waveformData: item.waveformData,
+        duration: item.duration,
         onProgress: (pct) => updatePending(id, { progress: pct }),
       });
       removePending(id);
@@ -337,6 +358,7 @@ function PendingTrackRow({
   onCancel: () => void;
 }) {
   const pct = Math.round(item.progress * 100);
+  const isDecoding = item.status === "decoding";
   const isUploading = item.status === "uploading";
   const isError = item.status === "error";
 
@@ -421,7 +443,20 @@ function PendingTrackRow({
         </span>
       )}
 
-      {!isUploading && (
+      {isDecoding && (
+        <span
+          className="dots"
+          style={{
+            color: "var(--fg-dim)",
+            fontSize: "11px",
+            position: "relative",
+          }}
+        >
+          decoding
+        </span>
+      )}
+
+      {!isUploading && !isDecoding && (
         <button
           onClick={onStart}
           title="Start upload"

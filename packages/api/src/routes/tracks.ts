@@ -13,6 +13,9 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
   const file = formData.get("file") as File | null;
   const playlistId = formData.get("playlistId") as string | null;
   const customTitle = formData.get("title") as string | null;
+  const waveformData = formData.get("waveformData") as string | null;
+  const durationRaw = formData.get("duration") as string | null;
+  const duration = durationRaw ? parseFloat(durationRaw) : null;
 
   if (!file || !playlistId) {
     return c.json({ error: "file and playlistId required" }, 400);
@@ -62,6 +65,8 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
       position,
       originalKey: key,
       streamKey: key, // serve original directly until transcoding is added
+      waveformData: waveformData || null,
+      duration: duration && isFinite(duration) ? duration : null,
     })
     .returning();
 

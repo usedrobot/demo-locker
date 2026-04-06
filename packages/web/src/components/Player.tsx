@@ -24,10 +24,7 @@ export default function Player() {
   // load comments with timestamps for the current track
   const trackId = state.track?.id;
   useEffect(() => {
-    if (!trackId) {
-      setTrackComments([]);
-      return;
-    }
+    if (!trackId) return;
     let cancelled = false;
     const fetchComments = () => {
       commentsApi.forTrack(trackId).then((r) => {
@@ -234,7 +231,7 @@ export default function Player() {
 
             {/* Comment avatar markers */}
             {duration > 0 &&
-              trackComments.map((c) => {
+              (trackId ? trackComments : []).map((c) => {
                 const pct = Math.max(0, Math.min(1, (c.timestampSec ?? 0) / duration));
                 const initial = (c.authorName?.trim()?.[0] ?? "?").toUpperCase();
                 const color = avatarColor(c.authorName || "?");

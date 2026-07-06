@@ -7,6 +7,9 @@
       "binding": "DEMOS_BUCKET",
       "bucket_name": "demo-locker-demos"
     }
-  ]
+  ],
+  "assets": {
+    "directory": "../player/dist"
+  }
   // DATABASE_URL and limit vars are set as secrets/env via wrangler or dashboard
 }

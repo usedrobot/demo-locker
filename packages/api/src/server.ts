@@ -71,6 +71,10 @@ async function main() {
     );
   }
 
+  const playerBundle = process.env.PLAYER_DIST || "../player/dist/embed.js";
+  const embedJs = existsSync(playerBundle) ? readFileSync(playerBundle, "utf-8") : undefined;
+  console.log(embedJs ? `embed: serving ${playerBundle}` : `embed: not serving (no build at ${playerBundle})`);
+
   // Worker-style bindings, passed to every request via app.fetch's env arg.
   // (Don't inject via app.use — index.ts registers routes at import time,
   // so any middleware added here would run after the route handlers.)
@@ -80,6 +84,7 @@ async function main() {
     MAX_PLAYLISTS: process.env.MAX_PLAYLISTS,
     MAX_STORAGE_BYTES: process.env.MAX_STORAGE_BYTES,
     MAX_COLLABORATORS: process.env.MAX_COLLABORATORS,
+    EMBED_JS: embedJs,
   };
 
   // --- static web app (all-in-one mode) ---

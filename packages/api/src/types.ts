@@ -11,6 +11,7 @@ export type Bindings = {
   MAX_PLAYLISTS?: string;
   MAX_STORAGE_BYTES?: string;
   MAX_COLLABORATORS?: string;
+  EMBED_JS?: string;
 };
 
 export type Env = {

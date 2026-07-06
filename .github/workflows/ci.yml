@@ -73,6 +73,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm install
+      - run: npm run build -w packages/player
       - run: npx wrangler deploy
         working-directory: packages/api
         env:

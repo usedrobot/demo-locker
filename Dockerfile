@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY packages/api/package.json packages/api/
 COPY packages/web/package.json packages/web/
+COPY packages/player/package.json packages/player/
 RUN npm install
 
 # --- API ---
@@ -30,10 +31,17 @@ WORKDIR /app/packages/web
 ENV VITE_API_URL=""
 RUN npm run build
 
+# --- Player bundle (embed.js) ---
+FROM base AS player-build
+COPY packages/player packages/player
+WORKDIR /app/packages/player
+RUN npm run build
+
 # --- Standalone: API + web + embedded db, one container, one volume ---
 FROM base AS standalone
 COPY packages/api packages/api
 COPY --from=standalone-web-build /app/packages/web/dist packages/web/dist
+COPY --from=player-build /app/packages/player/dist packages/player/dist
 WORKDIR /app/packages/api
 ENV DATA_DIR=/data
 ENV WEB_DIST=../web/dist

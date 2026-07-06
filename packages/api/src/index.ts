@@ -28,6 +28,18 @@ app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+app.get("/embed.js", (c) => {
+  if (!c.env.EMBED_JS) {
+    return c.text("player bundle not available on this deployment", 404);
+  }
+  return new Response(c.env.EMBED_JS, {
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+});
+
 app.route("/auth", auth);
 app.route("/playlists", playlists);
 app.route("/comments", comments);

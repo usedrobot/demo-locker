@@ -57,17 +57,16 @@ async function main() {
     console.log(`storage: local disk (${audioDir}) — set S3_ENDPOINT to use S3`);
   }
 
-  // Inject Worker-style bindings from process.env
-  app.use("/*", async (c, next) => {
-    (c as any).env = {
-      DATABASE_URL: databaseUrl,
-      DEMOS_BUCKET: bucket,
-      MAX_PLAYLISTS: process.env.MAX_PLAYLISTS,
-      MAX_STORAGE_BYTES: process.env.MAX_STORAGE_BYTES,
-      MAX_COLLABORATORS: process.env.MAX_COLLABORATORS,
-    };
-    return next();
-  });
+  // Worker-style bindings, passed to every request via app.fetch's env arg.
+  // (Don't inject via app.use — index.ts registers routes at import time,
+  // so any middleware added here would run after the route handlers.)
+  const bindings = {
+    DATABASE_URL: databaseUrl,
+    DEMOS_BUCKET: bucket,
+    MAX_PLAYLISTS: process.env.MAX_PLAYLISTS,
+    MAX_STORAGE_BYTES: process.env.MAX_STORAGE_BYTES,
+    MAX_COLLABORATORS: process.env.MAX_COLLABORATORS,
+  };
 
   // --- static web app (all-in-one mode) ---
   // Path is relative to the packages/api working directory.
@@ -87,7 +86,7 @@ async function main() {
 
   const port = Number(process.env.PORT) || 3001;
 
-  serve({ fetch: app.fetch, port }, () => {
+  serve({ fetch: (request) => app.fetch(request, bindings), port }, () => {
     console.log(`demo-locker api (self-hosted) running on :${port}`);
   });
 }

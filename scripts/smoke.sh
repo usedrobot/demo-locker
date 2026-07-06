@@ -64,7 +64,22 @@ curl -fsS -X POST "$BASE/comments" \
   | jq -re .comment.id >/dev/null || { echo "FAIL: comment"; exit 1; }
 
 echo "→ SPA served"
-curl -fsS "$BASE/" | grep -qi "<!doctype html" || { echo "FAIL: no SPA at /"; exit 1; }
+INDEX_HTML=$(curl -fsS "$BASE/")
+echo "$INDEX_HTML" | grep -qi "<!doctype html" || { echo "FAIL: no SPA at /"; exit 1; }
+
+echo "→ hashed asset served correctly"
+ASSET_PATH=$(echo "$INDEX_HTML" | grep -oE '/assets/[^"]+\.js' | head -1)
+[ -n "$ASSET_PATH" ] || { echo "FAIL: no /assets/*.js reference found in index.html"; exit 1; }
+ASSET_HEADERS=$(curl -fsS -D - -o /dev/null "$BASE$ASSET_PATH")
+ASSET_STATUS=$(echo "$ASSET_HEADERS" | head -1 | grep -oE '[0-9]{3}')
+[ "$ASSET_STATUS" = "200" ] || { echo "FAIL: expected 200 for $ASSET_PATH, got $ASSET_STATUS"; exit 1; }
+echo "$ASSET_HEADERS" | grep -qi '^content-type:.*javascript' \
+  || { echo "FAIL: $ASSET_PATH missing javascript content-type"; exit 1; }
+if echo "$ASSET_HEADERS" | grep -qi '^cache-control:.*immutable'; then
+  echo "  (bonus) Cache-Control: immutable confirmed for $ASSET_PATH"
+else
+  echo "  WARN: $ASSET_PATH Cache-Control missing 'immutable'"
+fi
 
 echo "→ restart container, verify persistence"
 docker restart dl-smoke >/dev/null

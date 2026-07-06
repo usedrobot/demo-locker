@@ -86,7 +86,32 @@ async function main() {
 
   const port = Number(process.env.PORT) || 3001;
 
-  serve({ fetch: (request) => app.fetch(request, bindings), port }, () => {
+  // index.ts (frozen, shared with the Workers build) stamps every response
+  // with `Cache-Control: no-store` via a middleware that sets the header
+  // *after* next() resolves. Because that middleware is registered before
+  // the static-file serving added here, it is the outermost layer of the
+  // onion and always runs its post-next code last — so any header we set
+  // from a middleware registered in this file (including serveStatic's
+  // onFound) gets clobbered by it (verified empirically). The only place
+  // that runs strictly after the whole Hono middleware chain finishes is
+  // this fetch wrapper, so hashed Vite assets get their cache header fixed
+  // up here instead.
+  async function fetchWithAssetCaching(request: Request): Promise<Response> {
+    const response = await app.fetch(request, bindings);
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname.startsWith("/assets/") && response.ok) {
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    }
+    return response;
+  }
+
+  serve({ fetch: fetchWithAssetCaching, port }, () => {
     console.log(`demo-locker api (self-hosted) running on :${port}`);
   });
 }

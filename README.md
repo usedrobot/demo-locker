@@ -45,6 +45,8 @@ For development, or to run against your own Postgres + S3, see below.
 
 ## Self-Host
 
+New to hosting? Start with [Host Your Music](docs/host-your-music.md) — the beginner guide.
+
 The Postgres + S3 path, for production deployments or local development:
 
 ```bash

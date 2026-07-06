@@ -1,5 +1,11 @@
 # Self-Hosting Demo Locker
 
+This page covers the Postgres + S3 path — separate database and storage
+services, meant for production deployments or local development where you
+want full control over each piece. If you just want your music online
+without managing a database or a storage bucket, use the standalone
+image and see [Host Your Music](host-your-music.md) instead.
+
 ## Requirements
 
 - **Docker** + **Docker Compose** (recommended)

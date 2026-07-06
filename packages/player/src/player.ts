@@ -99,7 +99,7 @@ class DemoLockerPlayer extends HTMLElement {
     }
     this.renderStatus("loading…");
     try {
-      const res = await fetch(`${this.instance}/public/v1/playlists/${playlistId}`);
+      const res = await fetch(`${this.instance}/public/v1/playlists/${encodeURIComponent(playlistId)}`);
       if (!res.ok) throw new Error(String(res.status));
       this.data = (await res.json()).playlist;
       this.render();
@@ -113,7 +113,7 @@ class DemoLockerPlayer extends HTMLElement {
   }
 
   private streamUrl(trackId: string): string {
-    return `${this.instance}/public/v1/tracks/${trackId}/stream`;
+    return `${this.instance}/public/v1/tracks/${encodeURIComponent(trackId)}/stream`;
   }
 
   private play(index: number) {
@@ -160,14 +160,11 @@ class DemoLockerPlayer extends HTMLElement {
   private render() {
     if (!this.data) return;
     const playing = this.current >= 0 && !this.audio.paused;
-    const artwork = this.data.artworkUrl
-      ? `<img class="artwork" part="artwork" src="${this.instance}${this.data.artworkUrl}" alt="">`
-      : `<div class="artwork empty" part="artwork">♫</div>`;
 
     this.shadow.innerHTML = `
       <style>${STYLES}</style>
       <div class="header" part="header">
-        ${artwork}
+        <div class="artwork-slot"></div>
         <div class="title" part="title"></div>
       </div>
       <div class="transport" part="transport">
@@ -180,6 +177,22 @@ class DemoLockerPlayer extends HTMLElement {
       <ul class="tracks" part="tracklist"></ul>
       <div class="footer" part="footer"><a href="https://github.com/usedrobot/demo-locker" target="_blank" rel="noopener">demo locker</a></div>
     `;
+
+    const slot = this.shadow.querySelector(".artwork-slot")!;
+    if (this.data.artworkUrl) {
+      const img = document.createElement("img");
+      img.className = "artwork";
+      img.setAttribute("part", "artwork");
+      img.alt = "";
+      img.src = new URL(this.data.artworkUrl, this.instance).href;
+      slot.replaceWith(img);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "artwork empty";
+      empty.setAttribute("part", "artwork");
+      empty.textContent = "♫";
+      slot.replaceWith(empty);
+    }
 
     this.shadow.querySelector(".title")!.textContent = this.data.name;
 

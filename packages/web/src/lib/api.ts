@@ -17,7 +17,7 @@ export function getToken() {
 // so prefer VITE_API_URL when set; fall back to same-origin for the
 // standalone image where the web app is served alongside the API.
 export function getApiOrigin(): string {
-  return import.meta.env.VITE_API_URL || window.location.origin;
+  return API_URL || window.location.origin;
 }
 
 async function request<T>(

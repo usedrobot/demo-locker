@@ -63,6 +63,23 @@ curl -fsS -X POST "$BASE/comments" \
   -d "{\"trackId\":\"$TRACK_ID\",\"authorName\":\"smoke\",\"body\":\"sounds rough. ship it.\",\"timestampSec\":0.1}" \
   | jq -re .comment.id >/dev/null || { echo "FAIL: comment"; exit 1; }
 
+echo "→ public API boundary"
+STATUS=$(curl -fsS -o /dev/null -w '%{http_code}' "$BASE/public/v1/playlists/$PLAYLIST_ID" || true)
+[ "$STATUS" = "404" ] || { echo "FAIL: private playlist visible publicly (got $STATUS)"; exit 1; }
+
+echo "→ make public"
+curl -fsS -X PATCH "$BASE/playlists/$PLAYLIST_ID" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"isPublic":true}' | jq -re '.playlist.isPublic' | grep -q true
+
+echo "→ public metadata + unauthenticated range stream"
+PUB_TRACK=$(curl -fsS "$BASE/public/v1/playlists/$PLAYLIST_ID" | jq -re '.playlist.tracks[0].id')
+STATUS=$(curl -fsS -o /dev/null -w '%{http_code}' -H "Range: bytes=0-99" "$BASE/public/v1/tracks/$PUB_TRACK/stream")
+[ "$STATUS" = "206" ] || { echo "FAIL: public stream expected 206, got $STATUS"; exit 1; }
+
+echo "→ embed.js served"
+curl -fsS -o /dev/null -w '%{content_type}' "$BASE/embed.js" | grep -q javascript || { echo "FAIL: embed.js"; exit 1; }
+
 echo "→ SPA served"
 INDEX_HTML=$(curl -fsS "$BASE/")
 echo "$INDEX_HTML" | grep -qi "<!doctype html" || { echo "FAIL: no SPA at /"; exit 1; }

@@ -22,6 +22,7 @@ async function main() {
 
   // --- database ---
   let databaseUrl: string;
+  let dbIsZeroDep = false;
   if (process.env.DATABASE_URL) {
     databaseUrl = process.env.DATABASE_URL;
     setDbFactory((url: string) => {
@@ -37,10 +38,12 @@ async function main() {
     databaseUrl = "pglite";
     setDbFactory(() => pgliteDb);
     console.log(`db: pglite (${dbDir}) — set DATABASE_URL to use Postgres`);
+    dbIsZeroDep = true;
   }
 
   // --- storage ---
   let bucket: StorageBucket;
+  let storageIsZeroDep = false;
   if (process.env.S3_ENDPOINT) {
     bucket = createS3Bucket({
       endpoint: process.env.S3_ENDPOINT,
@@ -55,6 +58,17 @@ async function main() {
     await mkdir(audioDir, { recursive: true }); // fail fast if DATA_DIR unwritable
     bucket = createFsBucket(audioDir);
     console.log(`storage: local disk (${audioDir}) — set S3_ENDPOINT to use S3`);
+    storageIsZeroDep = true;
+  }
+
+  if (dbIsZeroDep || storageIsZeroDep) {
+    const parts: string[] = [];
+    if (dbIsZeroDep) parts.push("db is embedded (pglite)");
+    if (storageIsZeroDep) parts.push("storage is local disk");
+    console.warn(
+      `⚠ zero-dependency mode: ${parts.join(" and ")} — all data lives under ${dataDir}. ` +
+        "If you expected Postgres/S3, check your DATABASE_URL / S3_ENDPOINT env vars.",
+    );
   }
 
   // Worker-style bindings, passed to every request via app.fetch's env arg.
@@ -76,6 +90,7 @@ async function main() {
     // SPA fallback — GETs that matched no API route or file get index.html
     const indexHtml = readFileSync(join(webDist, "index.html"), "utf-8");
     app.notFound((c) => {
+      if (c.req.path.startsWith("/assets/")) return c.text("not found", 404);
       if (c.req.method === "GET") return c.html(indexHtml);
       return c.text("not found", 404);
     });

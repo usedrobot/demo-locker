@@ -122,8 +122,14 @@ export function createFsBucket(root: string): StorageBucket {
 
     async delete(key) {
       const path = pathFor(key);
-      await unlink(path).catch(() => {});
-      await unlink(`${path}.dlmeta`).catch(() => {});
+      function logIfUnexpected(target: string) {
+        return (err: NodeJS.ErrnoException) => {
+          if (err.code === "ENOENT") return;
+          console.warn(`storage-fs: failed to delete ${target}: ${err.message}`);
+        };
+      }
+      await unlink(path).catch(logIfUnexpected(key));
+      await unlink(`${path}.dlmeta`).catch(logIfUnexpected(key));
     },
   };
 }

@@ -74,8 +74,9 @@ describe("createFsBucket", () => {
 
     const obj = await bucket.get("k", { range: { offset: 2, length: 4 } });
     expect((await streamToBuffer(obj!.body)).toString()).toBe("2345");
-    // size is the FULL object size (matches S3 driver semantics used by the
-    // stream route to compute Content-Range)
+    // size is the FULL object size. NOTE: the S3 driver returns the partial
+    // slice length on ranged gets; callers must not rely on size after a
+    // ranged get — tracks.ts derives Content-Range from an unranged get.
     expect(obj!.size).toBe(10);
   });
 

@@ -14,7 +14,7 @@ image and see [Host Your Music](host-your-music.md) instead.
 ## Quick Start (Docker)
 
 ```bash
-git clone https://github.com/fldl/demo-locker.git
+git clone https://github.com/usedrobot/demo-locker.git
 cd demo-locker
 cp .env.example .env
 docker compose up

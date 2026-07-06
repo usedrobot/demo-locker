@@ -2,7 +2,7 @@
 // Zero-dependency mode: with no DATABASE_URL / S3_ENDPOINT set, runs on
 // embedded PGlite + local-disk storage under DATA_DIR (default ./data).
 
-import { existsSync, statSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
@@ -73,20 +73,12 @@ async function main() {
   // Path is relative to the packages/api working directory.
   const webDist = process.env.WEB_DIST || "../web/dist";
   if (existsSync(webDist)) {
-    // Serve static files if they exist; otherwise continue to SPA fallback
-    app.use("*", async (c, next) => {
-      const requestPath = c.req.path === "/" ? "/index.html" : c.req.path;
-      const filePath = join(webDist, requestPath);
-      if (existsSync(filePath) && statSync(filePath).isFile()) {
-        return await serveStatic({ root: webDist })(c, next);
-      }
-      return next();
-    });
-    // SPA fallback — only reached when no API route or file matched
-    app.get("*", (c) => {
-      const indexPath = join(webDist, "index.html");
-      const html = readFileSync(indexPath, "utf-8");
-      return c.html(html);
+    app.use("*", serveStatic({ root: webDist }));
+    // SPA fallback — GETs that matched no API route or file get index.html
+    const indexHtml = readFileSync(join(webDist, "index.html"), "utf-8");
+    app.notFound((c) => {
+      if (c.req.method === "GET") return c.html(indexHtml);
+      return c.text("not found", 404);
     });
     console.log(`web: serving ${webDist}`);
   } else {

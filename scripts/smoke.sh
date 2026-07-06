@@ -75,11 +75,8 @@ ASSET_STATUS=$(echo "$ASSET_HEADERS" | head -1 | grep -oE '[0-9]{3}')
 [ "$ASSET_STATUS" = "200" ] || { echo "FAIL: expected 200 for $ASSET_PATH, got $ASSET_STATUS"; exit 1; }
 echo "$ASSET_HEADERS" | grep -qi '^content-type:.*javascript' \
   || { echo "FAIL: $ASSET_PATH missing javascript content-type"; exit 1; }
-if echo "$ASSET_HEADERS" | grep -qi '^cache-control:.*immutable'; then
-  echo "  (bonus) Cache-Control: immutable confirmed for $ASSET_PATH"
-else
-  echo "  WARN: $ASSET_PATH Cache-Control missing 'immutable'"
-fi
+echo "$ASSET_HEADERS" | grep -qi '^cache-control:.*immutable' \
+  || { echo "FAIL: asset missing immutable Cache-Control"; exit 1; }
 
 echo "→ restart container, verify persistence"
 docker restart dl-smoke >/dev/null

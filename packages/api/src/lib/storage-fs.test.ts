@@ -1,8 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, unlink } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFsBucket } from "./storage-fs.js";
+
+const createReadStreamSpy = vi.hoisted(() => ({ count: 0 }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    createReadStream: (...args: Parameters<typeof actual.createReadStream>) => {
+      createReadStreamSpy.count++;
+      return actual.createReadStream(...args);
+    },
+  };
+});
 
 async function streamToBuffer(stream: ReadableStream): Promise<Buffer> {
   const chunks: Uint8Array[] = [];
@@ -92,39 +104,42 @@ describe("createFsBucket", () => {
     // Regression test for a leaked file descriptor: the stream route calls
     // get() once for size/metadata (and may never read that body), then
     // calls get() again for the actual range read. If get() opened the file
-    // eagerly, calling it 50x without reading any body would leak 50 fds.
-    // We can't portably count open fds cross-platform (macOS has no
-    // /proc/self/fd), so instead we prove laziness directly: delete the
-    // underlying file *after* get() resolves but *before* reading the body.
-    // With an eager createReadStream, the fd would already be open and the
-    // read would still succeed. With a lazy stream, the file is opened only
-    // on first read, so the read must fail once the file is gone.
+    // eagerly, calling it N times without reading any body would leak N fds.
+    // We prove laziness directly by spying on node:fs's createReadStream and
+    // counting invocations, rather than racing an unlink against the async
+    // open (which is not discriminating — it also "passes" against an eager
+    // implementation whenever the unlink wins the race).
     const bucket = createFsBucket(root);
     await bucket.put("lazy/track.wav", Buffer.from("some audio bytes"));
 
+    createReadStreamSpy.count = 0;
+
     const obj = await bucket.get("lazy/track.wav");
     expect(obj).not.toBeNull();
+    const rangedObj = await bucket.get("lazy/track.wav", { range: { offset: 0, length: 4 } });
+    expect(rangedObj).not.toBeNull();
 
-    await unlink(join(root, "lazy/track.wav"));
+    // Two get() calls, no reads yet — the file must not have been opened.
+    expect(createReadStreamSpy.count).toBe(0);
 
-    await expect(streamToBuffer(obj!.body)).rejects.toThrow();
+    expect((await streamToBuffer(obj!.body)).toString()).toBe("some audio bytes");
+    expect(createReadStreamSpy.count).toBe(1);
+
+    // The second (ranged) body was never read — still lazy, still unopened.
+    expect(createReadStreamSpy.count).toBe(1);
   });
 
-  it("survives many unread get() calls without leaking fds, and a later body read still works", async () => {
+  it("cancel() on an unread body does not error, and never opens more than once", async () => {
     const bucket = createFsBucket(root);
-    await bucket.put("busy/track.wav", Buffer.from("some audio bytes"));
+    await bucket.put("cancel/track.wav", Buffer.from("some audio bytes"));
 
-    const objects = [];
-    for (let i = 0; i < 50; i++) {
-      objects.push(await bucket.get("busy/track.wav"));
-    }
+    createReadStreamSpy.count = 0;
 
-    // A fresh get()/read still works normally after 50 unread gets — proves
-    // no fd exhaustion (EMFILE) and no eager-open crash.
-    const fresh = await bucket.get("busy/track.wav");
-    expect((await streamToBuffer(fresh!.body)).toString()).toBe("some audio bytes");
+    const obj = await bucket.get("cancel/track.wav");
+    await expect(obj!.body.cancel()).resolves.not.toThrow();
 
-    // One of the earlier (unread) objects can still be read fine too.
-    expect((await streamToBuffer(objects[25]!.body)).toString()).toBe("some audio bytes");
+    // Cancelling before any read may or may not have opened the file
+    // (spec allows either), but it must never open more than once.
+    expect(createReadStreamSpy.count).toBeLessThanOrEqual(1);
   });
 });

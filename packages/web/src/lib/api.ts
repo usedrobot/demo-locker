@@ -2,6 +2,12 @@ const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
 let token: string | null = localStorage.getItem("token");
 
+// Share/invite token for the anonymous invite flow. Not persisted — it lives
+// only for the lifetime of an invite page view (set by Invite.tsx). Legacy
+// gated endpoints accept it as EITHER a Bearer header (fetches) or a `?token=`
+// query param (media elements). See packages/api/src/lib/playlist-access.ts.
+let shareToken: string | null = null;
+
 export function setToken(t: string | null) {
   token = t;
   if (t) localStorage.setItem("token", t);
@@ -10,6 +16,21 @@ export function setToken(t: string | null) {
 
 export function getToken() {
   return token;
+}
+
+export function setShareToken(t: string | null) {
+  shareToken = t;
+}
+
+export function getShareToken() {
+  return shareToken;
+}
+
+// The token to hang off media URLs (<audio>/<img>), which can't send headers.
+// Prefer the session token (logged-in owner view); fall back to the invite
+// share token (anonymous invite view).
+function mediaToken(): string | null {
+  return token || shareToken;
 }
 
 // Origin to use for public-facing URLs (embed snippets, public API links).
@@ -28,7 +49,10 @@ async function request<T>(
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Session token (owner) OR share token (invite listener). The API tries a
+  // Bearer token as both a session and a share token, so either works.
+  const authToken = token || shareToken;
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
 
@@ -116,9 +140,17 @@ export const playlists = {
     }
     return res.json();
   },
-  artworkUrl: (id: string, artworkKey: string | null) =>
-    artworkKey ? `${API_URL}/playlists/${id}/artwork?v=${encodeURIComponent(artworkKey)}` : null,
-  artworkUrlUnchecked: (id: string) => `${API_URL}/playlists/${id}/artwork`,
+  artworkUrl: (id: string, artworkKey: string | null) => {
+    if (!artworkKey) return null;
+    const t = mediaToken();
+    const auth = t ? `&token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/playlists/${id}/artwork?v=${encodeURIComponent(artworkKey)}${auth}`;
+  },
+  artworkUrlUnchecked: (id: string) => {
+    const t = mediaToken();
+    const auth = t ? `?token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/playlists/${id}/artwork${auth}`;
+  },
 };
 
 // Tracks
@@ -171,7 +203,11 @@ export const tracks = {
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.send(formData);
     }),
-  streamUrl: (id: string) => `${API_URL}/tracks/${id}/stream`,
+  streamUrl: (id: string) => {
+    const t = mediaToken();
+    const auth = t ? `?token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/tracks/${id}/stream${auth}`;
+  },
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),
 };

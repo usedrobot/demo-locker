@@ -39,28 +39,74 @@ jobs:
   publish-image:
     needs: [check, test, smoke]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           target: standalone
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ghcr.io/usedrobot/demo-locker:latest
-            ghcr.io/usedrobot/demo-locker:${{ github.sha }}
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=standalone-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=standalone-${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/usedrobot/demo-locker,push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-manifest:
+    needs: publish-image
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/usedrobot/demo-locker:latest \
+            -t ghcr.io/usedrobot/demo-locker:${{ github.sha }} \
+            $(printf 'ghcr.io/usedrobot/demo-locker@sha256:%s ' *)
+      - name: Inspect
+        run: docker buildx imagetools inspect ghcr.io/usedrobot/demo-locker:latest
 
   deploy-api:
     needs: [check, test]

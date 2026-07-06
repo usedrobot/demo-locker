@@ -7,6 +7,46 @@ import { dirname, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import type { StorageBucket, StorageObject } from "./storage.js";
 
+// Builds a pull-based web ReadableStream that does NOT open the underlying
+// file (and therefore does not hold a file descriptor) until the first
+// pull(). This matters because a caller (e.g. the range-request stream
+// route) may call get() once just to inspect size/metadata and never read
+// that first body — an eagerly-opened createReadStream would leak an fd on
+// every such call.
+function lazyFileStream(
+  path: string,
+  range?: { start: number; end: number },
+): ReadableStream<Uint8Array> {
+  let inner: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let nodeStream: ReturnType<typeof createReadStream> | null = null;
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!inner) {
+        nodeStream = range ? createReadStream(path, range) : createReadStream(path);
+        inner = (Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>).getReader();
+      }
+      try {
+        const { done, value } = await inner.read();
+        if (done) {
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    cancel() {
+      nodeStream?.destroy();
+    },
+  }, new ByteLengthQueuingStrategy({ highWaterMark: 0 }));
+  // highWaterMark: 0 disables the ReadableStream spec's default behavior of
+  // eagerly calling pull() once right after construction to pre-fill the
+  // internal queue — without this, the file would be opened on a microtask
+  // shortly after get() returns, even if the consumer never reads the body.
+}
+
 export function createFsBucket(root: string): StorageBucket {
   const rootAbs = resolve(root);
 
@@ -63,15 +103,18 @@ export function createFsBucket(root: string): StorageBucket {
         // no sidecar — content type unknown
       }
 
-      const nodeStream = options?.range
-        ? createReadStream(path, {
-            start: options.range.offset,
-            end: options.range.offset + options.range.length - 1,
-          })
-        : createReadStream(path);
+      const body = lazyFileStream(
+        path,
+        options?.range
+          ? {
+              start: options.range.offset,
+              end: options.range.offset + options.range.length - 1,
+            }
+          : undefined,
+      );
 
       return {
-        body: Readable.toWeb(nodeStream) as unknown as ReadableStream,
+        body,
         size,
         httpMetadata: { contentType },
       } as StorageObject;

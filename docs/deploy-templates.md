@@ -40,6 +40,8 @@ After the first build completes, two manual steps are required:
 
 **Cost note:** Railway operates on a hobby plan ($5/month minimum). Your app will consume approximately 2–3 GB of storage for the volume plus runtime compute.
 
+Run exactly one instance/replica. The embedded database is single-process, and two containers sharing the same `/data` volume will corrupt it.
+
 Once deployed, open the service URL shown in your Railway dashboard. Your data lives in the volume — use the Railway dashboard to snapshot or export it to back up.
 
 ## Coolify
@@ -55,6 +57,8 @@ Deploy to Coolify (self-hosted or managed) with Dockerfile or Docker Compose.
 3. Deploy.
 
 Coolify automatically provisions HTTPS via its integrated reverse proxy — no manual certificate setup required. Your app is accessible at the URL provided by Coolify's dashboard.
+
+Run exactly one instance/replica. The embedded database is single-process, and two containers sharing the same `/data` volume will corrupt it.
 
 Your data lives in the volume — use Coolify's backup tools to snapshot the volume for disaster recovery.
 

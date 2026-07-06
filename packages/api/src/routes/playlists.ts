@@ -89,6 +89,7 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name) updates.name = body.name;
   if (body.artworkKey !== undefined) updates.artworkKey = body.artworkKey;
+  if (typeof body.isPublic === "boolean") updates.isPublic = body.isPublic;
 
   const [updated] = await db
     .update(playlists)

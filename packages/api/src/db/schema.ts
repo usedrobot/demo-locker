@@ -5,6 +5,7 @@ import {
   integer,
   real,
   uuid,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
@@ -30,6 +31,7 @@ export const playlists = pgTable("playlists", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   artworkKey: text("artwork_key"),
+  isPublic: boolean("is_public").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -1,9 +1,9 @@
 // Single access-control seam for the legacy (non-`/public/v1`) playlist,
 // track, and comment routes. Phase B publishes playlist IDs on the open web,
 // so an unguessable ID is no longer a capability. A request may read/write
-// private playlist data iff it presents:
-//   (a) a valid session whose user OWNS the playlist, OR
-//   (b) a valid, unexpired share/invite token that maps to the playlist.
+// private playlist data iff it presents a valid, unexpired session or
+// share/invite token that maps to the playlist (a session token only grants
+// access when it belongs to the playlist's owner).
 //
 // NOTE on the data model: `shares` has no user column — "collaborators" are
 // represented entirely by share tokens (shares.playlistId -> token), which map
@@ -20,8 +20,6 @@ import { playlists, sessions, shares } from "../db/schema.js";
 import type { Env } from "../types.js";
 
 type AccessCreds = {
-  // Already-resolved session user (e.g. from a requireAuth-style middleware).
-  sessionUser?: { id: string } | null;
   // A raw token that may be EITHER a session token or a share token. Media
   // elements (<audio>/<img>) send this as `?token=`; fetches may send it as a
   // Bearer header — both are treated identically here.
@@ -42,15 +40,10 @@ export async function canAccessPlaylist(
     .limit(1);
   if (!playlist) return false; // nonexistent — indistinguishable from private
 
-  // (a) already-resolved owner session
-  if (creds.sessionUser && creds.sessionUser.id === playlist.ownerId) {
-    return true;
-  }
-
   const token = creds.token;
   if (!token) return false;
 
-  // (b) token as a share/invite token mapping to THIS playlist
+  // token as a share/invite token mapping to THIS playlist
   const [share] = await db
     .select({ expiresAt: shares.expiresAt })
     .from(shares)

@@ -97,7 +97,12 @@ tracksRouter.get("/:id/stream", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  return buildStreamResponse(c.req.header("Range"), c.env.DEMOS_BUCKET, track.streamKey);
+  return buildStreamResponse(
+    c.req.header("Range"),
+    c.env.DEMOS_BUCKET,
+    track.streamKey,
+    "private, max-age=3600"
+  );
 });
 
 // Delete a track

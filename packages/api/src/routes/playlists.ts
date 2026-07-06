@@ -172,7 +172,7 @@ playlistsRouter.get("/:id/artwork", async (c) => {
     "Content-Type",
     object.httpMetadata?.contentType || "image/jpeg"
   );
-  headers.set("Cache-Control", "public, max-age=3600");
+  headers.set("Cache-Control", "private, max-age=3600");
   if (object.size) headers.set("Content-Length", String(object.size));
 
   return new Response(object.body, { headers });

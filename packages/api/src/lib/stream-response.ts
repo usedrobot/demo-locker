@@ -5,7 +5,8 @@ import type { StorageBucket } from "./storage.js";
 export async function buildStreamResponse(
   rangeHeader: string | undefined,
   bucket: StorageBucket,
-  key: string
+  key: string,
+  cacheControl: string = "public, max-age=3600"
 ): Promise<Response> {
   const object = await bucket.get(key);
   if (!object) {
@@ -15,7 +16,7 @@ export async function buildStreamResponse(
   const headers = new Headers();
   headers.set("Content-Type", object.httpMetadata?.contentType || "audio/mpeg");
   headers.set("Accept-Ranges", "bytes");
-  headers.set("Cache-Control", "public, max-age=3600");
+  headers.set("Cache-Control", cacheControl);
 
   if (rangeHeader && object.size) {
     const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);

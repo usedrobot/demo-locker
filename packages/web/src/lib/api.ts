@@ -27,10 +27,13 @@ export function getShareToken() {
 }
 
 // The token to hang off media URLs (<audio>/<img>), which can't send headers.
-// Prefer the session token (logged-in owner view); fall back to the invite
-// share token (anonymous invite view).
+// While an invite view is mounted, shareToken is set and MUST win over any
+// (possibly stale, possibly foreign) session token sitting in localStorage —
+// otherwise the gate gets the wrong credential and 404s the invite. Outside
+// the invite view shareToken is always null, so this falls through to the
+// session token with no change in behavior for the logged-in app.
 function mediaToken(): string | null {
-  return token || shareToken;
+  return shareToken || token;
 }
 
 // Origin to use for public-facing URLs (embed snippets, public API links).
@@ -49,9 +52,12 @@ async function request<T>(
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  // Session token (owner) OR share token (invite listener). The API tries a
-  // Bearer token as both a session and a share token, so either works.
-  const authToken = token || shareToken;
+  // Share token (invite listener) wins whenever the invite view is mounted —
+  // see mediaToken() above for why session token must not shadow it there.
+  // shareToken is null outside the invite view, so logged-in requests are
+  // unaffected. The API tries a Bearer token as both a session and a share
+  // token, so either works.
+  const authToken = shareToken || token;
   if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });

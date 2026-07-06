@@ -69,8 +69,9 @@ put across restarts.
 **The honest caveats:**
 
 - Your laptop has to stay on and awake. On macOS, run
-  `caffeinate -d` in a terminal to stop it sleeping while the tunnel
-  runs. On Linux, disable sleep in your power settings (e.g.
+  `caffeinate -s` in a terminal — `-s` stops the Mac from sleeping
+  while it's plugged into power; keep the lid open and the charger
+  connected. On Linux, disable sleep in your power settings (e.g.
   `systemctl mask sleep.target` on most distros).
 - Your home internet's upload speed caps how many people can listen at
   once. A 320 kbps stream needs about 0.32 Mbit/s of upload bandwidth. A
@@ -145,8 +146,9 @@ instructions for Fly.io, Railway, and Coolify.
 
 **The honest caveat:** these platforms change their pricing and free
 allowances often, and as of this writing both Fly.io and Railway require
-a credit card on file even for their cheapest tiers. Expect roughly
-$2–5/month, similar to the VPS path, just with less server maintenance.
+a credit card on file even for their cheapest tiers. Fly.io roughly
+$2–5/month, Railway has a $5/month minimum, similar to the VPS path,
+just with less server maintenance.
 
 ## How loud can this get?
 

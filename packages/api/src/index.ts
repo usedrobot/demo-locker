@@ -5,6 +5,7 @@ import playlists from "./routes/playlists.js";
 import comments from "./routes/comments.js";
 import shares from "./routes/shares.js";
 import tracks from "./routes/tracks.js";
+import publicRouter from "./routes/public.js";
 import type { Env } from "./types.js";
 
 const app = new Hono<Env>();
@@ -14,7 +15,11 @@ app.use("/*", cors());
 // no caching on API responses
 app.use("/*", async (c, next) => {
   await next();
-  if (!c.req.path.includes("/stream")) {
+  if (
+    !c.req.path.includes("/stream") &&
+    !c.req.path.startsWith("/public/") &&
+    c.req.path !== "/embed.js"
+  ) {
     c.header("Cache-Control", "no-store");
   }
 });
@@ -28,5 +33,6 @@ app.route("/playlists", playlists);
 app.route("/comments", comments);
 app.route("/shares", shares);
 app.route("/tracks", tracks);
+app.route("/public/v1", publicRouter);
 
 export default app;

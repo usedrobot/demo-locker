@@ -8,6 +8,13 @@
       "when": 1775401500403,
       "tag": "0000_colossal_cassandra_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783355217014,
+      "tag": "0001_heavy_photon",
+      "breakpoints": true
     }
   ]
 }

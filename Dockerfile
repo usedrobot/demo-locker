@@ -22,3 +22,21 @@ RUN npm run build
 FROM nginx:alpine AS web
 COPY --from=web-build /app/packages/web/dist /usr/share/nginx/html
 EXPOSE 80
+
+# --- Standalone web build (same-origin API) ---
+FROM base AS standalone-web-build
+COPY packages/web packages/web
+WORKDIR /app/packages/web
+ENV VITE_API_URL=""
+RUN npm run build
+
+# --- Standalone: API + web + embedded db, one container, one volume ---
+FROM base AS standalone
+COPY packages/api packages/api
+COPY --from=standalone-web-build /app/packages/web/dist packages/web/dist
+WORKDIR /app/packages/api
+ENV DATA_DIR=/data
+ENV WEB_DIST=../web/dist
+VOLUME /data
+EXPOSE 3001
+CMD ["npx", "tsx", "src/server.ts"]

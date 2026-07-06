@@ -1,0 +1,23 @@
+# Fly.io deploy for the standalone (zero-dependency) image.
+# Usage: fly launch --copy-config --no-deploy && fly volumes create data --size 3 && fly deploy
+app = "demo-locker"
+primary_region = "mia"
+
+[build]
+  dockerfile = "Dockerfile"
+  build-target = "standalone"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

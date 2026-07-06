@@ -33,14 +33,21 @@ A web app for sharing and sequencing unfinished music demos. Upload rough mixes,
 
 ## Quick Start
 
+One container, zero external services — database and audio files live in a single volume:
+
 ```bash
-cp .env.example .env
-docker compose up
+docker run -d -v demolocker:/data -p 3001:3001 ghcr.io/usedrobot/demo-locker:latest
 ```
 
-Frontend at `localhost:5173`, API at `localhost:3001`.
+Open `http://localhost:3001`. That's the whole stack.
+
+For development, or to run against your own Postgres + S3, see below.
 
 ## Self-Host
+
+New to hosting? Start with [Host Your Music](docs/host-your-music.md) — the beginner guide.
+
+The Postgres + S3 path, for production deployments or local development:
 
 ```bash
 git clone https://github.com/usedrobot/demo-locker.git

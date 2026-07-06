@@ -4,3 +4,4 @@ dist/
 .dev.vars
 *.local
 .DS_Store
+packages/api/data/

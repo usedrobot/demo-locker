@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
+import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import type { Env } from "../types.js";
 
@@ -74,7 +75,10 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
   return c.json({ track }, 201);
 });
 
-// Stream a track from R2
+// Stream a track from R2 — gated by the parent playlist. <audio> can't send an
+// Authorization header, so a `?token=` query param (session OR share token) is
+// also accepted (see lib/playlist-access.ts). Public playlists stream anonymously
+// via the separate /public/v1/tracks/:id/stream route.
 tracksRouter.get("/:id/stream", async (c) => {
   const trackId = c.req.param("id");
   const db = getDb(c.env.DATABASE_URL);
@@ -86,6 +90,10 @@ tracksRouter.get("/:id/stream", async (c) => {
     .limit(1);
 
   if (!track || !track.streamKey) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
     return c.json({ error: "not found" }, 404);
   }
 

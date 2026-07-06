@@ -3,6 +3,7 @@ import { eq, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
+import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
@@ -52,6 +53,12 @@ playlistsRouter.post("/", requireAuth, async (c) => {
 playlistsRouter.get("/:id", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
+
+  // Gate: owner session or a valid share token (see lib/playlist-access.ts).
+  // Anything else is indistinguishable from a nonexistent playlist.
+  if (!(await requestCanAccessPlaylist(c, id))) {
+    return c.json({ error: "not found" }, 404);
+  }
 
   const [playlist] = await db
     .select()
@@ -136,10 +143,16 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
   return c.json({ playlist: updated });
 });
 
-// Stream playlist artwork — public so invitees can see it too
+// Stream playlist artwork — gated to owner session or a valid share token.
+// <img> can't send an Authorization header, so a `?token=` query param
+// (session OR share token) is also accepted.
 playlistsRouter.get("/:id/artwork", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
+
+  if (!(await requestCanAccessPlaylist(c, id))) {
+    return c.json({ error: "not found" }, 404);
+  }
 
   const [playlist] = await db
     .select()

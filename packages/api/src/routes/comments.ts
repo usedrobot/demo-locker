@@ -3,6 +3,7 @@ import { eq, and, isNull, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { comments, tracks, playlists, sessions, users } from "../db/schema.js";
 import { generateToken } from "../lib/auth.js";
+import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
 import type { Env } from "../types.js";
 
 const commentsRouter = new Hono<Env>();
@@ -45,21 +46,24 @@ commentsRouter.post("/", async (c) => {
 
   const db = getDb(c.env.DATABASE_URL);
 
+  // Resolve the playlist this comment targets, then gate on it: only the
+  // owner's session or a valid share token may comment (the invite-listener
+  // flow). Anonymous without a token is indistinguishable from a nonexistent
+  // target -> the same non-enumerable 404.
+  let targetPlaylistId: string | null = null;
   if (trackId) {
     const [track] = await db
-      .select({ id: tracks.id })
+      .select({ playlistId: tracks.playlistId })
       .from(tracks)
       .where(eq(tracks.id, trackId))
       .limit(1);
-    if (!track) return c.json({ error: "track not found" }, 404);
+    targetPlaylistId = track?.playlistId ?? null;
+  } else if (playlistId) {
+    targetPlaylistId = playlistId;
   }
-  if (playlistId && !trackId) {
-    const [playlist] = await db
-      .select({ id: playlists.id })
-      .from(playlists)
-      .where(eq(playlists.id, playlistId))
-      .limit(1);
-    if (!playlist) return c.json({ error: "playlist not found" }, 404);
+
+  if (!(await requestCanAccessPlaylist(c, targetPlaylistId))) {
+    return c.json({ error: "not found" }, 404);
   }
 
   const deleteToken = generateToken();
@@ -86,6 +90,15 @@ commentsRouter.get("/track/:trackId", async (c) => {
   const trackId = c.req.param("trackId");
   const db = getDb(c.env.DATABASE_URL);
 
+  const [track] = await db
+    .select({ playlistId: tracks.playlistId })
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+  if (!(await requestCanAccessPlaylist(c, track?.playlistId ?? null))) {
+    return c.json({ error: "not found" }, 404);
+  }
+
   const all = await db
     .select()
     .from(comments)
@@ -106,6 +119,10 @@ commentsRouter.get("/track/:trackId", async (c) => {
 commentsRouter.get("/playlist/:playlistId", async (c) => {
   const playlistId = c.req.param("playlistId");
   const db = getDb(c.env.DATABASE_URL);
+
+  if (!(await requestCanAccessPlaylist(c, playlistId))) {
+    return c.json({ error: "not found" }, 404);
+  }
 
   const all = await db
     .select()

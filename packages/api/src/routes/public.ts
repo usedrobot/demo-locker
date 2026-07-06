@@ -1,7 +1,7 @@
 // Unauthenticated read-only API for playlists marked public.
 // Rule: private and nonexistent are indistinguishable — same 404 body.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { eq, and, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
@@ -12,6 +12,12 @@ const publicRouter = new Hono<Env>();
 
 const NOT_FOUND = { error: "not found" } as const;
 
+// Intermediaries must never cache a pre-publish or post-revocation 404.
+function notFound(c: Context<Env>) {
+  c.header("Cache-Control", "no-store");
+  return c.json(NOT_FOUND, 404);
+}
+
 publicRouter.get("/playlists/:id", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
@@ -21,7 +27,7 @@ publicRouter.get("/playlists/:id", async (c) => {
     .from(playlists)
     .where(and(eq(playlists.id, id), eq(playlists.isPublic, true)))
     .limit(1);
-  if (!playlist) return c.json(NOT_FOUND, 404);
+  if (!playlist) return notFound(c);
 
   const trackRows = await db
     .select({ id: tracks.id, title: tracks.title, duration: tracks.duration })
@@ -49,10 +55,10 @@ publicRouter.get("/playlists/:id/artwork", async (c) => {
     .from(playlists)
     .where(and(eq(playlists.id, id), eq(playlists.isPublic, true)))
     .limit(1);
-  if (!playlist || !playlist.artworkKey) return c.json(NOT_FOUND, 404);
+  if (!playlist || !playlist.artworkKey) return notFound(c);
 
   const object = await c.env.DEMOS_BUCKET.get(playlist.artworkKey);
-  if (!object) return c.json(NOT_FOUND, 404);
+  if (!object) return notFound(c);
 
   return new Response(object.body, {
     headers: {
@@ -72,7 +78,7 @@ publicRouter.get("/tracks/:id/stream", async (c) => {
     .innerJoin(playlists, eq(tracks.playlistId, playlists.id))
     .where(and(eq(tracks.id, id), eq(playlists.isPublic, true)))
     .limit(1);
-  if (!row || !row.streamKey) return c.json(NOT_FOUND, 404);
+  if (!row || !row.streamKey) return notFound(c);
 
   return buildStreamResponse(c.req.header("Range"), c.env.DEMOS_BUCKET, row.streamKey);
 });

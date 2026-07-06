@@ -15,6 +15,7 @@ let publicId: string;
 let privateId: string;
 let publicTrackId: string;
 let privateTrackId: string;
+let publicWithArtworkId: string;
 
 beforeAll(async () => {
   db = await createPgliteDb();
@@ -52,6 +53,15 @@ beforeAll(async () => {
     .returning();
   publicTrackId = tPub.id;
   privateTrackId = tPriv.id;
+
+  await bucket.put("k-art", Buffer.from("fake-png-bytes"), {
+    httpMetadata: { contentType: "image/png" },
+  });
+  const [pubArt] = await db
+    .insert(playlists)
+    .values({ ownerId: user.id, name: "public with art", isPublic: true, artworkKey: "k-art" })
+    .returning();
+  publicWithArtworkId = pubArt.id;
 });
 
 afterAll(async () => {
@@ -110,5 +120,23 @@ describe("public API boundary", () => {
   it("sets short public caching on metadata (not no-store)", async () => {
     const res = await app.request(`/public/v1/playlists/${publicId}`, {}, env);
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=60");
+  });
+
+  it("404s artwork for a private playlist identically to the standard not-found body", async () => {
+    const res = await app.request(`/public/v1/playlists/${privateId}/artwork`, {}, env);
+    const missing = await app.request(
+      `/public/v1/playlists/00000000-0000-0000-0000-000000000000/artwork`,
+      {},
+      env
+    );
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe(await missing.text());
+  });
+
+  it("serves artwork for a public playlist with the correct content type", async () => {
+    const res = await app.request(`/public/v1/playlists/${publicWithArtworkId}/artwork`, {}, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/png");
+    expect(await res.text()).toBe("fake-png-bytes");
   });
 });

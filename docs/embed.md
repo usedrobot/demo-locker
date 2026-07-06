@@ -16,6 +16,8 @@ Any playlist you mark public can be dropped into another site with two lines of 
 | `playlist` | yes | The playlist ID to load. Must belong to a playlist marked public. |
 | `instance` | no | The origin to fetch metadata and audio from, e.g. `https://your-box`. Defaults to the origin the `<script src>` was loaded from, so if you're loading `embed.js` from the same box that hosts the playlist, you can omit it. Set it explicitly if you're loading the script from one origin and the playlist lives on another (rare — most people won't need this). |
 
+Attributes are read once, when the element is connected to the page — the component has no `observedAttributes`, so changing `playlist` (or `instance`) on an already-connected element has no effect. Set the attribute before inserting the element, or remove and recreate the element if you need to switch playlists.
+
 ## Theming
 
 The player ships with the same TUI look as the rest of Demo Locker — dark, monospace, no rounded corners. Every visual value is a `--dl-*` custom property, so you can override the whole look from your page's CSS without touching the component's internals:
@@ -82,7 +84,7 @@ Range-capable audio stream — point an `<audio>` element's `src` straight at it
 A few rules that matter if you're building against this directly:
 
 - **A playlist that isn't public and a playlist that doesn't exist return the same 404.** There's no way to distinguish "private" from "never existed" from the response. Don't build logic that depends on telling them apart.
-- **CORS is wide open (`*`) on `/public/v1/*` only.** This is deliberate — the whole point is that anyone's site can embed anyone's public playlist. It has no bearing on the private API, which keeps its normal CORS behavior.
+- **CORS is wide open (`*`) across the whole API**, not just `/public/v1/*`. That's deliberate for the public endpoints — the whole point is that anyone's site can embed anyone's public playlist. The private API isn't protected by CORS at all; its protection is bearer-token / share-token auth, so an open CORS policy doesn't expose it to unauthenticated cross-origin reads.
 - Metadata responses are cacheable (`Cache-Control: public, max-age=60`); the stream keeps its existing cache headers.
 
 ## Roll your own player
@@ -90,3 +92,5 @@ A few rules that matter if you're building against this directly:
 You don't need our component. The public API is the SDK: fetch `/public/v1/playlists/:id` for metadata, then point an `<audio>` tag at `/public/v1/tracks/:id/stream` for each track. That's the entire integration surface — build whatever UI you want on top of it.
 
 On distribution: loading `/embed.js` from your own instance is the supported path today, and it's the one we recommend — the player version always matches your instance's API, so there's nothing to keep in sync. An npm package (`@demo-locker/player`) for build-time bundling is planned but not shipped yet. If you end up loading the script from a CDN in the meantime, pin an exact version and use Subresource Integrity (SRI) — don't point at a floating `latest`.
+
+Running `wrangler deploy` locally requires a player build to exist first (the Worker serves `/embed.js` from the built assets); `packages/api`'s `deploy` script now runs the player build before `wrangler deploy` so this is handled automatically.

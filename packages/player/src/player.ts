@@ -119,13 +119,18 @@ class DemoLockerPlayer extends HTMLElement {
   private play(index: number) {
     if (!this.data || !this.data.tracks[index]) return;
     if (this.current === index) {
-      if (this.audio.paused) this.audio.play();
-      else this.audio.pause();
+      if (this.audio.paused) {
+        this.audio.play().catch(() => {
+          /* autoplay blocked or load error — transport stays paused */
+        });
+      } else this.audio.pause();
       return;
     }
     this.current = index;
     this.audio.src = this.streamUrl(this.data.tracks[index].id);
-    this.audio.play();
+    this.audio.play().catch(() => {
+      /* autoplay blocked or load error — transport stays paused */
+    });
     this.render();
   }
 
@@ -143,9 +148,11 @@ class DemoLockerPlayer extends HTMLElement {
     const time = this.shadow.querySelector(".time");
     const seek = this.shadow.querySelector<HTMLInputElement>(".seek");
     if (time) {
-      time.textContent = `${formatTime(this.audio.currentTime)} / ${formatTime(
-        this.audio.duration || this.data?.tracks[this.current]?.duration || null
-      )}`;
+      const duration =
+        Number.isFinite(this.audio.duration) && this.audio.duration > 0
+          ? this.audio.duration
+          : (this.data?.tracks[this.current]?.duration ?? null);
+      time.textContent = `${formatTime(this.audio.currentTime)} / ${formatTime(duration)}`;
     }
     if (seek && this.audio.duration) {
       seek.value = String((this.audio.currentTime / this.audio.duration) * 100);

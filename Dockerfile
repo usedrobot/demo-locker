@@ -7,9 +7,16 @@ COPY packages/web/package.json packages/web/
 COPY packages/player/package.json packages/player/
 RUN npm install
 
+# --- Player bundle (embed.js) ---
+FROM base AS player-build
+COPY packages/player packages/player
+WORKDIR /app/packages/player
+RUN npm run build
+
 # --- API ---
 FROM base AS api
 COPY packages/api packages/api
+COPY --from=player-build /app/packages/player/dist packages/player/dist
 WORKDIR /app/packages/api
 CMD ["npx", "tsx", "src/server.ts"]
 
@@ -29,12 +36,6 @@ FROM base AS standalone-web-build
 COPY packages/web packages/web
 WORKDIR /app/packages/web
 ENV VITE_API_URL=""
-RUN npm run build
-
-# --- Player bundle (embed.js) ---
-FROM base AS player-build
-COPY packages/player packages/player
-WORKDIR /app/packages/player
 RUN npm run build
 
 # --- Standalone: API + web + embedded db, one container, one volume ---

@@ -3,6 +3,7 @@ import {
   playlists as api,
   tracks as tracksApi,
   auth,
+  getApiOrigin,
   type Playlist,
   type Track,
 } from "../lib/api";
@@ -143,6 +144,12 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     await api.reorder(playlistId, trackIds);
   }
 
+  async function togglePublic() {
+    if (!playlist) return;
+    const updated = await api.update(playlist.id, { isPublic: !playlist.isPublic });
+    setPlaylist(updated.playlist);
+  }
+
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId);
 
   if (!playlist) {
@@ -168,10 +175,43 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
             <h2 style={{ color: "var(--fg)", fontSize: "18px", fontFamily: "var(--font)", fontWeight: "normal" }}>
               {playlist.name}
             </h2>
+            {isOwner && (
+              <button
+                onClick={togglePublic}
+                style={{ ...linkStyle, color: "var(--accent)", marginTop: "0.4rem" }}
+              >
+                [{playlist.isPublic ? "make private" : "make public"}]
+              </button>
+            )}
           </div>
           <Upload onPick={queueUploads} />
         </div>
       </div>
+
+      {playlist.isPublic && (
+        <div className="box" style={{ marginBottom: "1rem" }}>
+          <div className="box-header">public — embed on any site</div>
+          <textarea
+            readOnly
+            rows={2}
+            value={`<script src="${getApiOrigin()}/embed.js"></script>\n<demo-locker-player playlist="${playlist.id}"></demo-locker-player>`}
+            onFocus={(e) => e.currentTarget.select()}
+            style={{
+              width: "100%",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              color: "var(--fg)",
+              fontFamily: "var(--font)",
+              fontSize: "12px",
+              padding: "0.5rem",
+              resize: "vertical",
+            }}
+          />
+          <div style={{ color: "var(--fg-dim)", fontSize: "11px", marginTop: "0.5rem" }}>
+            api: {getApiOrigin()}/public/v1/playlists/{playlist.id}
+          </div>
+        </div>
+      )}
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
         <TrackList

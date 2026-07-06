@@ -12,6 +12,14 @@ export function getToken() {
   return token;
 }
 
+// Origin to use for public-facing URLs (embed snippets, public API links).
+// For the split hosted deploy (Pages + Worker) the SPA origin != API origin,
+// so prefer VITE_API_URL when set; fall back to same-origin for the
+// standalone image where the web app is served alongside the API.
+export function getApiOrigin(): string {
+  return import.meta.env.VITE_API_URL || window.location.origin;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
@@ -54,6 +62,7 @@ export type Playlist = {
   name: string;
   ownerId: string;
   artworkKey: string | null;
+  isPublic: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -79,7 +88,7 @@ export const playlists = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
-  update: (id: string, data: Partial<Pick<Playlist, "name" | "artworkKey">>) =>
+  update: (id: string, data: Partial<Pick<Playlist, "name" | "artworkKey" | "isPublic">>) =>
     request<{ playlist: Playlist }>(`/playlists/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

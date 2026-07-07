@@ -4,12 +4,12 @@
 ┌──────────────────────────────┐
 │  demo locker                 │
 │  ──────────────────────────  │
-│  private demos. sequenced.   │
-│  commented. yours.           │
+│  self-hosted music streaming │
+│  private demos. embeds.      │
 └──────────────────────────────┘
 ```
 
-A web app for sharing and sequencing unfinished music demos. Upload rough mixes, arrange them into playlists, listen back-to-back, and leave timestamped comments — from your phone on a morning walk.
+A web app for **self-hosted music streaming**: share and sequence unfinished demos with **private demo sharing**, or publish a playlist as an **embeddable music player for your own website**. Upload rough mixes, arrange them into playlists, listen back-to-back, leave timestamped comments — from your phone on a morning walk — or drop a public player on your band's site with two lines of HTML.
 
 **Open source. Self-hostable. MIT licensed.**
 
@@ -17,12 +17,14 @@ A web app for sharing and sequencing unfinished music demos. Upload rough mixes,
 
 - **Dropbox** can't playlist demos or play them back-to-back. Stream quality is garbage.
 - **SoundCloud** is too much platform. Too public. Too focused on getting you to be a content creator.
+- Streaming platforms own your distribution. Demo Locker means your music streams from a box you control.
 - **Demo Locker** is for works in progress. The audience is you, your band, and your collaborators — not the world.
 
 ## Features
 
 - Upload WAV, AIFF, MP3, FLAC, M4A
 - Arrange tracks into playlists, drag to reorder
+- Public player — mark a playlist public, embed it on any site with two lines ([docs](docs/embed.md))
 - Back-to-back playback with auto-advance
 - Timestamped comments on tracks (click the waveform)
 - General comments on playlists
@@ -30,9 +32,10 @@ A web app for sharing and sequencing unfinished music demos. Upload rough mixes,
 - Edit-level sharing for collaborators who need to reorder/upload
 - Mobile-first PWA with background audio and lock screen controls
 - TUI aesthetic — monospace, box-drawing, dark mode only
-- Public player — mark a playlist public, embed it on any site with two lines ([docs](docs/embed.md))
 
 ## Quick Start
+
+**Setting this up with an AI agent?** Point it at [AGENTS.md](AGENTS.md) — a step-by-step runbook with verification for every step. Machine-readable map: [llms.txt](llms.txt). Running instances self-describe at /openapi.json.
 
 One container, zero external services — database and audio files live in a single volume:
 

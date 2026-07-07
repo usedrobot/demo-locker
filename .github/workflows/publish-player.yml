@@ -1,0 +1,56 @@
+# Publishes @demo-locker/player to npm on tags matching player-v*.
+#
+# One-time setup (already done? verify on npmjs.com):
+#   1. Create the npm org "demo-locker" (free, public packages).
+#   2. On npmjs.com → package @demo-locker/player → Settings → Trusted publisher:
+#      GitHub Actions, repository usedrobot/demo-locker, workflow publish-player.yml.
+#      (For the FIRST publish, npm lets you configure the trusted publisher on the
+#      org/package name before any version exists — do that, then push the tag.)
+#   No npm token is stored anywhere; auth is OIDC (id-token: write) + provenance.
+#
+# Release procedure: bump "version" in packages/player/package.json, commit to main,
+#   git tag player-vX.Y.Z && git push origin player-vX.Y.Z
+
+name: Publish player
+
+on:
+  push:
+    tags: ["player-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # npm ci (not npm install): the publish build must be byte-reproducible
+      # from the committed lockfile — supply-chain hardening for the one job
+      # that ships code to third parties. Other CI jobs keep npm install.
+      - run: npm ci
+      - run: npm run typecheck -w packages/player
+      - run: npm run build -w packages/player
+      - run: npm test -w packages/player
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#player-v}"
+          PKG_VERSION="$(node -p "require('./packages/player/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "tag says $TAG_VERSION but package.json says $PKG_VERSION" >&2
+            exit 1
+          fi
+      - name: Verify build artifacts
+        run: |
+          for f in player.js player.d.ts embed.js; do
+            if [ ! -s "packages/player/dist/$f" ]; then
+              echo "missing or empty dist/$f" >&2
+              exit 1
+            fi
+          done
+      - run: npm publish --provenance --access public -w packages/player

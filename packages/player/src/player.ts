@@ -76,6 +76,7 @@ class DemoLockerPlayer extends HTMLElement {
   private audio = new Audio();
   private data: PlaylistData | null = null;
   private current = -1;
+  private loadGeneration = 0;
 
   constructor() {
     super();
@@ -98,17 +99,23 @@ class DemoLockerPlayer extends HTMLElement {
       return;
     }
     this.renderStatus("loading…");
+    const gen = ++this.loadGeneration;
     try {
       const res = await fetch(`${this.instance}/public/v1/playlists/${encodeURIComponent(playlistId)}`);
+      if (gen !== this.loadGeneration) return;
       if (!res.ok) throw new Error(String(res.status));
-      this.data = (await res.json()).playlist;
+      const json = await res.json();
+      if (gen !== this.loadGeneration) return;
+      this.data = json.playlist;
       this.render();
     } catch {
+      if (gen !== this.loadGeneration) return;
       this.renderStatus("playlist unavailable");
     }
   }
 
   disconnectedCallback() {
+    this.loadGeneration++;
     this.audio.pause();
   }
 

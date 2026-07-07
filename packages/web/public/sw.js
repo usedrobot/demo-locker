@@ -1,4 +1,4 @@
-const CACHE_NAME = "demo-locker-v2";
+const CACHE_NAME = "demo-locker-v3";
 const SHELL_ASSETS = ["/", "/index.html"];
 
 self.addEventListener("install", (event) => {
@@ -25,6 +25,9 @@ self.addEventListener("fetch", (event) => {
   // skip non-GET and any cross-origin request (API, R2, etc.)
   if (request.method !== "GET") return;
   if (new URL(request.url).origin !== self.location.origin) return;
+
+  // Private media is token-gated and revocable — never cache it.
+  if (/^\/(tracks\/[^/]+\/stream|playlists\/[^/]+\/artwork)/.test(new URL(request.url).pathname)) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {

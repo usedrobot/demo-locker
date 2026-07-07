@@ -24,6 +24,8 @@ CMD ["npx", "tsx", "src/server.ts"]
 FROM base AS web-build
 COPY packages/web packages/web
 WORKDIR /app/packages/web
+ARG VITE_API_URL=http://localhost:3001
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 # --- Web serve ---

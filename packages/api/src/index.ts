@@ -12,14 +12,12 @@ const app = new Hono<Env>();
 
 app.use("/*", cors());
 
-// no caching on API responses
+// no caching on API responses by default — but never clobber a
+// Cache-Control a handler set deliberately (e.g. private artwork's
+// `private, max-age=3600`, public metadata's `public, max-age=60`).
 app.use("/*", async (c, next) => {
   await next();
-  if (
-    !c.req.path.includes("/stream") &&
-    !c.req.path.startsWith("/public/") &&
-    c.req.path !== "/embed.js"
-  ) {
+  if (!c.res.headers.get("Cache-Control")) {
     c.header("Cache-Control", "no-store");
   }
 });
@@ -28,6 +26,11 @@ app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// On the Cloudflare Workers deployment, this route never actually executes:
+// Workers assets are served ahead of the Worker by Cloudflare's assets-first
+// routing, so a built /embed.js asset in the deploy answers the request
+// before Hono runs. This handler only serves /embed.js on Node/standalone
+// (self-hosted) deployments where there is no separate asset layer.
 app.get("/embed.js", (c) => {
   if (!c.env.EMBED_JS) {
     return c.text("player bundle not available on this deployment", 404);

@@ -6,7 +6,7 @@ import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createPgliteDb } from "../db/pglite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
-import { users, playlists, tracks } from "../db/schema.js";
+import { users, playlists, tracks, sessions } from "../db/schema.js";
 
 let db: Database;
 let root: string;
@@ -16,6 +16,8 @@ let privateId: string;
 let publicTrackId: string;
 let privateTrackId: string;
 let publicWithArtworkId: string;
+let ownerToken: string;
+let privateWithArtworkId: string;
 
 beforeAll(async () => {
   db = await createPgliteDb();
@@ -62,6 +64,15 @@ beforeAll(async () => {
     .values({ ownerId: user.id, name: "public with art", isPublic: true, artworkKey: "k-art" })
     .returning();
   publicWithArtworkId = pubArt.id;
+
+  const future = new Date(Date.now() + 1000 * 60 * 60);
+  ownerToken = "sess-owner-token-cache-test";
+  await db.insert(sessions).values({ userId: user.id, token: ownerToken, expiresAt: future });
+  const [privArt] = await db
+    .insert(playlists)
+    .values({ ownerId: user.id, name: "private with art", artworkKey: "k-art" })
+    .returning();
+  privateWithArtworkId = privArt.id;
 });
 
 afterAll(async () => {
@@ -138,5 +149,15 @@ describe("public API boundary", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("image/png");
     expect(await res.text()).toBe("fake-png-bytes");
+  });
+
+  it("keeps the private artwork route's own Cache-Control (not clobbered by the no-store backstop)", async () => {
+    const res = await app.request(
+      `/playlists/${privateWithArtworkId}/artwork?token=${ownerToken}`,
+      {},
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
   });
 });

@@ -71,7 +71,7 @@ button:hover { border-color: var(--dl-accent); color: var(--dl-accent); }
 .footer a:hover { color: var(--dl-accent); }
 `;
 
-class DemoLockerPlayer extends HTMLElement {
+export class DemoLockerPlayer extends HTMLElement {
   private shadow: ShadowRoot;
   private audio = new Audio();
   private data: PlaylistData | null = null;
@@ -237,6 +237,12 @@ class DemoLockerPlayer extends HTMLElement {
     });
 
     this.updateTime();
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "demo-locker-player": DemoLockerPlayer;
   }
 }
 

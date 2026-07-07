@@ -24,7 +24,7 @@ A web app for **self-hosted music streaming**: share and sequence unfinished dem
 
 - Upload WAV, AIFF, MP3, FLAC, M4A
 - Arrange tracks into playlists, drag to reorder
-- Public player — mark a playlist public, embed it on any site with two lines ([docs](docs/embed.md))
+- Public player — mark a playlist public, embed it on any site with two lines, or `npm install @demo-locker/player` ([docs](docs/embed.md))
 - Back-to-back playback with auto-advance
 - Timestamped comments on tracks (click the waveform)
 - General comments on playlists

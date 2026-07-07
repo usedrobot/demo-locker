@@ -1,0 +1,66 @@
+# Publishes @demo-locker/player to npm on tags matching player-v*.
+#
+# One-time setup (already done? verify on npmjs.com):
+#   1. Create the npm org "demo-locker" (free, public packages).
+#   2. FIRST publish must be manual — npm cannot OIDC-publish a package that
+#      doesn't exist yet (npm/cli#8544), and the trusted-publisher settings
+#      page only exists for published packages. From merged main:
+#        npm login && npm run build -w packages/player && npm publish --access public -w packages/player
+#      then log out locally (npm logout). The first version has no provenance
+#      badge; every release after this one does.
+#   3. On npmjs.com → package @demo-locker/player → Settings → Trusted publishing:
+#      GitHub Actions / org usedrobot / repository demo-locker / workflow
+#      publish-player.yml (filename only) / environment blank / allowed
+#      actions: "npm publish". Fields are case-sensitive.
+#   No npm token is stored anywhere; auth for this workflow is OIDC
+#   (id-token: write) + provenance.
+#
+# Release procedure (all versions AFTER the manual first publish): bump
+#   "version" in packages/player/package.json, commit to main,
+#   git tag player-vX.Y.Z && git push origin player-vX.Y.Z
+#   (Don't tag the manually-published version — the workflow would try to
+#   republish it and fail on the version-exists check.)
+
+name: Publish player
+
+on:
+  push:
+    tags: ["player-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # npm ci (not npm install): the publish build must be byte-reproducible
+      # from the committed lockfile — supply-chain hardening for the one job
+      # that ships code to third parties. Other CI jobs keep npm install.
+      - run: npm ci
+      - run: npm run typecheck -w packages/player
+      - run: npm run build -w packages/player
+      - run: npm test -w packages/player
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#player-v}"
+          PKG_VERSION="$(node -p "require('./packages/player/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "tag says $TAG_VERSION but package.json says $PKG_VERSION" >&2
+            exit 1
+          fi
+      - name: Verify build artifacts
+        run: |
+          for f in player.js player.d.ts embed.js; do
+            if [ ! -s "packages/player/dist/$f" ]; then
+              echo "missing or empty dist/$f" >&2
+              exit 1
+            fi
+          done
+      - run: npm publish --provenance --access public -w packages/player

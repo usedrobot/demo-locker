@@ -1,15 +1,48 @@
 {
   "name": "@demo-locker/player",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Embeddable music player web component for Demo Locker — self-hosted music streaming. Works with any instance serving /public/v1.",
+  "license": "MIT",
   "type": "module",
+  "main": "./dist/player.js",
+  "types": "./dist/player.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/player.d.ts",
+      "import": "./dist/player.js"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/usedrobot/demo-locker.git",
+    "directory": "packages/player"
+  },
+  "homepage": "https://github.com/usedrobot/demo-locker/blob/main/docs/embed.md",
+  "keywords": [
+    "web-component",
+    "music-player",
+    "embeddable-music-player",
+    "self-hosted",
+    "audio",
+    "playlist",
+    "demo-locker"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
-    "vite": "^8.0.1"
+    "vite": "^8.0.1",
+    "vitest": "^4.1.10",
+    "happy-dom": "^20.10.6"
   }
 }

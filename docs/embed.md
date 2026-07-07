@@ -11,6 +11,20 @@ Any playlist you mark public can be dropped into another site with two lines of 
 
 `your-box` is wherever you're self-hosting Demo Locker — the same origin that streams your audio. That's the whole trust model: the only third party involved is the box you already run.
 
+## Install from npm
+
+Building the page with a bundler or framework (Vite, Next, Astro, …)? The same component ships as [`@demo-locker/player`](https://www.npmjs.com/package/@demo-locker/player):
+
+```js
+import "@demo-locker/player";
+```
+
+```html
+<demo-locker-player instance="https://your-box" playlist="PLAYLIST_ID"></demo-locker-player>
+```
+
+One difference from the script tag: **`instance` is required**. A script tag loaded from your box auto-detects its origin; an npm-bundled module can't, so you point it at the instance explicitly. TypeScript types are included, and the `DemoLockerPlayer` class is a named export.
+
 ## Attributes
 
 | Attribute | Required | Description |

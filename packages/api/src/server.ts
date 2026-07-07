@@ -78,7 +78,7 @@ async function main() {
   const openapiPath = process.env.OPENAPI_PATH || "../../docs/openapi.json";
   const openapiJson = existsSync(openapiPath) ? readFileSync(openapiPath, "utf-8") : undefined;
   console.log(
-    openapiJson ? `openapi: serving ${openapiPath}` : `openapi: not serving (no build at ${openapiPath})`,
+    openapiJson ? `openapi: serving ${openapiPath}` : `openapi: not serving (no file at ${openapiPath})`,
   );
 
   // Worker-style bindings, passed to every request via app.fetch's env arg.

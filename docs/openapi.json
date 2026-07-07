@@ -5,7 +5,8 @@
     "version": "1.0.0",
     "description": "API for Demo Locker, a private-by-default demo/playlist sharing service. Most routes require a Bearer session token; media elements (<audio>/<img>) that cannot send an Authorization header instead accept the same token via a `?token=` query parameter (session token OR a per-playlist share/invite token \u2014 both are treated identically). Gated legacy routes never distinguish 'exists but private' from 'does not exist': any access failure returns a generic `{\"error\":\"not found\"}` 404 so private playlist/track/comment IDs cannot be enumerated by probing.",
     "license": {
-      "name": "UNLICENSED"
+      "name": "MIT",
+      "identifier": "MIT"
     }
   },
   "servers": [
@@ -1285,7 +1286,7 @@
                   },
                   "duration": {
                     "type": "string",
-                    "description": "Optional duration in seconds as a string (field name: duration), parsed with parseFloat; ignored if not finite."
+                    "description": "Optional duration in seconds as a string (field name: duration), parsed with parseFloat; ignored unless a finite, non-zero number."
                   }
                 },
                 "required": [

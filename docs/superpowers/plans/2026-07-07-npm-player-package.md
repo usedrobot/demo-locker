@@ -14,7 +14,7 @@
 - The component's runtime behavior must not change; `/embed.js` output keeps its filename, format (IIFE), and serving path on all three deploy targets.
 - No npm token may be added to GitHub secrets — publish uses OIDC trusted publishing with `--provenance`.
 - Publish workflow requires Node 24 (bundles npm ≥ 11.5, needed for OIDC); the existing CI jobs stay on Node 22.
-- Repo CI convention is `npm install` (not `npm ci`) — follow it.
+- Repo CI convention is `npm install` (not `npm ci`) — follow it, with ONE deliberate exception: the publish workflow (Task 5) uses `npm ci` so the published build is byte-reproducible from the committed lockfile.
 - Compatibility statement everywhere: "works with any Demo Locker instance serving `/public/v1`".
 - npm consumers must set the `instance` attribute explicitly — every new doc surface states this (ESM has no `document.currentScript`, so the auto-detect silently falls back to the embedding page's own origin, which is wrong for third-party sites).
 - No React/Vue wrappers, no API client, no changesets (spec's "Not doing" list).

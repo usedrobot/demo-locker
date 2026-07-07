@@ -3,6 +3,7 @@ import { eq, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
+import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
@@ -53,6 +54,12 @@ playlistsRouter.get("/:id", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
 
+  // Gate: owner session or a valid share token (see lib/playlist-access.ts).
+  // Anything else is indistinguishable from a nonexistent playlist.
+  if (!(await requestCanAccessPlaylist(c, id))) {
+    return c.json({ error: "not found" }, 404);
+  }
+
   const [playlist] = await db
     .select()
     .from(playlists)
@@ -89,6 +96,7 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name) updates.name = body.name;
   if (body.artworkKey !== undefined) updates.artworkKey = body.artworkKey;
+  if (typeof body.isPublic === "boolean") updates.isPublic = body.isPublic;
 
   const [updated] = await db
     .update(playlists)
@@ -135,10 +143,16 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
   return c.json({ playlist: updated });
 });
 
-// Stream playlist artwork — public so invitees can see it too
+// Stream playlist artwork — gated to owner session or a valid share token.
+// <img> can't send an Authorization header, so a `?token=` query param
+// (session OR share token) is also accepted.
 playlistsRouter.get("/:id/artwork", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
+
+  if (!(await requestCanAccessPlaylist(c, id))) {
+    return c.json({ error: "not found" }, 404);
+  }
 
   const [playlist] = await db
     .select()
@@ -158,7 +172,7 @@ playlistsRouter.get("/:id/artwork", async (c) => {
     "Content-Type",
     object.httpMetadata?.contentType || "image/jpeg"
   );
-  headers.set("Cache-Control", "public, max-age=3600");
+  headers.set("Cache-Control", "private, max-age=3600");
   if (object.size) headers.set("Content-Length", String(object.size));
 
   return new Response(object.body, { headers });

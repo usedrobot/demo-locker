@@ -45,6 +45,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: web
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
     ports:
       - "5173:80"
     depends_on:

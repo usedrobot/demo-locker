@@ -22,6 +22,16 @@ docker compose up
 
 That's it. Frontend at `:5173`, API at `:3001`.
 
+### Serving beyond localhost
+
+The `web` service's static build bakes in `VITE_API_URL` at build time (it's a
+client-side bundle, not a runtime server), so if you're serving the frontend
+to anything other than the machine running Docker, set `VITE_API_URL` in
+`.env` to your API's reachable address (e.g. `http://YOUR-HOST:3001` or a
+public URL) *before* running `docker compose build`. Otherwise every API
+call from the built app will target `http://localhost:3001`, which only
+works from the host machine itself.
+
 Docker Compose includes:
 - **Postgres** — database
 - **MinIO** — local S3-compatible storage (stands in for Cloudflare R2)

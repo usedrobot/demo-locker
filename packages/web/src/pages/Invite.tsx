@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   shares as sharesApi,
+  setShareToken,
   type Playlist,
   type Track,
 } from "../lib/api";
@@ -21,6 +22,9 @@ export default function Invite({ token }: Props) {
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
 
   useEffect(() => {
+    // Carry the invite/share token on every subsequent request and media URL
+    // (stream/artwork/comments) so the now-gated legacy endpoints authorize it.
+    setShareToken(token);
     sharesApi
       .resolveInvite(token)
       .then((r) => {
@@ -32,6 +36,7 @@ export default function Invite({ token }: Props) {
       .catch((err) => {
         setError(err instanceof Error ? err.message : "invalid invite");
       });
+    return () => setShareToken(null);
   }, [token]);
 
   useEffect(() => player.subscribe(setPlayerState), []);

@@ -28,7 +28,7 @@ Unauthenticated, read-only, versioned under `/public/v1/`:
 Rules:
 
 - Anything not public returns **404, indistinguishable from nonexistent** — private content is not enumerable and its existence is not leakable.
-- CORS is open (`*`) on `/public/v1/*` only; the private API's CORS behavior is unchanged.
+- CORS is open (`*`) on `/public/v1/*`. **Amended during implementation:** `cors()` is actually applied app-wide in `index.ts`, not scoped to `/public/v1/*` — the private API's CORS behavior is not "unchanged" as originally planned here. In practice this is safe because the private API's protection is bearer/share-token auth, not CORS; a narrower, `/public/v1/`-scoped CORS policy remains a nice-to-have for a future pass.
 - Hotlinking is accepted by design — it's open streaming. A future `ALLOWED_ORIGINS` env var can restrict embedding; documented as out of scope.
 - Responses are cacheable (`Cache-Control: public, max-age=60` on metadata; streams keep existing cache headers).
 - Works identically on both deploy targets (Worker and Node) — the routes live in the shared app.

@@ -2,6 +2,12 @@ const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
 let token: string | null = localStorage.getItem("token");
 
+// Share/invite token for the anonymous invite flow. Not persisted — it lives
+// only for the lifetime of an invite page view (set by Invite.tsx). Legacy
+// gated endpoints accept it as EITHER a Bearer header (fetches) or a `?token=`
+// query param (media elements). See packages/api/src/lib/playlist-access.ts.
+let shareToken: string | null = null;
+
 export function setToken(t: string | null) {
   token = t;
   if (t) localStorage.setItem("token", t);
@@ -12,6 +18,32 @@ export function getToken() {
   return token;
 }
 
+export function setShareToken(t: string | null) {
+  shareToken = t;
+}
+
+export function getShareToken() {
+  return shareToken;
+}
+
+// The token to hang off media URLs (<audio>/<img>), which can't send headers.
+// While an invite view is mounted, shareToken is set and MUST win over any
+// (possibly stale, possibly foreign) session token sitting in localStorage —
+// otherwise the gate gets the wrong credential and 404s the invite. Outside
+// the invite view shareToken is always null, so this falls through to the
+// session token with no change in behavior for the logged-in app.
+function mediaToken(): string | null {
+  return shareToken || token;
+}
+
+// Origin to use for public-facing URLs (embed snippets, public API links).
+// For the split hosted deploy (Pages + Worker) the SPA origin != API origin,
+// so prefer VITE_API_URL when set; fall back to same-origin for the
+// standalone image where the web app is served alongside the API.
+export function getApiOrigin(): string {
+  return API_URL || window.location.origin;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
@@ -20,7 +52,13 @@ async function request<T>(
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Share token (invite listener) wins whenever the invite view is mounted —
+  // see mediaToken() above for why session token must not shadow it there.
+  // shareToken is null outside the invite view, so logged-in requests are
+  // unaffected. The API tries a Bearer token as both a session and a share
+  // token, so either works.
+  const authToken = shareToken || token;
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
 
@@ -54,6 +92,7 @@ export type Playlist = {
   name: string;
   ownerId: string;
   artworkKey: string | null;
+  isPublic: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -79,7 +118,7 @@ export const playlists = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
-  update: (id: string, data: Partial<Pick<Playlist, "name" | "artworkKey">>) =>
+  update: (id: string, data: Partial<Pick<Playlist, "name" | "artworkKey" | "isPublic">>) =>
     request<{ playlist: Playlist }>(`/playlists/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -107,9 +146,17 @@ export const playlists = {
     }
     return res.json();
   },
-  artworkUrl: (id: string, artworkKey: string | null) =>
-    artworkKey ? `${API_URL}/playlists/${id}/artwork?v=${encodeURIComponent(artworkKey)}` : null,
-  artworkUrlUnchecked: (id: string) => `${API_URL}/playlists/${id}/artwork`,
+  artworkUrl: (id: string, artworkKey: string | null) => {
+    if (!artworkKey) return null;
+    const t = mediaToken();
+    const auth = t ? `&token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/playlists/${id}/artwork?v=${encodeURIComponent(artworkKey)}${auth}`;
+  },
+  artworkUrlUnchecked: (id: string) => {
+    const t = mediaToken();
+    const auth = t ? `?token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/playlists/${id}/artwork${auth}`;
+  },
 };
 
 // Tracks
@@ -162,7 +209,11 @@ export const tracks = {
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.send(formData);
     }),
-  streamUrl: (id: string) => `${API_URL}/tracks/${id}/stream`,
+  streamUrl: (id: string) => {
+    const t = mediaToken();
+    const auth = t ? `?token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/tracks/${id}/stream${auth}`;
+  },
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),
 };

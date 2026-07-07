@@ -4,11 +4,19 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY packages/api/package.json packages/api/
 COPY packages/web/package.json packages/web/
+COPY packages/player/package.json packages/player/
 RUN npm install
+
+# --- Player bundle (embed.js) ---
+FROM base AS player-build
+COPY packages/player packages/player
+WORKDIR /app/packages/player
+RUN npm run build
 
 # --- API ---
 FROM base AS api
 COPY packages/api packages/api
+COPY --from=player-build /app/packages/player/dist packages/player/dist
 WORKDIR /app/packages/api
 CMD ["npx", "tsx", "src/server.ts"]
 
@@ -16,6 +24,8 @@ CMD ["npx", "tsx", "src/server.ts"]
 FROM base AS web-build
 COPY packages/web packages/web
 WORKDIR /app/packages/web
+ARG VITE_API_URL=http://localhost:3001
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 # --- Web serve ---
@@ -34,6 +44,7 @@ RUN npm run build
 FROM base AS standalone
 COPY packages/api packages/api
 COPY --from=standalone-web-build /app/packages/web/dist packages/web/dist
+COPY --from=player-build /app/packages/player/dist packages/player/dist
 WORKDIR /app/packages/api
 ENV DATA_DIR=/data
 ENV WEB_DIST=../web/dist

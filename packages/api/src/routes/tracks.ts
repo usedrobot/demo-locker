@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
+import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
+import { buildStreamResponse } from "../lib/stream-response.js";
 import type { Env } from "../types.js";
 
 const tracksRouter = new Hono<Env>();
@@ -73,7 +75,10 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
   return c.json({ track }, 201);
 });
 
-// Stream a track from R2
+// Stream a track from R2 — gated by the parent playlist. <audio> can't send an
+// Authorization header, so a `?token=` query param (session OR share token) is
+// also accepted (see lib/playlist-access.ts). Public playlists stream anonymously
+// via the separate /public/v1/tracks/:id/stream route.
 tracksRouter.get("/:id/stream", async (c) => {
   const trackId = c.req.param("id");
   const db = getDb(c.env.DATABASE_URL);
@@ -88,37 +93,16 @@ tracksRouter.get("/:id/stream", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  const object = await c.env.DEMOS_BUCKET.get(track.streamKey);
-  if (!object) return c.json({ error: "file not found" }, 404);
-
-  const headers = new Headers();
-  headers.set("Content-Type", object.httpMetadata?.contentType || "audio/mpeg");
-  headers.set("Accept-Ranges", "bytes");
-  headers.set("Cache-Control", "public, max-age=3600");
-
-  // handle range requests for seeking
-  const range = c.req.header("Range");
-  if (range && object.size) {
-    const match = range.match(/bytes=(\d+)-(\d*)/);
-    if (match) {
-      const start = parseInt(match[1], 10);
-      const end = match[2] ? parseInt(match[2], 10) : object.size - 1;
-      const sliced = await c.env.DEMOS_BUCKET.get(track.streamKey, {
-        range: { offset: start, length: end - start + 1 },
-      });
-      if (sliced) {
-        headers.set("Content-Range", `bytes ${start}-${end}/${object.size}`);
-        headers.set("Content-Length", String(end - start + 1));
-        return new Response(sliced.body, { status: 206, headers });
-      }
-    }
+  if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
+    return c.json({ error: "not found" }, 404);
   }
 
-  if (object.size) {
-    headers.set("Content-Length", String(object.size));
-  }
-
-  return new Response(object.body, { headers });
+  return buildStreamResponse(
+    c.req.header("Range"),
+    c.env.DEMOS_BUCKET,
+    track.streamKey,
+    "private, max-age=3600"
+  );
 });
 
 // Delete a track

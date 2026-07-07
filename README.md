@@ -30,6 +30,7 @@ A web app for sharing and sequencing unfinished music demos. Upload rough mixes,
 - Edit-level sharing for collaborators who need to reorder/upload
 - Mobile-first PWA with background audio and lock screen controls
 - TUI aesthetic — monospace, box-drawing, dark mode only
+- Public player — mark a playlist public, embed it on any site with two lines ([docs](docs/embed.md))
 
 ## Quick Start
 

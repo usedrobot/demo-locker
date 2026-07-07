@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { createPgliteDb } from "./pglite.js";
-import { users, comments } from "./schema.js";
+import { users, comments, playlists } from "./schema.js";
 
 describe("createPgliteDb", () => {
   it("boots an in-memory db, runs migrations, and round-trips a row", async () => {
@@ -25,5 +25,18 @@ describe("createPgliteDb", () => {
       .values({ authorName: "t", body: "b", deleteToken: "tok" })
       .returning();
     expect(row.deleteToken).toBe("tok");
+  });
+
+  it("playlists have is_public defaulting to false", async () => {
+    const db = await createPgliteDb();
+    const [user] = await db
+      .insert(users)
+      .values({ email: "pub@test.dev", passwordHash: "x" })
+      .returning();
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId: user.id, name: "p" })
+      .returning();
+    expect(pl.isPublic).toBe(false);
   });
 });

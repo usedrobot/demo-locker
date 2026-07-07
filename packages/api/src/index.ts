@@ -43,6 +43,23 @@ app.get("/embed.js", (c) => {
   });
 });
 
+// On the Cloudflare Workers deployment, this route never actually executes:
+// Workers assets are served ahead of the Worker by Cloudflare's assets-first
+// routing, so a built /openapi.json asset in the deploy answers the request
+// before Hono runs. This handler only serves /openapi.json on Node/standalone
+// (self-hosted) deployments where there is no separate asset layer.
+app.get("/openapi.json", (c) => {
+  if (!c.env.OPENAPI_JSON) {
+    return c.text("openapi description not available on this deployment", 404);
+  }
+  return new Response(c.env.OPENAPI_JSON, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+});
+
 app.route("/auth", auth);
 app.route("/playlists", playlists);
 app.route("/comments", comments);

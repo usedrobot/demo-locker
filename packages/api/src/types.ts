@@ -12,6 +12,7 @@ export type Bindings = {
   MAX_STORAGE_BYTES?: string;
   MAX_COLLABORATORS?: string;
   EMBED_JS?: string;
+  OPENAPI_JSON?: string;
 };
 
 export type Env = {

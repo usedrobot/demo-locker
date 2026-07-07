@@ -120,6 +120,10 @@ jobs:
           cache: npm
       - run: npm install
       - run: npm run build -w packages/player
+      # Worker serves assets-first from packages/player/dist (wrangler.jsonc
+      # assets.directory) — non-built assets like openapi.json must be copied
+      # in here, mirroring the packages/api `deploy` script.
+      - run: cp docs/openapi.json packages/player/dist/openapi.json
       - run: npx wrangler deploy
         working-directory: packages/api
         env:

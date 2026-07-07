@@ -8,7 +8,7 @@
 
 ## Docs
 
-- [docs/embed.md](docs/embed.md): the embeddable player and the public read-only API (the SDK surface)
+- [docs/embed.md](docs/embed.md): the embeddable player — script tag or `npm install @demo-locker/player` — and the public read-only API (the SDK surface)
 - [docs/host-your-music.md](docs/host-your-music.md): beginner hosting guide (home/$0, VPS/$5, PaaS)
 - [docs/self-hosting.md](docs/self-hosting.md): Postgres + S3 deployment
 - [docs/deploy-templates.md](docs/deploy-templates.md): Fly.io / Railway / Coolify

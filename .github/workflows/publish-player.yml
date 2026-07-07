@@ -2,14 +2,24 @@
 #
 # One-time setup (already done? verify on npmjs.com):
 #   1. Create the npm org "demo-locker" (free, public packages).
-#   2. On npmjs.com → package @demo-locker/player → Settings → Trusted publisher:
-#      GitHub Actions, repository usedrobot/demo-locker, workflow publish-player.yml.
-#      (For the FIRST publish, npm lets you configure the trusted publisher on the
-#      org/package name before any version exists — do that, then push the tag.)
-#   No npm token is stored anywhere; auth is OIDC (id-token: write) + provenance.
+#   2. FIRST publish must be manual — npm cannot OIDC-publish a package that
+#      doesn't exist yet (npm/cli#8544), and the trusted-publisher settings
+#      page only exists for published packages. From merged main:
+#        npm login && npm run build -w packages/player && npm publish --access public -w packages/player
+#      then log out locally (npm logout). The first version has no provenance
+#      badge; every release after this one does.
+#   3. On npmjs.com → package @demo-locker/player → Settings → Trusted publishing:
+#      GitHub Actions / org usedrobot / repository demo-locker / workflow
+#      publish-player.yml (filename only) / environment blank / allowed
+#      actions: "npm publish". Fields are case-sensitive.
+#   No npm token is stored anywhere; auth for this workflow is OIDC
+#   (id-token: write) + provenance.
 #
-# Release procedure: bump "version" in packages/player/package.json, commit to main,
+# Release procedure (all versions AFTER the manual first publish): bump
+#   "version" in packages/player/package.json, commit to main,
 #   git tag player-vX.Y.Z && git push origin player-vX.Y.Z
+#   (Don't tag the manually-published version — the workflow would try to
+#   republish it and fail on the version-exists check.)
 
 name: Publish player
 

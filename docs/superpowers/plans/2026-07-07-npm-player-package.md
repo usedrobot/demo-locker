@@ -593,17 +593,24 @@ git commit -m "docs(player): npm install surface across README, embed.md, llms.t
 
 This task cannot be fully automated — org creation and trusted-publisher configuration happen on npmjs.com under DL's account. Steps:
 
+**Correction (2026-07-07, verified against npm docs + npm/cli#8544):** npm cannot OIDC-publish a package that doesn't exist yet, and the trusted-publisher settings page only exists for published packages. The first publish must be manual; the tag-triggered workflow takes over from the second release onward.
+
 - [ ] **Step 1 (DL):** Create the npm org `demo-locker` at npmjs.com (free tier, public packages).
-- [ ] **Step 2 (DL):** Configure the trusted publisher for `@demo-locker/player`: GitHub Actions / repository `usedrobot/demo-locker` / workflow `publish-player.yml`. npm supports configuring this before the first publish.
-- [ ] **Step 3:** Merge the feature branch to main (normal PR + review flow). No migrations → no prod-Neon step.
-- [ ] **Step 4:** Tag and push:
+- [ ] **Step 2:** Merge the feature branch to main (normal PR + review flow). No migrations → no prod-Neon step.
+- [ ] **Step 3 (DL, manual first publish):** From merged main on a logged-in machine:
 
 ```bash
 git checkout main && git pull
-git tag player-v0.1.0 && git push origin player-v0.1.0
+npm login   # browser + OTP
+npm run build -w packages/player
+npm publish --access public -w packages/player
+npm logout  # don't leave a session on the laptop
 ```
 
-- [ ] **Step 5:** Watch the workflow: `gh run watch --repo usedrobot/demo-locker` — expect the publish job green.
+This publishes 0.1.0 without a provenance badge (manual publishes can't attest); every subsequent release gets the badge via CI.
+
+- [ ] **Step 4 (DL):** Now that the package exists, configure the trusted publisher: npmjs.com → `@demo-locker/player` → Settings → Trusted publishing → GitHub Actions: org `usedrobot`, repository `demo-locker`, workflow filename `publish-player.yml` (filename only, case-sensitive), environment blank, allowed actions "npm publish". Recommended at the same time: package setting "Require two-factor authentication and disallow tokens", and a GitHub ruleset protecting `player-v*` tags.
+- [ ] **Step 5 (first CI release, whenever the next change ships):** bump `version` to 0.1.1 in `packages/player/package.json`, commit to main, `git tag player-v0.1.1 && git push origin player-v0.1.1`, watch `gh run watch --repo usedrobot/demo-locker` — expect the publish job green and the provenance badge on npmjs.com. Do NOT tag `player-v0.1.0` — the workflow would try to republish the existing version and fail.
 - [ ] **Step 6: Verify success criteria** (from the spec):
 
 ```bash

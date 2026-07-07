@@ -1,6 +1,6 @@
 # @demo-locker/player
 
-Embeddable music player for your own website — the `<demo-locker-player>` web component from [Demo Locker](https://github.com/usedrobot/demo-locker), the self-hosted music streaming and private demo sharing app. Zero dependencies, ~5 KB, themeable, framework-agnostic.
+Embeddable music player for your own website — the `<demo-locker-player>` web component from [Demo Locker](https://github.com/usedrobot/demo-locker), the self-hosted music streaming and private demo sharing app. Zero dependencies, ~2.5 KB gzipped, themeable, framework-agnostic.
 
 Works with any Demo Locker instance serving `/public/v1`.
 

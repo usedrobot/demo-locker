@@ -5,8 +5,8 @@ export default defineConfig({
     lib: {
       entry: "src/player.ts",
       name: "DemoLockerPlayer",
-      formats: ["iife"],
-      fileName: () => "embed.js",
+      formats: ["es", "iife"],
+      fileName: (format) => (format === "es" ? "player.js" : "embed.js"),
     },
     outDir: "dist",
     emptyOutDir: true,

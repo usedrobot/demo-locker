@@ -27,9 +27,9 @@ restarting).
 Boot log (`docker logs <container>`), in order:
 
 ```
-db: pglite (./data/db) — set DATABASE_URL to use Postgres
-storage: local disk (./data/audio) — set S3_ENDPOINT to use S3
-⚠ zero-dependency mode: db is embedded (pglite) and storage is local disk — all data lives under ./data. If you expected Postgres/S3, check your DATABASE_URL / S3_ENDPOINT env vars.
+db: pglite (/data/db) — set DATABASE_URL to use Postgres
+storage: local disk (/data/audio) — set S3_ENDPOINT to use S3
+⚠ zero-dependency mode: db is embedded (pglite) and storage is local disk — all data lives under /data. If you expected Postgres/S3, check your DATABASE_URL / S3_ENDPOINT env vars.
 embed: serving ../player/dist/embed.js
 openapi: serving ../../docs/openapi.json
 web: serving ../web/dist

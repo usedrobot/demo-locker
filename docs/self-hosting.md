@@ -1,5 +1,7 @@
 # Self-Hosting Demo Locker
 
+Deploying via an agent, or just want the fast path? See [AGENTS.md](../AGENTS.md) for the operator runbook.
+
 This page covers the Postgres + S3 path — separate database and storage
 services, meant for production deployments or local development where you
 want full control over each piece. If you just want your music online

@@ -75,6 +75,12 @@ async function main() {
   const embedJs = existsSync(playerBundle) ? readFileSync(playerBundle, "utf-8") : undefined;
   console.log(embedJs ? `embed: serving ${playerBundle}` : `embed: not serving (no build at ${playerBundle})`);
 
+  const openapiPath = process.env.OPENAPI_PATH || "../../docs/openapi.json";
+  const openapiJson = existsSync(openapiPath) ? readFileSync(openapiPath, "utf-8") : undefined;
+  console.log(
+    openapiJson ? `openapi: serving ${openapiPath}` : `openapi: not serving (no file at ${openapiPath})`,
+  );
+
   // Worker-style bindings, passed to every request via app.fetch's env arg.
   // (Don't inject via app.use — index.ts registers routes at import time,
   // so any middleware added here would run after the route handlers.)
@@ -85,6 +91,7 @@ async function main() {
     MAX_STORAGE_BYTES: process.env.MAX_STORAGE_BYTES,
     MAX_COLLABORATORS: process.env.MAX_COLLABORATORS,
     EMBED_JS: embedJs,
+    OPENAPI_JSON: openapiJson,
   };
 
   // --- static web app (all-in-one mode) ---

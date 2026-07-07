@@ -1,0 +1,19 @@
+# Demo Locker
+
+> Self-hosted music streaming, an embeddable player for your own website, and private demo sharing with timestamped comments — one MIT-licensed app you run yourself. One container, zero external services: `docker run -d -v demolocker:/data -p 3001:3001 ghcr.io/usedrobot/demo-locker:latest`.
+
+## Setup (for agents)
+
+- [AGENTS.md](AGENTS.md): deployment runbook — three hosting paths plus a full API-only bootstrap (account, upload, publish, embed) with verification for every step
+
+## Docs
+
+- [docs/embed.md](docs/embed.md): the embeddable player and the public read-only API (the SDK surface)
+- [docs/host-your-music.md](docs/host-your-music.md): beginner hosting guide (home/$0, VPS/$5, PaaS)
+- [docs/self-hosting.md](docs/self-hosting.md): Postgres + S3 deployment
+- [docs/deploy-templates.md](docs/deploy-templates.md): Fly.io / Railway / Coolify
+- [docs/openapi.json](docs/openapi.json): OpenAPI 3.1 description of the full API (also served by every instance at /openapi.json)
+
+## Project
+
+- Repo: https://github.com/usedrobot/demo-locker — MIT license

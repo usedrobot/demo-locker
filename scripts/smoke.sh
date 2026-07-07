@@ -87,6 +87,9 @@ STATUS=$(curl -fsS -o /dev/null -w '%{http_code}' -H "Range: bytes=0-99" "$BASE/
 echo "→ embed.js served"
 curl -fsS -o /dev/null -w '%{content_type}' "$BASE/embed.js" | grep -q javascript || { echo "FAIL: embed.js"; exit 1; }
 
+echo "→ openapi served"
+curl -fsS -o /dev/null -w '%{content_type}' "$BASE/openapi.json" | grep -q json || { echo "FAIL: openapi.json"; exit 1; }
+
 echo "→ SPA served"
 INDEX_HTML=$(curl -fsS "$BASE/")
 echo "$INDEX_HTML" | grep -qi "<!doctype html" || { echo "FAIL: no SPA at /"; exit 1; }

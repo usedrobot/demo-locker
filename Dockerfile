@@ -17,6 +17,7 @@ RUN npm run build
 FROM base AS api
 COPY packages/api packages/api
 COPY --from=player-build /app/packages/player/dist packages/player/dist
+COPY docs/openapi.json docs/openapi.json
 WORKDIR /app/packages/api
 CMD ["npx", "tsx", "src/server.ts"]
 
@@ -45,6 +46,7 @@ FROM base AS standalone
 COPY packages/api packages/api
 COPY --from=standalone-web-build /app/packages/web/dist packages/web/dist
 COPY --from=player-build /app/packages/player/dist packages/player/dist
+COPY docs/openapi.json docs/openapi.json
 WORKDIR /app/packages/api
 ENV DATA_DIR=/data
 ENV WEB_DIST=../web/dist

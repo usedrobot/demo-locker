@@ -1,5 +1,7 @@
 # Embedding the player
 
+Deploying an instance from scratch? See [AGENTS.md](../AGENTS.md) for the operator runbook.
+
 Any playlist you mark public can be dropped into another site with two lines of HTML. No build step, no framework, no account for the listener.
 
 ```html

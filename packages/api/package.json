@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:worker": "wrangler dev",
-    "deploy": "npm --prefix ../player run build && wrangler deploy",
+    "deploy": "npm --prefix ../player run build && cp ../../docs/openapi.json ../player/dist/openapi.json && wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"

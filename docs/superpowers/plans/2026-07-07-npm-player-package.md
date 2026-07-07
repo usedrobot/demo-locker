@@ -384,7 +384,10 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: npm install
+      # npm ci (not npm install): the publish build must be byte-reproducible
+      # from the committed lockfile — supply-chain hardening for the one job
+      # that ships code to third parties. Other CI jobs keep npm install.
+      - run: npm ci
       - run: npm run typecheck -w packages/player
       - run: npm run build -w packages/player
       - run: npm test -w packages/player

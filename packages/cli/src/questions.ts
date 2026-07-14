@@ -67,6 +67,14 @@ export function parseFlags(argv: string[]): Flags {
       "dry-run": { type: "boolean", default: false },
     },
   });
+
+  if (v.port !== undefined) {
+    const port = Number(v.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`--port must be an integer 1-65535 (got "${v.port}")`);
+    }
+  }
+
   return {
     mode: oneOf("mode", v.mode, MODES),
     target: oneOf("target", v.target, TARGETS),
@@ -139,6 +147,10 @@ export async function collectAnswers(
         { value: "railway", label: "Railway (guided instructions)" },
         { value: "existing", label: "I already have an instance running" },
       ], "docker"), "docker");
+
+    if (flags.url && target !== "existing") {
+      throw new Error("--url is only valid with --target existing or --mode player");
+    }
 
     if (target === "existing") {
       url = flags.url ?? (flags.yes ? null : await ask(io, "Instance URL (e.g. https://demos.example.com)?"));

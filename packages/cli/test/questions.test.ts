@@ -24,6 +24,15 @@ describe("parseFlags", () => {
   it("rejects an unknown mode", () => {
     expect(() => parseFlags(["--mode", "banana"])).toThrow(/mode/);
   });
+
+  it("rejects non-integer port", () => {
+    expect(() => parseFlags(["--port", "abc"])).toThrow(/--port/);
+  });
+
+  it("rejects port outside valid range", () => {
+    expect(() => parseFlags(["--port", "65536"])).toThrow(/--port/);
+    expect(() => parseFlags(["--port", "0"])).toThrow(/--port/);
+  });
 });
 
 describe("detectContext", () => {
@@ -70,6 +79,32 @@ describe("collectAnswers", () => {
     const { io } = fakeIO();
     const flags = parseFlags(["--mode", "instance", "--target", "docker", "--storage", "s3", "--yes"]);
     await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--s3-endpoint/);
+  });
+
+  it("rejects --url with --target docker", async () => {
+    const { io } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "docker", "--url", "https://x", "--yes"]);
+    await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--url/);
+  });
+
+  it("rejects --url with --target fly", async () => {
+    const { io } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "fly", "--url", "https://x", "--yes"]);
+    await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--url/);
+  });
+
+  it("rejects --url with --target railway", async () => {
+    const { io } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "railway", "--url", "https://x", "--yes"]);
+    await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--url/);
+  });
+
+  it("allows --url with --target existing", async () => {
+    const { io } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "existing", "--url", "https://demos.example.com", "--yes"]);
+    const a = await collectAnswers(flags, io, "empty");
+    expect(a.target).toBe("existing");
+    expect(a.url).toBe("https://demos.example.com");
   });
 
   it("interactive path walks the tree", async () => {

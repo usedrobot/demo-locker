@@ -13,6 +13,19 @@ entire music library, no separate database export required.
 
 Three ways to put that program on the internet, cheapest first.
 
+## Fastest start: the setup wizard
+
+Not sure which path fits your situation? Run the wizard and answer a few
+questions — it figures out the rest:
+
+```bash
+npx demo-locker
+```
+
+Prefer to do it by hand, or want to understand what's happening under the
+hood first? The manual paths below walk through the same ground step by
+step.
+
 ## Path 1: Free — an old laptop or Raspberry Pi at home
 
 Good if you have a spare computer that can stay plugged in and turned on.

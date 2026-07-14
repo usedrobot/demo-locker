@@ -137,4 +137,28 @@ describe("collectAnswers", () => {
     expect(a.mode).toBe("instance");
     expect(a.signup).toBeNull();
   });
+
+  it("interactive port validation re-asks on invalid input", async () => {
+    const { io, write, read } = fakeIO();
+    const flags = parseFlags([]);
+    const p = collectAnswers(flags, io, "empty");
+
+    await waitForOutput(read, "What do you need?");
+    write("1\n"); // mode: instance
+    await waitForOutput(read, "Where will it run?");
+    write("1\n"); // target: docker
+    await waitForOutput(read, "Where should audio files live?");
+    write("1\n"); // storage: local
+    await waitForOutput(read, "Host port?");
+    write("abc\n"); // invalid port
+    await waitForOutput(read, "Please enter an integer 1-65535"); // re-ask message
+    write("8080\n"); // valid port
+    await waitForOutput(read, "Docker volume name");
+    write("\n"); // volume: default demolocker
+    await waitForOutput(read, "Create the first account now?");
+    write("\n"); // email: empty → skip signup
+
+    const a = await p;
+    expect(a.port).toBe(8080);
+  });
 });

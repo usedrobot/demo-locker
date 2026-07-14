@@ -46,6 +46,15 @@ function oneOf<T extends string>(name: string, value: string | undefined, allowe
   return value as T;
 }
 
+/** Parse and validate a port string. Throws on invalid input. */
+function parsePort(raw: string): number {
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Port must be an integer 1-65535 (got "${raw}")`);
+  }
+  return port;
+}
+
 export function parseFlags(argv: string[]): Flags {
   const { values: v } = parseArgs({
     args: argv,
@@ -69,9 +78,10 @@ export function parseFlags(argv: string[]): Flags {
   });
 
   if (v.port !== undefined) {
-    const port = Number(v.port);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error(`--port must be an integer 1-65535 (got "${v.port}")`);
+    try {
+      parsePort(v.port);
+    } catch (e) {
+      throw new Error(`--port ${(e as Error).message}`);
     }
   }
 
@@ -108,6 +118,18 @@ async function resolve<T extends string>(
   if (flagValue !== undefined) return flagValue;
   if (yes) return def;
   return promptFn();
+}
+
+/** Prompt for a port, looping until valid. */
+async function askPort(io: IO, defaultPort: string): Promise<number> {
+  while (true) {
+    const raw = await ask(io, "Host port?", defaultPort);
+    try {
+      return parsePort(raw);
+    } catch (e) {
+      io.output.write("Please enter an integer 1-65535.\n");
+    }
+  }
 }
 
 export async function collectAnswers(
@@ -183,7 +205,13 @@ export async function collectAnswers(
     }
 
     if (target === "docker") {
-      port = Number(flags.port ?? (flags.yes ? "3001" : await ask(io, "Host port?", "3001")));
+      if (flags.port !== undefined) {
+        port = parsePort(flags.port);
+      } else if (flags.yes) {
+        port = 3001;
+      } else {
+        port = await askPort(io, "3001");
+      }
       volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
     }
 

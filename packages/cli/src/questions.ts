@@ -132,6 +132,26 @@ async function askPort(io: IO, defaultPort: string): Promise<number> {
   }
 }
 
+/** Validate a password. Throws on invalid input. */
+function validatePassword(pw: string): void {
+  if (pw.length < 8) {
+    throw new Error("--password must be at least 8 characters");
+  }
+}
+
+/** Prompt for a password, looping until valid. */
+async function askPassword(io: IO): Promise<string> {
+  while (true) {
+    const pw = await ask(io, "Password?");
+    try {
+      validatePassword(pw);
+      return pw;
+    } catch {
+      io.output.write("Password must be at least 8 characters.\n");
+    }
+  }
+}
+
 export async function collectAnswers(
   flags: Flags,
   io: IO,
@@ -215,11 +235,17 @@ export async function collectAnswers(
       volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
     }
 
-    if (flags.email && flags.password) {
+    if (target === "fly" || target === "railway") {
+      io.output.write(
+        "Note: account creation isn't automated for this target — sign up in the app after deploy.\n",
+      );
+      signup = null;
+    } else if (flags.email && flags.password) {
+      validatePassword(flags.password);
       signup = { email: flags.email, password: flags.password };
     } else if (!flags.yes) {
       const email = await ask(io, "Create the first account now? Email (empty to skip):", "");
-      if (email) signup = { email, password: await ask(io, "Password?") };
+      if (email) signup = { email, password: await askPassword(io) };
     }
   }
 

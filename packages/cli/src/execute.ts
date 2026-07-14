@@ -61,6 +61,13 @@ export async function executePlan(
     const code = await runner.exec(step.cmd, step.args);
     if (code !== 0) {
       io.output.write(`✗ step failed (${step.cmd} exited ${code}): ${step.title}\n`);
+      if (step.cmd === "docker" && step.args[0] === "run") {
+        const nameIdx = step.args.indexOf("--name");
+        const name = nameIdx !== -1 ? step.args[nameIdx + 1] : "<name>";
+        io.output.write(
+          `  hint: a container named like your volume may already exist — try: docker rm -f ${name}\n`,
+        );
+      }
       return 1;
     }
   }

@@ -29,3 +29,6 @@ npx demo-locker --mode instance --target docker --storage local \
 ## Requirements
 
 Node 20+, and Docker for the docker target (flyctl for fly).
+
+s3 credentials are passed as container env vars; anyone with docker access to
+the host can read them.

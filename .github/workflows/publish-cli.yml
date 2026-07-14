@@ -1,14 +1,18 @@
 # Publishes demo-locker to npm on tags matching cli-v*.
 #
 # One-time setup (already done? verify on npmjs.com):
-#   1. Create the npm org "demo-locker" (free, public packages).
-#   2. FIRST publish must be manual — npm cannot OIDC-publish a package that
+#   1. FIRST publish must be manual — npm cannot OIDC-publish a package that
 #      doesn't exist yet (npm/cli#8544), and the trusted-publisher settings
-#      page only exists for published packages. From merged main:
-#        npm login && npm run build -w packages/cli && npm publish --access public -w packages/cli
-#      then log out locally (npm logout). The first version has no provenance
-#      badge; every release after this one does.
-#   3. On npmjs.com → package demo-locker → Settings → Trusted publishing:
+#      page only exists for published packages. No npm org needed — a bare
+#      package publishes under any npm account with publish rights. From
+#      merged main:
+#        npm login && npm run build -w packages/cli && npm publish --access public --provenance=false -w packages/cli
+#      then log out locally (npm logout). Local publish can't OIDC-attest, so
+#      provenance is disabled just for this manual publish (package.json's
+#      publishConfig.provenance stays true and would otherwise make this
+#      command fail locally); every release after this one is provenance-signed
+#      by the workflow.
+#   2. On npmjs.com → package demo-locker → Settings → Trusted publishing:
 #      GitHub Actions / org usedrobot / repository demo-locker / workflow
 #      publish-cli.yml (filename only) / environment blank / allowed
 #      actions: "npm publish". Fields are case-sensitive.

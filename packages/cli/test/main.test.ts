@@ -78,4 +78,31 @@ describe("main end-to-end (non-interactive)", () => {
     expect(read()).toContain("--url");
     expect(exec).not.toHaveBeenCalled();
   });
+
+  it("both-mode with a null-appUrl target (fly) prints guidance and exits 0 after a successful deploy", async () => {
+    const { io, read } = fakeIO();
+    const dir = mkdtempSync(join(tmpdir(), "dle-"));
+    const exec = vi.fn(async () => 0);
+    const code = await main(
+      ["--mode", "both", "--target", "fly", "--yes"],
+      io,
+      { runner: { exec, writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+    );
+    expect(code).toBe(0);
+    expect(read()).toContain("--mode player --url");
+  });
+
+  it("player-only-with-url + --dry-run never execs and exits 0", async () => {
+    const { io, read } = fakeIO();
+    const dir = mkdtempSync(join(tmpdir(), "dle-"));
+    const exec = vi.fn(async () => 0);
+    const code = await main(
+      ["--mode", "player", "--url", "https://demos.fldl.space", "--yes", "--dry-run"],
+      io,
+      { runner: { exec, writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+    );
+    expect(code).toBe(0);
+    expect(exec).not.toHaveBeenCalled();
+    expect(read()).toContain("dry-run");
+  });
 });

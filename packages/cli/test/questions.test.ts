@@ -138,6 +138,28 @@ describe("collectAnswers", () => {
     expect(a.signup).toBeNull();
   });
 
+  it("skips signup for fly target and notes it isn't automated", async () => {
+    const { io, read } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "fly", "--email", "dl@fldl.space", "--password", "hunter22", "--yes"]);
+    const a = await collectAnswers(flags, io, "empty");
+    expect(a.signup).toBeNull();
+    expect(read()).toContain("account creation isn't automated");
+  });
+
+  it("skips signup for railway target and notes it isn't automated", async () => {
+    const { io, read } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "railway", "--yes"]);
+    const a = await collectAnswers(flags, io, "empty");
+    expect(a.signup).toBeNull();
+    expect(read()).toContain("account creation isn't automated");
+  });
+
+  it("rejects a --password under 8 characters", async () => {
+    const { io } = fakeIO();
+    const flags = parseFlags(["--mode", "instance", "--target", "docker", "--storage", "local", "--email", "dl@fldl.space", "--password", "short", "--yes"]);
+    await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--password must be at least 8 characters/);
+  });
+
   it("interactive port validation re-asks on invalid input", async () => {
     const { io, write, read } = fakeIO();
     const flags = parseFlags([]);

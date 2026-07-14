@@ -97,9 +97,15 @@ export function buildPlan(a: Answers): DeployPlan {
   }
 }
 
+function redactEnvArg(arg: string): string {
+  const m = /^([A-Z0-9_]+)=(.*)$/.exec(arg);
+  if (m && /SECRET|ACCESS_KEY/.test(m[1])) return `${m[1]}=***`;
+  return arg;
+}
+
 export function renderPlan(p: DeployPlan): string {
   const lines = p.steps.map((s) => {
-    if (s.kind === "run") return `$ ${s.cmd} ${s.args.join(" ")}`;
+    if (s.kind === "run") return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
     if (s.kind === "write") return `write ${s.path}`;
     return `# ${s.text}`;
   });

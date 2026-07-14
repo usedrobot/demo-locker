@@ -63,6 +63,21 @@ describe("executePlan", () => {
     expect(read()).toContain("Account created");
   });
 
+  it("hints at docker rm -f when a docker run step fails", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner({ exec: vi.fn(async () => 1) });
+    const runPlan: DeployPlan = {
+      steps: [
+        { kind: "run", title: "Start", cmd: "docker", args: ["run", "-d", "--name", "demolocker"] },
+      ],
+      healthUrl: null,
+      appUrl: null,
+    };
+    const code = await executePlan(runPlan, null, io, r);
+    expect(code).toBe(1);
+    expect(read()).toContain("docker rm -f demolocker");
+  });
+
   it("gives up on health after 60 attempts", async () => {
     const { io, read } = fakeIO();
     const r = fakeRunner({

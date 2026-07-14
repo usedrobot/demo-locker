@@ -66,22 +66,38 @@ export async function main(
   const wantsPlayer = answers.mode === "player" || answers.mode === "both";
 
   let instanceUrl = answers.url;
+  let deployedInstance = false;
 
   if (wantsInstance || (wantsPlayer && answers.target)) {
     const plan = buildPlan(answers);
     if (answers.dryRun) {
-      io.output.write(renderPlan(plan));
+      let out = renderPlan(plan);
+      if (wantsPlayer) out += `then: player setup in ${cwd}\n`;
+      io.output.write(out);
       return 0;
     }
     const code = await executePlan(plan, answers.signup, io, runner);
     if (code !== 0) return code;
     instanceUrl = plan.appUrl ?? instanceUrl;
+    deployedInstance = true;
   }
 
   if (wantsPlayer) {
     if (!instanceUrl) {
+      if (deployedInstance) {
+        io.output.write(
+          "Once you know your instance URL, wire the player with: npx demo-locker --mode player --url <your-instance-url>\n",
+        );
+        return 0;
+      }
       io.output.write("No instance URL known — pass --url or deploy an instance first.\n");
       return 1;
+    }
+    if (answers.dryRun) {
+      io.output.write(
+        `dry-run: would install @demo-locker/player and print embed snippets for ${instanceUrl}\n`,
+      );
+      return 0;
     }
     return setupPlayer(instanceUrl, cwd, io, runner);
   }

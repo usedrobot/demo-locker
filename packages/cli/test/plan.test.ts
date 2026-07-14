@@ -72,4 +72,17 @@ describe("renderPlan", () => {
     expect(text).toContain("docker volume create demolocker");
     expect(text).toContain("docker run -d");
   });
+
+  it("redacts secret-like env values but keeps others readable", () => {
+    const p = buildPlan({
+      ...base, storage: "s3",
+      s3: { endpoint: "http://minio:9000", accessKey: "AK", secretKey: "sekret-value", bucket: "demos", region: "auto" },
+    });
+    const text = renderPlan(p);
+    expect(text).toContain("S3_SECRET_KEY=***");
+    expect(text).not.toContain("sekret-value");
+    expect(text).toContain("S3_ACCESS_KEY=***");
+    expect(text).not.toContain("AK");
+    expect(text).toContain("S3_ENDPOINT=http://minio:9000");
+  });
 });

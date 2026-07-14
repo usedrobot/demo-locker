@@ -63,6 +63,35 @@ describe("executePlan", () => {
     expect(read()).toContain("Account created");
   });
 
+  it("survives a rejected signup fetch (network error) and still exits 0", async () => {
+    const { io, read } = fakeIO();
+    const fetchFn = vi.fn(async (url: any) => {
+      if (String(url).endsWith("/auth/signup")) {
+        throw new Error("ECONNRESET");
+      }
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    const r = fakeRunner({ fetchFn });
+    const code = await executePlan(dockerPlan, { email: "dl@fldl.space", password: "pw" }, io, r);
+    expect(code).toBe(0);
+    expect(read()).toContain("sign up manually");
+    expect(read()).toContain("http://localhost:3001");
+  });
+
+  it("passes an AbortSignal to the health check fetch", async () => {
+    const { io } = fakeIO();
+    const seen: any[] = [];
+    const fetchFn = vi.fn(async (_url: any, init?: any) => {
+      seen.push(init);
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    const r = fakeRunner({ fetchFn });
+    await executePlan(dockerPlan, null, io, r);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]).toBeDefined();
+    expect(seen[0].signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("hints at docker rm -f when a docker run step fails", async () => {
     const { io, read } = fakeIO();
     const r = fakeRunner({ exec: vi.fn(async () => 1) });

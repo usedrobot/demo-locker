@@ -29,6 +29,20 @@ describe("parseFlags", () => {
     expect(() => parseFlags(["--port", "abc"])).toThrow(/--port/);
   });
 
+  it("rejects a --url with no scheme", () => {
+    expect(() => parseFlags(["--url", "demos.example.com"])).toThrow(/scheme/);
+  });
+
+  it("accepts a --url with http:// scheme", () => {
+    const f = parseFlags(["--url", "http://192.168.1.10:3001"]);
+    expect(f.url).toBe("http://192.168.1.10:3001");
+  });
+
+  it("accepts a --url with https:// scheme", () => {
+    const f = parseFlags(["--url", "https://demos.example.com"]);
+    expect(f.url).toBe("https://demos.example.com");
+  });
+
   it("rejects port outside valid range", () => {
     expect(() => parseFlags(["--port", "65536"])).toThrow(/--port/);
     expect(() => parseFlags(["--port", "0"])).toThrow(/--port/);
@@ -158,6 +172,12 @@ describe("collectAnswers", () => {
     const { io } = fakeIO();
     const flags = parseFlags(["--mode", "instance", "--target", "docker", "--storage", "local", "--email", "dl@fldl.space", "--password", "short", "--yes"]);
     await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--password must be at least 8 characters/);
+  });
+
+  it("rejects --target when --mode player is used with --url", async () => {
+    const { io } = fakeIO();
+    const flags = parseFlags(["--mode", "player", "--url", "https://demos.fldl.space", "--target", "docker", "--yes"]);
+    await expect(collectAnswers(flags, io, "web-project")).rejects.toThrow(/--target/);
   });
 
   it("interactive port validation re-asks on invalid input", async () => {

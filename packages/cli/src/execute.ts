@@ -32,7 +32,7 @@ export function defaultRunner(_io: IO): Runner {
 async function waitHealthy(url: string, runner: Runner): Promise<boolean> {
   for (let i = 0; i < 60; i++) {
     try {
-      const res = await runner.fetchFn(url);
+      const res = await runner.fetchFn(url, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return true;
     } catch {
       // not up yet
@@ -83,13 +83,17 @@ export async function executePlan(
   }
 
   if (signup && plan.appUrl) {
-    const res = await runner.fetchFn(`${plan.appUrl.replace(/\/$/, "")}/auth/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(signup),
-    });
-    if (res.ok) io.output.write(`✓ Account created for ${signup.email}\n`);
-    else io.output.write(`✗ signup failed (${res.status}) — open the app and sign up manually\n`);
+    try {
+      const res = await runner.fetchFn(`${plan.appUrl.replace(/\/$/, "")}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(signup),
+      });
+      if (res.ok) io.output.write(`✓ Account created for ${signup.email}\n`);
+      else io.output.write(`✗ signup failed (${res.status}) — open the app and sign up manually\n`);
+    } catch {
+      io.output.write(`✗ signup failed (network error) — open the app and sign up manually\n`);
+    }
   }
 
   if (plan.appUrl) {

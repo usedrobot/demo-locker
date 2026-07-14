@@ -55,6 +55,24 @@ function parsePort(raw: string): number {
   return port;
 }
 
+/** Validate a URL has a scheme. Throws on invalid input. Returns the URL unchanged. */
+function validateUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(
+      "must include a scheme, e.g. https://demos.example.com or http://192.168.1.10:3001",
+    );
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      "must include a scheme, e.g. https://demos.example.com or http://192.168.1.10:3001",
+    );
+  }
+  return raw;
+}
+
 export function parseFlags(argv: string[]): Flags {
   const { values: v } = parseArgs({
     args: argv,
@@ -82,6 +100,14 @@ export function parseFlags(argv: string[]): Flags {
       parsePort(v.port);
     } catch (e) {
       throw new Error(`--port ${(e as Error).message}`);
+    }
+  }
+
+  if (v.url !== undefined) {
+    try {
+      validateUrl(v.url);
+    } catch (e) {
+      throw new Error(`--url ${(e as Error).message}`);
     }
   }
 
@@ -126,8 +152,20 @@ async function askPort(io: IO, defaultPort: string): Promise<number> {
     const raw = await ask(io, "Host port?", defaultPort);
     try {
       return parsePort(raw);
-    } catch (e) {
+    } catch {
       io.output.write("Please enter an integer 1-65535.\n");
+    }
+  }
+}
+
+/** Prompt for an instance URL, looping until it has a valid scheme. */
+async function askUrl(io: IO, question: string): Promise<string> {
+  while (true) {
+    const raw = await ask(io, question);
+    try {
+      return validateUrl(raw);
+    } catch (e) {
+      io.output.write(`${(e as Error).message}\n`);
     }
   }
 }
@@ -142,7 +180,7 @@ function validatePassword(pw: string): void {
 /** Prompt for a password, looping until valid. */
 async function askPassword(io: IO): Promise<string> {
   while (true) {
-    const pw = await ask(io, "Password?");
+    const pw = await ask(io, "Password? (input will be visible)");
     try {
       validatePassword(pw);
       return pw;
@@ -177,6 +215,9 @@ export async function collectAnswers(
   let signup: Answers["signup"] = null;
 
   if (playerOnly && url) {
+    if (flags.target !== undefined) {
+      throw new Error("--target has no effect when --mode player is used with --url");
+    }
     // Pointing the player at an existing instance — nothing to deploy.
     return { mode, target: null, storage: null, s3: null, port, volume, url, signup: null, dryRun: flags.dryRun };
   }
@@ -195,7 +236,7 @@ export async function collectAnswers(
     }
 
     if (target === "existing") {
-      url = flags.url ?? (flags.yes ? null : await ask(io, "Instance URL (e.g. https://demos.example.com)?"));
+      url = flags.url ?? (flags.yes ? null : await askUrl(io, "Instance URL (e.g. https://demos.example.com)?"));
       if (!url) throw new Error("--url is required for --target existing");
       return { mode, target, storage: null, s3: null, port, volume, url, signup: null, dryRun: flags.dryRun };
     }

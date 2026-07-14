@@ -70,6 +70,7 @@ export function buildPlan(a: Answers): DeployPlan {
           { kind: "run", title: "Create fly app", cmd: "fly", args: ["launch", "--copy-config", "--no-deploy"] },
           { kind: "run", title: "Create data volume", cmd: "fly", args: ["volumes", "create", "data", "--size", "3"] },
           { kind: "run", title: "Deploy", cmd: "fly", args: ["deploy"] },
+          { kind: "note", text: "fly prints your app URL above — open it and sign up; the first account in wins." },
         ],
         healthUrl: null,
         appUrl: null,

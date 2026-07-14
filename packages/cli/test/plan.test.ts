@@ -49,6 +49,7 @@ describe("buildPlan fly", () => {
       "volumes create data --size 3",
       "deploy",
     ]);
+    expect(p.steps[p.steps.length - 1]).toMatchObject({ kind: "note", text: expect.stringContaining("first account in wins") });
     expect(p.healthUrl).toBeNull(); // app name chosen by fly launch; verify step prints instructions
   });
 });

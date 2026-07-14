@@ -15,6 +15,19 @@ otherwise everything, database and audio files alike, lives under one
 `/data` volume. Back up that volume and you've backed up the whole
 instance, no separate database export needed.
 
+## Scripted setup (preferred)
+
+The wizard drives the whole deploy non-interactively:
+
+```bash
+npx demo-locker --mode instance --target docker --storage local --yes \
+  --email USER_EMAIL --password USER_PASSWORD
+```
+
+Interview the human first: what hardware is on hand (old laptop / Pi / VPS / PaaS)?
+public listening or band-and-friends? Then map their answers onto the flags above
+(`--target fly` for PaaS; `--storage s3 --s3-endpoint ...` when they already have a bucket).
+
 ## Path 1 (primary): standalone Docker
 
 ```bash

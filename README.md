@@ -37,6 +37,14 @@ A web app for **self-hosted music streaming**: share and sequence unfinished dem
 
 **Setting this up with an AI agent?** Point it at [AGENTS.md](AGENTS.md) — a step-by-step runbook with verification for every step. Machine-readable map: [llms.txt](llms.txt). Running instances self-describe at /openapi.json.
 
+### Fastest start
+
+```bash
+npx demo-locker
+```
+
+The wizard asks where you want it running and takes it from there. Manual paths below.
+
 One container, zero external services — database and audio files live in a single volume:
 
 ```bash

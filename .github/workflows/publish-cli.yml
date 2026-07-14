@@ -1,0 +1,71 @@
+# Publishes demo-locker to npm on tags matching cli-v*.
+#
+# One-time setup (already done? verify on npmjs.com):
+#   1. FIRST publish must be manual — npm cannot OIDC-publish a package that
+#      doesn't exist yet (npm/cli#8544), and the trusted-publisher settings
+#      page only exists for published packages. No npm org needed — a bare
+#      package publishes under any npm account with publish rights. From
+#      merged main:
+#        npm login && npm run build -w packages/cli && npm publish --access public --provenance=false -w packages/cli
+#      then log out locally (npm logout). Local publish can't OIDC-attest, so
+#      provenance is disabled just for this manual publish (package.json's
+#      publishConfig.provenance stays true and would otherwise make this
+#      command fail locally); every release after this one is provenance-signed
+#      by the workflow.
+#   2. On npmjs.com → package demo-locker → Settings → Trusted publishing:
+#      GitHub Actions / org usedrobot / repository demo-locker / workflow
+#      publish-cli.yml (filename only) / environment blank / allowed
+#      actions: "npm publish". Fields are case-sensitive.
+#   No npm token is stored anywhere; auth for this workflow is OIDC
+#   (id-token: write) + provenance.
+#
+# Release procedure (all versions AFTER the manual first publish): bump
+#   "version" in packages/cli/package.json, commit to main,
+#   git tag cli-vX.Y.Z && git push origin cli-vX.Y.Z
+#   (Don't tag the manually-published version — the workflow would try to
+#   republish it and fail on the version-exists check.)
+
+name: Publish cli
+
+on:
+  push:
+    tags: ["cli-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # npm ci (not npm install): the publish build must be byte-reproducible
+      # from the committed lockfile — supply-chain hardening for the one job
+      # that ships code to third parties. Other CI jobs keep npm install.
+      - run: npm ci
+      - run: npm run typecheck -w packages/cli
+      - run: npm run build -w packages/cli
+      - run: npm test -w packages/cli
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#cli-v}"
+          PKG_VERSION="$(node -p "require('./packages/cli/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "tag says $TAG_VERSION but package.json says $PKG_VERSION" >&2
+            exit 1
+          fi
+      - name: Verify build artifacts
+        run: |
+          if [ ! -s "packages/cli/dist/cli.js" ]; then
+            echo "missing or empty dist/cli.js" >&2
+            exit 1
+          fi
+          head -1 packages/cli/dist/cli.js | grep -q '^#!/usr/bin/env node' || {
+            echo "dist/cli.js missing shebang" >&2; exit 1;
+          }
+      - run: npm publish --provenance --access public -w packages/cli

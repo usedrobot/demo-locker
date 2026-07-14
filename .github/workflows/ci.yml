@@ -30,6 +30,7 @@ jobs:
       - run: npm install
       - run: npm test -w packages/api
       - run: npm test -w packages/player
+      - run: npm test -w packages/cli
 
   smoke:
     runs-on: ubuntu-latest

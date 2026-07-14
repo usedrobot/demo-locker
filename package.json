@@ -1,5 +1,5 @@
 {
-  "name": "demo-locker",
+  "name": "demo-locker-monorepo",
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {

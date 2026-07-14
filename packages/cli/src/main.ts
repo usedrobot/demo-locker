@@ -1,4 +1,9 @@
 import { createRequire } from "node:module";
+import { parseFlags, detectContext, collectAnswers } from "./questions.js";
+import { buildPlan, renderPlan } from "./plan.js";
+import { executePlan, defaultRunner } from "./execute.js";
+import type { Runner } from "./execute.js";
+import { setupPlayer } from "./embed.js";
 
 export interface IO {
   input: NodeJS.ReadableStream;
@@ -23,7 +28,11 @@ Options:
   --help, --version
 `;
 
-export async function main(argv: string[], io: IO): Promise<number> {
+export async function main(
+  argv: string[],
+  io: IO,
+  deps: { runner?: Runner; cwd?: string } = {},
+): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
     io.output.write(USAGE);
     return 0;
@@ -33,6 +42,48 @@ export async function main(argv: string[], io: IO): Promise<number> {
     io.output.write(require("../package.json").version + "\n");
     return 0;
   }
-  io.output.write(USAGE);
+
+  const cwd = deps.cwd ?? process.cwd();
+  const runner = deps.runner ?? defaultRunner(io);
+
+  let flags;
+  try {
+    flags = parseFlags(argv);
+  } catch (err) {
+    io.output.write(`${err instanceof Error ? err.message : err}\n\n${USAGE}`);
+    return 1;
+  }
+
+  let answers;
+  try {
+    answers = await collectAnswers(flags, io, detectContext(cwd));
+  } catch (err) {
+    io.output.write(`${err instanceof Error ? err.message : err}\n\n${USAGE}`);
+    return 1;
+  }
+
+  const wantsInstance = answers.mode === "instance" || answers.mode === "both";
+  const wantsPlayer = answers.mode === "player" || answers.mode === "both";
+
+  let instanceUrl = answers.url;
+
+  if (wantsInstance || (wantsPlayer && answers.target)) {
+    const plan = buildPlan(answers);
+    if (answers.dryRun) {
+      io.output.write(renderPlan(plan));
+      return 0;
+    }
+    const code = await executePlan(plan, answers.signup, io, runner);
+    if (code !== 0) return code;
+    instanceUrl = plan.appUrl ?? instanceUrl;
+  }
+
+  if (wantsPlayer) {
+    if (!instanceUrl) {
+      io.output.write("No instance URL known — pass --url or deploy an instance first.\n");
+      return 1;
+    }
+    return setupPlayer(instanceUrl, cwd, io, runner);
+  }
   return 0;
 }

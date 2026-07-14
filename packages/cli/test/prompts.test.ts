@@ -41,13 +41,8 @@ describe("select", () => {
   it("returns default on empty input and re-asks on garbage", async () => {
     const { io, write, read } = fakeIO();
     const p1 = select(io, "Target?", [...choices], "docker");
-    // Schedule input writes after the event loop
-    setImmediate(() => {
-      write("nonsense\n");
-      setImmediate(() => {
-        write("\n");
-      });
-    });
+    write("nonsense\n");
+    write("\n");
     expect(await p1).toBe("docker");
     expect(read()).toContain("Please answer 1-2");
   });

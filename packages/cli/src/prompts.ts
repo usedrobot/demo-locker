@@ -25,15 +25,23 @@ export async function select<T extends string>(
       const marker = c.value === def ? "*" : " ";
       io.output.write(`  ${i + 1})${marker}${c.label} (${c.value})\n`);
     });
-    for (;;) {
-      const raw = (await rl.question(`> [${def}] `)).trim();
+    // Use async iteration instead of repeated rl.question() calls: readline
+    // Interfaces are async iterables that internally buffer 'line' events, so
+    // a line arriving between one question resolving and the next being
+    // registered is never lost (unlike calling rl.question() in a loop, where
+    // there's a listener-less gap that can drop back-to-back/piped input).
+    io.output.write(`> [${def}] `);
+    for await (const line of rl) {
+      const raw = line.trim();
       if (raw === "") return def;
       const byNumber = choices[Number(raw) - 1];
       if (byNumber) return byNumber.value;
       const byValue = choices.find((c) => c.value === raw);
       if (byValue) return byValue.value;
       io.output.write(`Please answer 1-${choices.length} or a listed value.\n`);
+      io.output.write(`> [${def}] `);
     }
+    return def;
   } finally {
     rl.close();
   }

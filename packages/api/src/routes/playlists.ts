@@ -3,7 +3,10 @@ import { eq, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
-import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
+import {
+  requestCanAccessPlaylist,
+  requestCanEditPlaylist,
+} from "../lib/playlist-access.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
@@ -197,23 +200,17 @@ playlistsRouter.delete("/:id", requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-playlistsRouter.patch("/:id/reorder", requireAuth, async (c) => {
+// Reorder: owner session OR an "edit" share token for this playlist.
+playlistsRouter.patch("/:id/reorder", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const id = c.req.param("id");
-  const userId = c.get("user").id;
   const { trackIds } = await c.req.json();
 
   if (!Array.isArray(trackIds)) {
     return c.json({ error: "trackIds array required" }, 400);
   }
 
-  const [playlist] = await db
-    .select()
-    .from(playlists)
-    .where(eq(playlists.id, id))
-    .limit(1);
-
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!(await requestCanEditPlaylist(c, id))) {
     return c.json({ error: "not found" }, 404);
   }
 

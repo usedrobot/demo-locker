@@ -38,9 +38,14 @@ export const playlists = pgTable("playlists", {
 
 export const tracks = pgTable("tracks", {
   id: uuid("id").primaryKey().defaultRandom(),
-  playlistId: uuid("playlist_id")
+  // Tracks are library items owned by a user; playlist membership is optional.
+  // Deleting a playlist detaches its tracks (SET NULL) instead of deleting them.
+  playlistId: uuid("playlist_id").references(() => playlists.id, {
+    onDelete: "set null",
+  }),
+  ownerId: uuid("owner_id")
     .notNull()
-    .references(() => playlists.id, { onDelete: "cascade" }),
+    .references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   position: integer("position").notNull(),
   originalKey: text("original_key").notNull(),

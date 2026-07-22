@@ -167,6 +167,13 @@
               "number",
               "null"
             ]
+          },
+          "waveformData": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JSON-encoded array of waveform peak amplitudes (0..1), for rendering a seek waveform. Null when the uploader supplied none."
           }
         },
         "required": [

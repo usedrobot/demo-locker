@@ -66,6 +66,79 @@ export async function canAccessPlaylist(
   return false;
 }
 
+// EDIT capability: the playlist owner's session, or a share token whose
+// permission is "edit" (and not expired). Grants upload + reorder on that
+// playlist. Returns the ownerId when allowed (uploads by collaborators are
+// attributed to the locker owner), or null when denied.
+export async function requestCanEditPlaylist(
+  c: Context<Env>,
+  playlistId: string
+): Promise<string | null> {
+  const db = getDb(c.env.DATABASE_URL);
+  const [playlist] = await db
+    .select({ ownerId: playlists.ownerId })
+    .from(playlists)
+    .where(eq(playlists.id, playlistId))
+    .limit(1);
+  if (!playlist) return null;
+
+  const queryToken = c.req.query("token") || null;
+  const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
+
+  for (const token of [queryToken, bearer]) {
+    if (!token) continue;
+
+    const [session] = await db
+      .select({ userId: sessions.userId, expiresAt: sessions.expiresAt })
+      .from(sessions)
+      .where(eq(sessions.token, token))
+      .limit(1);
+    if (
+      session &&
+      session.expiresAt >= new Date() &&
+      session.userId === playlist.ownerId
+    ) {
+      return playlist.ownerId;
+    }
+
+    const [share] = await db
+      .select({ permission: shares.permission, expiresAt: shares.expiresAt })
+      .from(shares)
+      .where(and(eq(shares.token, token), eq(shares.playlistId, playlistId)))
+      .limit(1);
+    if (
+      share &&
+      share.permission === "edit" &&
+      (!share.expiresAt || share.expiresAt >= new Date())
+    ) {
+      return playlist.ownerId;
+    }
+  }
+  return null;
+}
+
+// Resolve the request's session user (from `?token=` or Bearer), if any.
+// Used for resources gated on ownership alone, e.g. library tracks that are
+// not in any playlist.
+export async function requestSessionUserId(
+  c: Context<Env>
+): Promise<string | null> {
+  const db = getDb(c.env.DATABASE_URL);
+  const queryToken = c.req.query("token") || null;
+  const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
+
+  for (const token of [queryToken, bearer]) {
+    if (!token) continue;
+    const [session] = await db
+      .select({ userId: sessions.userId, expiresAt: sessions.expiresAt })
+      .from(sessions)
+      .where(eq(sessions.token, token))
+      .limit(1);
+    if (session && session.expiresAt >= new Date()) return session.userId;
+  }
+  return null;
+}
+
 // Convenience wrapper used by the six gated routes: pulls every candidate
 // credential off the request (the `?token=` query param and any Bearer header)
 // and returns whether ANY of them grants access to `playlistId`.

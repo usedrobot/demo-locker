@@ -3,11 +3,11 @@ import { shares as api, type Share } from "../lib/api";
 
 type Props = {
   playlistId: string;
+  extraAction?: React.ReactNode;
 };
 
-export default function SharePanel({ playlistId }: Props) {
+export default function SharePanel({ playlistId, extraAction }: Props) {
   const [items, setItems] = useState<Share[]>([]);
-  const [permission, setPermission] = useState<"listen" | "edit">("listen");
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -22,7 +22,7 @@ export default function SharePanel({ playlistId }: Props) {
   async function handleCreate() {
     setError("");
     try {
-      await api.create(playlistId, permission);
+      await api.create(playlistId, "listen");
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
@@ -95,34 +95,19 @@ export default function SharePanel({ playlistId }: Props) {
       </div>
 
       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem", alignItems: "center" }}>
-        <select
-          value={permission}
-          onChange={(e) => setPermission(e.target.value as "listen" | "edit")}
-          style={{
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            color: "var(--fg)",
-            fontFamily: "var(--font)",
-            fontSize: "13px",
-            padding: "0.4rem",
-          }}
-        >
-          <option value="listen">listen</option>
-          <option value="edit">edit</option>
-        </select>
         <button onClick={handleCreate} style={btnStyle}>
           [+ share link]
         </button>
+        {extraAction}
+        <span style={{ color: "var(--fg-dim)", fontSize: "11px" }}>
+          links start listen-only — grant edit from the access panel on the main page
+        </span>
       </div>
       {error && (
         <div style={{ color: "#f44", fontSize: "12px", marginTop: "0.25rem" }}>
           {error}
         </div>
       )}
-      <div style={{ color: "var(--fg-dim)", fontSize: "11px", marginTop: "0.5rem" }}>
-        listen = play + comment (no account needed) · edit = reorder + upload (account required)
-        · max {4} collaborators on free tier
-      </div>
     </div>
   );
 }

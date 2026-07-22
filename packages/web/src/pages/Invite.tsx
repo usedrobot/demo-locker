@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   shares as sharesApi,
+  playlists as playlistsApi,
   setShareToken,
   type Playlist,
   type Track,
@@ -8,6 +9,17 @@ import {
 import { player } from "../lib/audio";
 import TrackList from "../components/TrackList";
 import Comments from "../components/Comments";
+function PoweredBy() {
+  return (
+    <div style={{ color: "var(--fg-dim)", fontSize: "11px", letterSpacing: "0.08em" }}>
+      ♪ powered by demo locker
+    </div>
+  );
+}
+import AsciiText from "../components/AsciiText";
+import Upload from "../components/Upload";
+import PendingTrackRow from "../components/PendingTrackRow";
+import { useUploadQueue } from "../lib/use-upload-queue";
 
 type Props = {
   token: string;
@@ -41,6 +53,27 @@ export default function Invite({ token }: Props) {
 
   useEffect(() => player.subscribe(setPlayerState), []);
 
+  const canEdit = permission === "edit";
+
+  const reload = () => {
+    sharesApi.resolveInvite(token).then((r) => {
+      setTracks(r.tracks);
+      player.setPlaylist(r.tracks);
+    }).catch(() => {});
+  };
+
+  const uploads = useUploadQueue(playlist?.id ?? null, reload);
+
+  async function handleReorder(trackIds: string[]) {
+    if (!playlist) return;
+    const reordered = trackIds
+      .map((id) => tracks.find((t) => t.id === id)!)
+      .filter(Boolean);
+    setTracks(reordered);
+    player.setPlaylist(reordered);
+    await playlistsApi.reorder(playlist.id, trackIds);
+  }
+
   // adjust state during render to mirror the currently-playing track
   const playingTrackId = playerState.track?.id ?? null;
   const [lastPlayingTrackId, setLastPlayingTrackId] = useState<string | null>(playingTrackId);
@@ -54,9 +87,7 @@ export default function Invite({ token }: Props) {
   if (error) {
     return (
       <div style={{ padding: "2rem" }}>
-        <pre>{`┌──────────────────────────────┐
-│  demo locker                 │
-└──────────────────────────────┘`}</pre>
+        <PoweredBy />
         <p style={{ color: "#f44", marginTop: "1rem" }}>{error}</p>
       </div>
     );
@@ -70,26 +101,37 @@ export default function Invite({ token }: Props) {
 
   return (
     <div style={{ padding: "2rem", paddingBottom: "5rem" }}>
-      <div style={{ marginBottom: "1rem" }}>
-        <pre>{`┌──────────────────────────────┐
-│  demo locker                 │
-└──────────────────────────────┘`}</pre>
+      <div style={{ marginBottom: "1.25rem" }}>
+        <PoweredBy />
       </div>
 
-      <div style={{ marginBottom: "1rem" }}>
-        <div className="box-header">shared playlist · {permission}</div>
-        <h2 style={{ color: "var(--fg)", fontSize: "18px", fontFamily: "var(--font)", fontWeight: "normal" }}>
-          {playlist.name}
-        </h2>
+      <div style={{ marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="box-header">
+            shared playlist · {permission === "edit" ? "listen + edit" : "listen"}
+          </div>
+          <AsciiText text={playlist.name} />
+        </div>
+        {canEdit && <Upload onPick={uploads.queue} />}
       </div>
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
         <TrackList
           tracks={tracks}
-          onReorder={() => {}}
+          onReorder={canEdit ? handleReorder : () => {}}
           selectedId={selectedTrackId}
           onSelect={setSelectedTrackId}
         />
+        {uploads.pending.map((p, i) => (
+          <PendingTrackRow
+            key={p.id}
+            item={p}
+            position={tracks.length + i + 1}
+            onTitleChange={(title) => uploads.update(p.id, { title })}
+            onStart={() => uploads.start(p.id)}
+            onCancel={() => uploads.remove(p.id)}
+          />
+        ))}
       </div>
 
       {selectedTrack && (

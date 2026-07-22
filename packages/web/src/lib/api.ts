@@ -99,7 +99,7 @@ export type Playlist = {
 
 export type Track = {
   id: string;
-  playlistId: string;
+  playlistId: string | null;
   title: string;
   position: number;
   originalKey: string;
@@ -161,8 +161,14 @@ export const playlists = {
 
 // Tracks
 export const tracks = {
+  list: () => request<{ tracks: Track[] }>("/tracks"),
+  attach: (id: string, playlistId: string | null) =>
+    request<{ track: Track }>(`/tracks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ playlistId }),
+    }),
   upload: (
-    playlistId: string,
+    playlistId: string | null,
     file: File,
     opts?: {
       title?: string;
@@ -174,7 +180,7 @@ export const tracks = {
     new Promise((resolve, reject) => {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("playlistId", playlistId);
+      if (playlistId) formData.append("playlistId", playlistId);
       if (opts?.title) formData.append("title", opts.title);
       if (opts?.waveformData) formData.append("waveformData", opts.waveformData);
       if (opts?.duration != null) formData.append("duration", String(opts.duration));
@@ -206,7 +212,9 @@ export const tracks = {
       xhr.addEventListener("error", () => reject(new Error("upload failed")));
       xhr.addEventListener("abort", () => reject(new Error("upload aborted")));
       xhr.open("POST", `${API_URL}/tracks/upload`);
-      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      // share token first: on the invite page an edit link authorizes uploads
+      const uploadToken = shareToken || token;
+      if (uploadToken) xhr.setRequestHeader("Authorization", `Bearer ${uploadToken}`);
       xhr.send(formData);
     }),
   streamUrl: (id: string) => {
@@ -265,6 +273,7 @@ export const comments = {
 export type Share = {
   id: string;
   playlistId: string;
+  playlistName?: string;
   token: string;
   permission: "listen" | "edit";
   email: string | null;
@@ -280,6 +289,12 @@ export const shares = {
     }),
   forPlaylist: (playlistId: string) =>
     request<{ shares: Share[] }>(`/shares/playlist/${playlistId}`),
+  listAll: () => request<{ shares: Share[] }>("/shares"),
+  setPermission: (id: string, permission: "listen" | "edit") =>
+    request<{ share: Share }>(`/shares/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ permission }),
+    }),
   revoke: (id: string) =>
     request(`/shares/${id}`, { method: "DELETE" }),
   resolveInvite: (token: string) =>

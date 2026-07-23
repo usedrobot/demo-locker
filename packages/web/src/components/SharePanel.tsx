@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { shares as api, type Share } from "../lib/api";
+import { copyText } from "../lib/copy-text";
 
 type Props = {
   playlistId: string;
@@ -40,7 +41,7 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
 
   async function copyLink(token: string) {
     const url = getInviteUrl(token);
-    await navigator.clipboard.writeText(url);
+    if (!(await copyText(url))) return;
     setCopied(token);
     setTimeout(() => setCopied(null), 2000);
   }

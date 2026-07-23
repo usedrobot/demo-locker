@@ -175,7 +175,10 @@ export default function Player() {
 
   if (!state.track) return null;
 
-  const artworkSrc = playlistsApi.artworkUrlUnchecked(state.track.playlistId);
+  // library tracks have no playlist, hence no playlist artwork
+  const artworkSrc = state.track.playlistId
+    ? playlistsApi.artworkUrlUnchecked(state.track.playlistId)
+    : null;
 
   return (
     <div

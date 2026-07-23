@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { tracks as tracksApi } from "./api";
 import { extractPeaks } from "./peaks";
+import { randomId } from "./ids";
 
 export type PendingUpload = {
   id: string;
@@ -28,7 +29,7 @@ export function useUploadQueue(playlistId: string | null, onUploaded: () => void
 
   function queue(files: File[]) {
     const items: PendingUpload[] = files.map((file) => ({
-      id: crypto.randomUUID(),
+      id: randomId(),
       file,
       title: file.name.replace(/\.[^.]+$/, ""),
       progress: 0,

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { auth, setToken } from "../lib/api";
+import Logo from "../components/Logo";
 
 type Props = {
   onAuth: () => void;
@@ -8,16 +9,13 @@ type Props = {
 export default function Login({ onAuth }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     try {
-      const result = isSignup
-        ? await auth.signup(email, password)
-        : await auth.login(email, password);
+      const result = await auth.login(email, password);
       setToken(result.token);
       onAuth();
     } catch (err) {
@@ -26,12 +24,16 @@ export default function Login({ onAuth }: Props) {
   }
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "400px" }}>
-      <pre style={{ marginBottom: "1.5rem" }}>{`┌──────────────────────────────┐
-│  demo locker                 │
-└──────────────────────────────┘`}</pre>
+    <div style={{ padding: "2rem" }}>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <Logo />
+      </div>
 
-      <form onSubmit={handleSubmit}>
+      <p style={{ color: "var(--fg-dim)", fontSize: "12px", marginBottom: "1rem" }}>
+        private workspace
+      </p>
+
+      <form onSubmit={handleSubmit} style={{ maxWidth: "400px" }}>
         <div style={{ marginBottom: "0.75rem" }}>
           <label style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
             email
@@ -61,14 +63,7 @@ export default function Login({ onAuth }: Props) {
           <div style={{ color: "#f44", marginBottom: "0.75rem" }}>{error}</div>
         )}
         <button type="submit" style={btnStyle}>
-          [{isSignup ? "sign up" : "log in"}]
-        </button>
-        <button
-          type="button"
-          onClick={() => setIsSignup(!isSignup)}
-          style={{ ...btnStyle, color: "var(--fg-dim)", marginLeft: "1rem" }}
-        >
-          {isSignup ? "have an account? log in" : "need an account? sign up"}
+          [enter locker]
         </button>
       </form>
     </div>

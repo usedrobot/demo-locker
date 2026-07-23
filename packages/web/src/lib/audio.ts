@@ -10,6 +10,14 @@ type PlayerState = {
 type Listener = (state: PlayerState) => void;
 
 const audio = new Audio();
+// Allow Web Audio (spectrum analyser) to read samples from the cross-origin
+// stream — the API serves audio with permissive CORS on all deploy targets.
+audio.crossOrigin = "anonymous";
+
+// For the spectrum visualizer — see lib/visualizer.ts
+export function getAudioElement(): HTMLAudioElement {
+  return audio;
+}
 let playlist: Track[] = [];
 let currentIndex = -1;
 let listeners: Listener[] = [];
@@ -95,6 +103,15 @@ export const player = {
 
   seek(time: number) {
     audio.currentTime = time;
+  },
+
+  // Stop playback and unload the current track (e.g. when it's deleted).
+  clear() {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    currentIndex = -1;
+    notify();
   },
 
   getState,

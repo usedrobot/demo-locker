@@ -2,12 +2,52 @@ import { useEffect, useState, useRef } from "react";
 import { player } from "../lib/audio";
 import { playlists as playlistsApi, comments as commentsApi, type Comment } from "../lib/api";
 import { avatarColor } from "../lib/avatar";
+import { spectrumFrame } from "../lib/visualizer";
 
 function formatTime(s: number): string {
-  if (!s || isNaN(s)) return "0:00";
+  if (!s || isNaN(s)) return "00:00";
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, "0")}`;
+  return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+}
+
+const SPECTRUM_BARS = 16;
+
+// Live TUI spectrum — block characters driven by a Web Audio analyser.
+function Spectrum({ playing }: { playing: boolean }) {
+  const [frame, setFrame] = useState("▁".repeat(SPECTRUM_BARS));
+
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last = 0;
+    const tick = (t: number) => {
+      if (t - last > 66) {
+        last = t;
+        setFrame(spectrumFrame(SPECTRUM_BARS));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+
+  return (
+    <span
+      aria-hidden
+      style={{
+        color: "var(--accent)",
+        whiteSpace: "pre",
+        fontSize: "14px",
+        lineHeight: 1,
+        letterSpacing: "1px",
+        opacity: playing ? 1 : 0.35,
+        userSelect: "none",
+      }}
+    >
+      {playing ? frame : "▁".repeat(SPECTRUM_BARS)}
+    </span>
+  );
 }
 
 const WAVEFORM_HEIGHT = 88;
@@ -27,15 +67,20 @@ export default function Player() {
     if (!trackId) return;
     let cancelled = false;
     const fetchComments = () => {
-      commentsApi.forTrack(trackId).then((r) => {
-        if (cancelled) return;
-        const flat: Comment[] = [];
-        for (const c of r.comments) {
-          if (c.timestampSec != null) flat.push(c);
-          if (c.replies) for (const rep of c.replies) if (rep.timestampSec != null) flat.push(rep);
-        }
-        setTrackComments(flat);
-      });
+      commentsApi
+        .forTrack(trackId)
+        .then((r) => {
+          if (cancelled) return;
+          const flat: Comment[] = [];
+          for (const c of r.comments) {
+            if (c.timestampSec != null) flat.push(c);
+            if (c.replies) for (const rep of c.replies) if (rep.timestampSec != null) flat.push(rep);
+          }
+          setTrackComments(flat);
+        })
+        .catch(() => {
+          if (!cancelled) setTrackComments([]);
+        });
     };
     fetchComments();
     const handler = (e: Event) => {
@@ -70,6 +115,8 @@ export default function Player() {
       }
     }
 
+    const accent =
+      getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#fc0";
     const cssWidth = canvas.clientWidth;
     const cssHeight = canvas.clientHeight;
     const dpr = window.devicePixelRatio || 1;
@@ -81,23 +128,32 @@ export default function Player() {
     ctx.clearRect(0, 0, cssWidth, cssHeight);
 
     if (peaks.length === 0) {
-      ctx.fillStyle = "#3f3f3f";
-      ctx.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
-      ctx.fillStyle = "#4af";
-      ctx.fillRect(0, cssHeight / 2 - 1, cssWidth * progress, 2);
+      // no waveform data — TUI-style segmented progress line (━ ━ ━)
+      const segW = 8;
+      const gap = 3;
+      for (let x = 0; x < cssWidth; x += segW + gap) {
+        ctx.fillStyle = x / cssWidth < progress ? accent : "#3f3f3f";
+        ctx.fillRect(x, cssHeight / 2 - 1, Math.min(segW, cssWidth - x), 3);
+      }
       return;
     }
 
-    const barWidth = cssWidth / peaks.length;
+    // segmented "LED cell" bars — reads like stacked terminal block chars
     const maxPeak = Math.max(...peaks.map(Math.abs)) || 1;
+    const cellH = 4; // 3px lit + 1px gap
+    const colW = Math.max(cssWidth / peaks.length, 2);
 
     for (let i = 0; i < peaks.length; i++) {
-      const x = i * barWidth;
+      const x = i * colW;
       const normalized = Math.abs(peaks[i]) / maxPeak;
       const barHeight = normalized * (cssHeight * 0.85);
+      const cells = Math.max(1, Math.round(barHeight / cellH));
       const barProgress = i / peaks.length;
-      ctx.fillStyle = barProgress < progress ? "#4af" : "#3f3f3f";
-      ctx.fillRect(x, (cssHeight - barHeight) / 2, Math.max(barWidth - 1, 1), barHeight);
+      ctx.fillStyle = barProgress < progress ? accent : "#3f3f3f";
+      const top = cssHeight / 2 - (cells * cellH) / 2;
+      for (let cIdx = 0; cIdx < cells; cIdx++) {
+        ctx.fillRect(x, top + cIdx * cellH, Math.max(colW - 1, 1), cellH - 1);
+      }
     }
   }, [waveformData, progress]);
 
@@ -119,7 +175,10 @@ export default function Player() {
 
   if (!state.track) return null;
 
-  const artworkSrc = playlistsApi.artworkUrlUnchecked(state.track.playlistId);
+  // library tracks have no playlist, hence no playlist artwork
+  const artworkSrc = state.track.playlistId
+    ? playlistsApi.artworkUrlUnchecked(state.track.playlistId)
+    : null;
 
   return (
     <div
@@ -135,6 +194,25 @@ export default function Player() {
         zIndex: 100,
       }}
     >
+      {/* frame label sitting on the top border, TUI-box style */}
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: "-8px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "var(--bg)",
+          padding: "0 0.6em",
+          color: "var(--fg-dim)",
+          fontSize: "10px",
+          textTransform: "uppercase",
+          letterSpacing: "0.18em",
+          userSelect: "none",
+        }}
+      >
+        ─ now playing ─
+      </span>
       <div className="player-inner">
         {/* Artwork thumb */}
         <div className="player-artwork">
@@ -153,21 +231,28 @@ export default function Player() {
         {/* Controls + waveform column */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="player-controls-row">
-            <button onClick={() => player.prev()} className="player-btn" title="Previous track" aria-label="Previous track">
-              ⏮
+            <button onClick={() => player.prev()} className="player-key" title="Previous track" aria-label="Previous track">
+              [⏮]
             </button>
             <button
               onClick={() => player.toggle()}
-              className="player-btn player-btn-primary"
+              className="player-key player-key-primary"
               title={state.playing ? "Pause" : "Play"}
               aria-label={state.playing ? "Pause" : "Play"}
             >
-              {state.playing ? "⏸" : "⏵"}
+              {state.playing ? "[❚❚]" : "[▶]"}
             </button>
-            <button onClick={() => player.next()} className="player-btn" title="Next track" aria-label="Next track">
-              ⏭
+            <button onClick={() => player.next()} className="player-key" title="Next track" aria-label="Next track">
+              [⏭]
             </button>
-            <span className="player-title">{state.track.title}</span>
+            <span
+              aria-hidden
+              style={{ color: state.playing ? "var(--accent)" : "var(--fg-dim)", userSelect: "none" }}
+            >
+              {state.playing ? "●" : "■"}
+            </span>
+            <span className="player-title">♫ {state.track.title}</span>
+            <Spectrum playing={state.playing} />
             <span className="player-time">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>

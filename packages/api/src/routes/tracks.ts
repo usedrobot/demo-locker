@@ -1,16 +1,33 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
-import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
+import {
+  requestCanAccessPlaylist,
+  requestCanEditPlaylist,
+  requestSessionUserId,
+} from "../lib/playlist-access.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import type { Env } from "../types.js";
 
 const tracksRouter = new Hono<Env>();
 
-// Upload a track — receives the file directly, stores in R2
-tracksRouter.post("/upload", requireAuth, async (c) => {
+type Db = ReturnType<typeof getDb>;
+
+async function nextPosition(db: Db, playlistId: string): Promise<number> {
+  const existing = await db
+    .select({ position: tracks.position })
+    .from(tracks)
+    .where(eq(tracks.playlistId, playlistId))
+    .orderBy(tracks.position);
+  return existing.length > 0 ? existing[existing.length - 1].position + 1 : 0;
+}
+
+// Upload a track — receives the file directly, stores in R2.
+// Auth: a session (library or own-playlist uploads), OR an "edit" share token
+// for the target playlist (collaborator uploads — attributed to the owner).
+tracksRouter.post("/upload", async (c) => {
   const formData = await c.req.formData();
   const file = formData.get("file") as File | null;
   const playlistId = formData.get("playlistId") as string | null;
@@ -19,36 +36,32 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
   const durationRaw = formData.get("duration") as string | null;
   const duration = durationRaw ? parseFloat(durationRaw) : null;
 
-  if (!file || !playlistId) {
-    return c.json({ error: "file and playlistId required" }, 400);
+  // playlistId is optional — without it the track lands in the user's library
+  if (!file) {
+    return c.json({ error: "file required" }, 400);
   }
 
   const db = getDb(c.env.DATABASE_URL);
   const bucket = c.env.DEMOS_BUCKET;
 
-  // verify playlist ownership
-  const [playlist] = await db
-    .select()
-    .from(playlists)
-    .where(eq(playlists.id, playlistId))
-    .limit(1);
-
-  if (!playlist || playlist.ownerId !== c.get("user").id) {
-    return c.json({ error: "not found" }, 404);
+  let ownerId: string | null = null;
+  let position = 0;
+  if (playlistId) {
+    // owner session or edit share token — either resolves to the owner id
+    ownerId = await requestCanEditPlaylist(c, playlistId);
+    if (!ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
+    position = await nextPosition(db, playlistId);
+  } else {
+    // library upload — session required
+    ownerId = await requestSessionUserId(c);
+    if (!ownerId) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
   }
 
-  // get next position
-  const existing = await db
-    .select({ position: tracks.position })
-    .from(tracks)
-    .where(eq(tracks.playlistId, playlistId))
-    .orderBy(tracks.position);
-
-  const position = existing.length > 0
-    ? existing[existing.length - 1].position + 1
-    : 0;
-
-  const key = `${playlistId}/${crypto.randomUUID()}/${file.name}`;
+  const key = `${playlistId ?? "library"}/${crypto.randomUUID()}/${file.name}`;
 
   // store original in R2
   await bucket.put(key, file.stream(), {
@@ -63,6 +76,7 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
     .insert(tracks)
     .values({
       playlistId,
+      ownerId,
       title,
       position,
       originalKey: key,
@@ -73,6 +87,17 @@ tracksRouter.post("/upload", requireAuth, async (c) => {
     .returning();
 
   return c.json({ track }, 201);
+});
+
+// List the user's whole track library (every upload, in or out of playlists)
+tracksRouter.get("/", requireAuth, async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const rows = await db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.ownerId, c.get("user").id))
+    .orderBy(desc(tracks.uploadedAt));
+  return c.json({ tracks: rows });
 });
 
 // Stream a track from R2 — gated by the parent playlist. <audio> can't send an
@@ -93,8 +118,16 @@ tracksRouter.get("/:id/stream", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
-    return c.json({ error: "not found" }, 404);
+  if (track.playlistId) {
+    if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
+      return c.json({ error: "not found" }, 404);
+    }
+  } else {
+    // Library track not in any playlist — owner only.
+    const userId = await requestSessionUserId(c);
+    if (!userId || userId !== track.ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
   }
 
   return buildStreamResponse(
@@ -103,6 +136,44 @@ tracksRouter.get("/:id/stream", async (c) => {
     track.streamKey,
     "private, max-age=3600"
   );
+});
+
+// Move a track into (or out of) a playlist. Body: { playlistId: string | null }
+tracksRouter.patch("/:id", requireAuth, async (c) => {
+  const trackId = c.req.param("id");
+  const { playlistId } = await c.req.json<{ playlistId: string | null }>();
+  const db = getDb(c.env.DATABASE_URL);
+  const userId = c.get("user").id;
+
+  const [track] = await db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+  if (!track || track.ownerId !== userId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  let position = 0;
+  if (playlistId) {
+    const [playlist] = await db
+      .select()
+      .from(playlists)
+      .where(eq(playlists.id, playlistId))
+      .limit(1);
+    if (!playlist || playlist.ownerId !== userId) {
+      return c.json({ error: "not found" }, 404);
+    }
+    position = await nextPosition(db, playlistId);
+  }
+
+  const [updated] = await db
+    .update(tracks)
+    .set({ playlistId: playlistId ?? null, position })
+    .where(eq(tracks.id, trackId))
+    .returning();
+
+  return c.json({ track: updated });
 });
 
 // Delete a track
@@ -116,15 +187,7 @@ tracksRouter.delete("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .limit(1);
 
-  if (!track) return c.json({ error: "not found" }, 404);
-
-  const [playlist] = await db
-    .select()
-    .from(playlists)
-    .where(eq(playlists.id, track.playlistId))
-    .limit(1);
-
-  if (!playlist || playlist.ownerId !== c.get("user").id) {
+  if (!track || track.ownerId !== c.get("user").id) {
     return c.json({ error: "not found" }, 404);
   }
 

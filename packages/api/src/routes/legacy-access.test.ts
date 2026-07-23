@@ -64,7 +64,7 @@ beforeAll(async () => {
 
   const [tPriv] = await db
     .insert(tracks)
-    .values({ playlistId: privateId, title: "priv track", position: 0, originalKey: "k-priv", streamKey: "k-priv" })
+    .values({ playlistId: privateId, ownerId: owner.id, title: "priv track", position: 0, originalKey: "k-priv", streamKey: "k-priv" })
     .returning();
   privateTrackId = tPriv.id;
 
@@ -168,5 +168,103 @@ describe("legacy endpoint access gating", () => {
     expect(anonPlaylist.status).toBe(404);
     const withSharePlaylist = await app.request(`/comments/playlist/${privateId}?token=${shareToken}`, {}, env);
     expect(withSharePlaylist.status).toBe(200);
+  });
+});
+
+describe("edit share tokens (upload/reorder capability)", () => {
+  function uploadForm() {
+    const form = new FormData();
+    form.append("file", new File(["0123456789"], "collab.wav", { type: "audio/wav" }));
+    form.append("playlistId", privateId);
+    return form;
+  }
+
+  it("a listen token cannot upload or reorder; an edit token can", async () => {
+    // listen token: rejected
+    const listenUpload = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: { Authorization: `Bearer ${shareToken}` }, body: uploadForm() },
+      env
+    );
+    expect(listenUpload.status).toBe(404);
+
+    const listenReorder = await app.request(
+      `/playlists/${privateId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${shareToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [privateTrackId] }),
+      },
+      env
+    );
+    expect(listenReorder.status).toBe(404);
+
+    // owner grants edit on the share
+    const [shareRow] = await db.select().from(shares);
+    const grant = await app.request(
+      `/shares/${shareRow.id}`,
+      {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ permission: "edit" }),
+      },
+      env
+    );
+    expect(grant.status).toBe(200);
+
+    // edit token: upload lands, attributed to the locker owner
+    const editUpload = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: { Authorization: `Bearer ${shareToken}` }, body: uploadForm() },
+      env
+    );
+    expect(editUpload.status).toBe(201);
+    const uploaded = (await editUpload.json()) as { track: { ownerId: string; playlistId: string } };
+    const [owner] = await db.select().from(users);
+    expect(uploaded.track.ownerId).toBe(owner.id);
+    expect(uploaded.track.playlistId).toBe(privateId);
+
+    // edit token: reorder works
+    const editReorder = await app.request(
+      `/playlists/${privateId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${shareToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [privateTrackId] }),
+      },
+      env
+    );
+    expect(editReorder.status).toBe(200);
+  });
+
+  it("a stranger cannot change share permissions, and anonymous library uploads 401", async () => {
+    const [shareRow] = await db.select().from(shares);
+    const strangerGrant = await app.request(
+      `/shares/${shareRow.id}`,
+      {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${strangerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ permission: "listen" }),
+      },
+      env
+    );
+    expect(strangerGrant.status).toBe(404);
+
+    const form = new FormData();
+    form.append("file", new File(["0123456789"], "anon.wav", { type: "audio/wav" }));
+    const anonLibraryUpload = await app.request("/tracks/upload", { method: "POST", body: form }, env);
+    expect(anonLibraryUpload.status).toBe(401);
+  });
+
+  it("GET /shares lists only the caller's shares", async () => {
+    const ownerList = await app.request("/shares", { headers: { Authorization: `Bearer ${ownerToken}` } }, env);
+    expect(ownerList.status).toBe(200);
+    const ownerBody = (await ownerList.json()) as { shares: Array<{ playlistName: string }> };
+    expect(ownerBody.shares.length).toBeGreaterThan(0);
+    expect(ownerBody.shares[0].playlistName).toBe("private demo");
+
+    const strangerList = await app.request("/shares", { headers: { Authorization: `Bearer ${strangerToken}` } }, env);
+    const strangerBody = (await strangerList.json()) as { shares: unknown[] };
+    expect(strangerBody.shares).toHaveLength(0);
   });
 });

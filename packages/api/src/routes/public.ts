@@ -30,7 +30,12 @@ publicRouter.get("/playlists/:id", async (c) => {
   if (!playlist) return notFound(c);
 
   const trackRows = await db
-    .select({ id: tracks.id, title: tracks.title, duration: tracks.duration })
+    .select({
+      id: tracks.id,
+      title: tracks.title,
+      duration: tracks.duration,
+      waveformData: tracks.waveformData,
+    })
     .from(tracks)
     .where(eq(tracks.playlistId, id))
     .orderBy(asc(tracks.position));

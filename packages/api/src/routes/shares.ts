@@ -40,7 +40,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
 
     if (existing.length >= limits.maxCollaborators) {
       return c.json(
-        { error: `limited to ${limits.maxCollaborators} collaborators on this plan` },
+        { error: `this instance limits playlists to ${limits.maxCollaborators} share links` },
         403
       );
     }
@@ -58,6 +58,65 @@ sharesRouter.post("/", requireAuth, async (c) => {
     .returning();
 
   return c.json({ share }, 201);
+});
+
+// All share links across every playlist the user owns — the "who has access
+// to my locker" view. Includes the playlist name for display.
+sharesRouter.get("/", requireAuth, async (c) => {
+  const userId = c.get("user").id;
+  const db = getDb(c.env.DATABASE_URL);
+
+  const rows = await db
+    .select({
+      id: shares.id,
+      playlistId: shares.playlistId,
+      playlistName: playlists.name,
+      token: shares.token,
+      permission: shares.permission,
+      email: shares.email,
+      createdAt: shares.createdAt,
+      expiresAt: shares.expiresAt,
+    })
+    .from(shares)
+    .innerJoin(playlists, eq(shares.playlistId, playlists.id))
+    .where(eq(playlists.ownerId, userId));
+
+  return c.json({ shares: rows });
+});
+
+// Change a share's permission (grant or revoke edit). Owner only.
+sharesRouter.patch("/:id", requireAuth, async (c) => {
+  const shareId = c.req.param("id");
+  const userId = c.get("user").id;
+  const { permission } = await c.req.json();
+  if (permission !== "listen" && permission !== "edit") {
+    return c.json({ error: "permission must be 'listen' or 'edit'" }, 400);
+  }
+  const db = getDb(c.env.DATABASE_URL);
+
+  const [share] = await db
+    .select({ id: shares.id, playlistId: shares.playlistId })
+    .from(shares)
+    .where(eq(shares.id, shareId))
+    .limit(1);
+  if (!share) return c.json({ error: "not found" }, 404);
+
+  const [playlist] = await db
+    .select({ ownerId: playlists.ownerId })
+    .from(playlists)
+    .where(eq(playlists.id, share.playlistId))
+    .limit(1);
+  if (!playlist || playlist.ownerId !== userId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const [updated] = await db
+    .update(shares)
+    .set({ permission })
+    .where(eq(shares.id, shareId))
+    .returning();
+
+  return c.json({ share: updated });
 });
 
 sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {

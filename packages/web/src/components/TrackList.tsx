@@ -51,6 +51,7 @@ function ProgressBar({ trackId }: { trackId: string }) {
 
 export default function TrackList({ tracks, onReorder, onDelete, selectedId, onSelect }: Props) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [playerState, setPlayerState] = useState(player.getState());
 
   useEffect(() => player.subscribe(setPlayerState), []);
@@ -76,7 +77,13 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
 
   async function handleDelete(e: React.MouseEvent, trackId: string) {
     e.stopPropagation();
+    if (confirmDeleteId !== trackId) {
+      setConfirmDeleteId(trackId);
+      return;
+    }
     await tracksApi.delete(trackId);
+    if (player.getState().track?.id === trackId) player.clear();
+    setConfirmDeleteId(null);
     onDelete?.(trackId);
   }
 
@@ -155,18 +162,20 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
             {onDelete && (
               <button
                 onClick={(e) => handleDelete(e, track.id)}
-                title="Remove track"
+                onMouseLeave={() => setConfirmDeleteId(null)}
+                title={confirmDeleteId === track.id ? "Click again to remove" : "Remove track"}
+                aria-label={`Remove track ${track.title}`}
                 style={{
                   background: "none",
                   border: "none",
-                  color: "var(--fg-dim)",
+                  color: confirmDeleteId === track.id ? "var(--error)" : "var(--fg-dim)",
                   fontFamily: "var(--font)",
                   fontSize: "12px",
                   cursor: "pointer",
                   padding: "0 0.25rem",
                 }}
               >
-                [x]
+                {confirmDeleteId === track.id ? "[delete?]" : "[x]"}
               </button>
             )}
 

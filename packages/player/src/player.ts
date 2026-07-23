@@ -2,8 +2,17 @@
 // Zero-dependency web component. Fetches /public/v1 metadata and streams audio.
 // Theming: every visual value is a --dl-* custom property; structural nodes
 // carry part="" attributes for ::part() styling.
+//
+// TUI look (cliamp-inspired): bracket-key transport, ●/■ status, ♫ title,
+// segmented LED-cell waveform (click to seek), live block-character spectrum
+// driven by a Web Audio analyser when the stream is CORS-readable.
 
-type Track = { id: string; title: string; duration: number | null };
+type Track = {
+  id: string;
+  title: string;
+  duration: number | null;
+  waveformData?: string | null;
+};
 type PlaylistData = {
   id: string;
   name: string;
@@ -25,21 +34,27 @@ function formatTime(secs: number | null): string {
   if (secs == null || !isFinite(secs)) return "--:--";
   const m = Math.floor(secs / 60);
   const s = Math.floor(secs % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
+
+const SPECTRUM_BARS = 12;
+const SPECTRUM_BLOCKS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+const FLAT_SPECTRUM = "▁".repeat(SPECTRUM_BARS);
 
 const STYLES = `
 :host {
   --dl-bg: #0d0d0d;
   --dl-fg: #d8d8d8;
-  --dl-accent: #5fd75f;
+  --dl-accent: #fc0;
   --dl-muted: #6b6b6b;
   --dl-border: #2e2e2e;
+  --dl-wave-dim: #3f3f3f;
   --dl-font: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --dl-font-size: 13px;
   --dl-radius: 0;
   --dl-padding: 12px;
   display: block;
+  position: relative;
   background: var(--dl-bg);
   color: var(--dl-fg);
   font-family: var(--dl-font);
@@ -49,17 +64,27 @@ const STYLES = `
   max-width: 100%;
 }
 * { box-sizing: border-box; }
+.frame-label {
+  position: absolute; top: -0.7em; left: 12px;
+  background: var(--dl-bg); padding: 0 0.6em;
+  color: var(--dl-muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.18em; user-select: none;
+}
 .header { display: flex; gap: var(--dl-padding); padding: var(--dl-padding); border-bottom: 1px solid var(--dl-border); align-items: center; }
 .artwork { width: 64px; height: 64px; object-fit: cover; border: 1px solid var(--dl-border); flex: none; }
 .artwork.empty { display: flex; align-items: center; justify-content: center; color: var(--dl-muted); }
 .title { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .transport { display: flex; align-items: center; gap: 8px; padding: 8px var(--dl-padding); border-bottom: 1px solid var(--dl-border); }
-button { background: none; border: 1px solid var(--dl-border); color: var(--dl-fg); font: inherit; cursor: pointer; padding: 2px 8px; }
-button:hover { border-color: var(--dl-accent); color: var(--dl-accent); }
-.time { color: var(--dl-muted); font-size: 0.9em; white-space: nowrap; }
-.seek { flex: 1; appearance: none; height: 4px; background: var(--dl-border); cursor: pointer; }
-.seek::-webkit-slider-thumb { appearance: none; width: 10px; height: 14px; background: var(--dl-accent); }
-.seek::-moz-range-thumb { width: 10px; height: 14px; background: var(--dl-accent); border: none; border-radius: 0; }
+button { background: none; border: none; color: var(--dl-muted); font: inherit; cursor: pointer; padding: 4px 2px; white-space: pre; }
+button:hover { color: var(--dl-accent); }
+.toggle { color: var(--dl-accent); }
+.toggle:hover { color: var(--dl-fg); }
+.state { user-select: none; }
+.now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.spectrum { color: var(--dl-accent); white-space: pre; letter-spacing: 1px; line-height: 1; user-select: none; }
+.time { color: var(--dl-muted); font-size: 0.9em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wave { display: block; width: 100%; height: 40px; cursor: pointer; }
+.wave-wrap { padding: 6px var(--dl-padding); border-bottom: 1px solid var(--dl-border); }
 .tracks { list-style: none; margin: 0; padding: 4px 0; max-height: 240px; overflow-y: auto; }
 .tracks li { display: flex; justify-content: space-between; gap: 8px; padding: 4px var(--dl-padding); cursor: pointer; }
 .tracks li:hover { color: var(--dl-accent); }
@@ -77,15 +102,39 @@ export class DemoLockerPlayer extends HTMLElement {
   private data: PlaylistData | null = null;
   private current = -1;
   private loadGeneration = 0;
+  private analyser: AnalyserNode | null = null;
+  private analyserFailed = false;
+  private spectrumData: Uint8Array<ArrayBuffer> | null = null;
+  private raf = 0;
 
   constructor() {
     super();
     this.shadow = this.attachShadow({ mode: "open" });
     this.audio.preload = "none";
+    // CORS-readable audio lets the Web Audio analyser drive the spectrum.
+    // If the instance's stream isn't CORS-clean the media load fails, and the
+    // error handler below retries cookie-style without CORS (no spectrum).
+    this.audio.crossOrigin = "anonymous";
     this.audio.addEventListener("ended", () => this.next());
     this.audio.addEventListener("timeupdate", () => this.updateTime());
-    this.audio.addEventListener("play", () => this.render());
-    this.audio.addEventListener("pause", () => this.render());
+    this.audio.addEventListener("play", () => {
+      this.startSpectrum();
+      this.render();
+    });
+    this.audio.addEventListener("pause", () => {
+      this.stopSpectrum();
+      this.render();
+    });
+    this.audio.addEventListener("error", () => {
+      if (this.audio.crossOrigin && this.audio.src) {
+        this.audio.crossOrigin = null;
+        this.analyserFailed = true;
+        const at = this.audio.currentTime;
+        this.audio.src = this.audio.src;
+        this.audio.currentTime = at;
+        this.audio.play().catch(() => {});
+      }
+    });
   }
 
   get instance(): string {
@@ -116,6 +165,7 @@ export class DemoLockerPlayer extends HTMLElement {
 
   disconnectedCallback() {
     this.loadGeneration++;
+    this.stopSpectrum();
     this.audio.pause();
   }
 
@@ -151,19 +201,148 @@ export class DemoLockerPlayer extends HTMLElement {
     if (this.current > 0) this.play(this.current - 1);
   }
 
+  // --- spectrum -------------------------------------------------------------
+
+  private ensureAnalyser(): AnalyserNode | null {
+    if (this.analyser || this.analyserFailed) return this.analyser;
+    try {
+      const ctx = new AudioContext();
+      const src = ctx.createMediaElementSource(this.audio);
+      this.analyser = ctx.createAnalyser();
+      this.analyser.fftSize = 128;
+      this.analyser.smoothingTimeConstant = 0.75;
+      src.connect(this.analyser);
+      this.analyser.connect(ctx.destination);
+      this.audio.addEventListener("play", () => ctx.resume());
+      if (ctx.state === "suspended") ctx.resume();
+    } catch {
+      this.analyserFailed = true;
+      this.analyser = null;
+    }
+    return this.analyser;
+  }
+
+  private spectrumFrame(): string {
+    const a = this.ensureAnalyser();
+    if (!a) return FLAT_SPECTRUM;
+    if (!this.spectrumData || this.spectrumData.length !== a.frequencyBinCount) {
+      this.spectrumData = new Uint8Array(a.frequencyBinCount);
+    }
+    a.getByteFrequencyData(this.spectrumData);
+    const data = this.spectrumData;
+    const usable = Math.max(SPECTRUM_BARS, Math.floor(data.length * 0.66));
+    const perBar = usable / SPECTRUM_BARS;
+    let out = "";
+    for (let i = 0; i < SPECTRUM_BARS; i++) {
+      let sum = 0;
+      const start = Math.floor(i * perBar);
+      const end = Math.max(start + 1, Math.floor((i + 1) * perBar));
+      for (let j = start; j < end; j++) sum += data[j];
+      const avg = sum / (end - start) / 255;
+      out += SPECTRUM_BLOCKS[Math.min(SPECTRUM_BLOCKS.length - 1, Math.round(avg * (SPECTRUM_BLOCKS.length - 1)))];
+    }
+    return out;
+  }
+
+  private startSpectrum() {
+    this.stopSpectrum();
+    let last = 0;
+    const tick = (t: number) => {
+      if (t - last > 66) {
+        last = t;
+        const el = this.shadow.querySelector(".spectrum");
+        if (el) el.textContent = this.spectrumFrame();
+        this.drawWave();
+      }
+      this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  private stopSpectrum() {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    const el = this.shadow.querySelector(".spectrum");
+    if (el) el.textContent = FLAT_SPECTRUM;
+  }
+
+  // --- waveform -------------------------------------------------------------
+
+  private trackDuration(): number | null {
+    return Number.isFinite(this.audio.duration) && this.audio.duration > 0
+      ? this.audio.duration
+      : (this.data?.tracks[this.current]?.duration ?? null);
+  }
+
+  private drawWave() {
+    const canvas = this.shadow.querySelector<HTMLCanvasElement>(".wave");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const styles = getComputedStyle(this);
+    const accent = styles.getPropertyValue("--dl-accent").trim() || "#fc0";
+    const dim = styles.getPropertyValue("--dl-wave-dim").trim() || "#3f3f3f";
+
+    let peaks: number[] = [];
+    const raw = this.current >= 0 ? this.data?.tracks[this.current]?.waveformData : null;
+    if (raw) {
+      try {
+        peaks = JSON.parse(raw);
+      } catch {
+        peaks = [];
+      }
+    }
+
+    const cssWidth = canvas.clientWidth;
+    const cssHeight = canvas.clientHeight;
+    if (!cssWidth) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    const duration = this.trackDuration();
+    const progress = duration ? this.audio.currentTime / duration : 0;
+
+    if (peaks.length === 0) {
+      // no waveform data — segmented TUI progress line (╍ ╍ ╍)
+      const segW = 8;
+      const gap = 3;
+      for (let x = 0; x < cssWidth; x += segW + gap) {
+        ctx.fillStyle = x / cssWidth < progress ? accent : dim;
+        ctx.fillRect(x, cssHeight / 2 - 1, Math.min(segW, cssWidth - x), 3);
+      }
+      return;
+    }
+
+    // segmented "LED cell" bars, matching the demo-locker app player
+    const maxPeak = Math.max(...peaks.map(Math.abs)) || 1;
+    const cellH = 4; // 3px lit + 1px gap
+    const colW = Math.max(cssWidth / peaks.length, 2);
+    for (let i = 0; i < peaks.length; i++) {
+      const x = i * colW;
+      const normalized = Math.abs(peaks[i]) / maxPeak;
+      const barHeight = normalized * (cssHeight * 0.9);
+      const cells = Math.max(1, Math.round(barHeight / cellH));
+      ctx.fillStyle = i / peaks.length < progress ? accent : dim;
+      const top = cssHeight / 2 - (cells * cellH) / 2;
+      for (let cIdx = 0; cIdx < cells; cIdx++) {
+        ctx.fillRect(x, top + cIdx * cellH, Math.max(colW - 1, 1), cellH - 1);
+      }
+    }
+  }
+
+  // --- rendering ------------------------------------------------------------
+
   private updateTime() {
     const time = this.shadow.querySelector(".time");
-    const seek = this.shadow.querySelector<HTMLInputElement>(".seek");
     if (time) {
-      const duration =
-        Number.isFinite(this.audio.duration) && this.audio.duration > 0
-          ? this.audio.duration
-          : (this.data?.tracks[this.current]?.duration ?? null);
-      time.textContent = `${formatTime(this.audio.currentTime)} / ${formatTime(duration)}`;
+      time.textContent = `${formatTime(this.audio.currentTime)} / ${formatTime(this.trackDuration())}`;
     }
-    if (seek && this.audio.duration) {
-      seek.value = String((this.audio.currentTime / this.audio.duration) * 100);
-    }
+    this.drawWave();
   }
 
   private renderStatus(msg: string) {
@@ -174,19 +353,26 @@ export class DemoLockerPlayer extends HTMLElement {
   private render() {
     if (!this.data) return;
     const playing = this.current >= 0 && !this.audio.paused;
+    const nowTitle = this.current >= 0 ? this.data.tracks[this.current]?.title : null;
 
     this.shadow.innerHTML = `
       <style>${STYLES}</style>
+      <span class="frame-label" part="frame-label">─ demo locker ─</span>
       <div class="header" part="header">
         <div class="artwork-slot"></div>
         <div class="title" part="title"></div>
       </div>
       <div class="transport" part="transport">
-        <button class="prev" part="button">|◀</button>
-        <button class="toggle" part="button">${playing ? "❚❚" : "▶"}</button>
-        <button class="nextb" part="button">▶|</button>
-        <input class="seek" part="seek" type="range" min="0" max="100" value="0">
+        <button class="prev" part="button">[⏮]</button>
+        <button class="toggle" part="button">${playing ? "[❚❚]" : "[▶]"}</button>
+        <button class="nextb" part="button">[⏭]</button>
+        <span class="state" part="state" style="color: var(${playing ? "--dl-accent" : "--dl-muted"})">${playing ? "●" : "■"}</span>
+        <span class="now" part="now"></span>
+        <span class="spectrum" part="spectrum">${FLAT_SPECTRUM}</span>
         <span class="time" part="time">--:-- / --:--</span>
+      </div>
+      <div class="wave-wrap" part="seek">
+        <canvas class="wave" title="Click to seek"></canvas>
       </div>
       <ul class="tracks" part="tracklist"></ul>
       <div class="footer" part="footer"><a href="https://github.com/usedrobot/demo-locker" target="_blank" rel="noopener">demo locker</a></div>
@@ -209,6 +395,7 @@ export class DemoLockerPlayer extends HTMLElement {
     }
 
     this.shadow.querySelector(".title")!.textContent = this.data.name;
+    this.shadow.querySelector(".now")!.textContent = nowTitle ? `♫ ${nowTitle}` : "";
 
     const list = this.shadow.querySelector(".tracks")!;
     this.data.tracks.forEach((t, i) => {
@@ -231,11 +418,16 @@ export class DemoLockerPlayer extends HTMLElement {
     });
     this.shadow.querySelector(".prev")!.addEventListener("click", () => this.prev());
     this.shadow.querySelector(".nextb")!.addEventListener("click", () => this.next());
-    this.shadow.querySelector<HTMLInputElement>(".seek")!.addEventListener("input", (e) => {
-      const v = Number((e.target as HTMLInputElement).value);
-      if (this.audio.duration) this.audio.currentTime = (v / 100) * this.audio.duration;
+    this.shadow.querySelector<HTMLCanvasElement>(".wave")!.addEventListener("click", (e) => {
+      const duration = this.trackDuration();
+      if (!duration) return;
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      this.audio.currentTime = pct * duration;
+      this.drawWave();
     });
 
+    if (playing) this.startSpectrum();
     this.updateTime();
   }
 }

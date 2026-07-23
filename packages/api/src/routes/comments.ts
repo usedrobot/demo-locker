@@ -3,7 +3,10 @@ import { eq, and, isNull, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { comments, tracks, playlists, sessions, users } from "../db/schema.js";
 import { generateToken } from "../lib/auth.js";
-import { requestCanAccessPlaylist } from "../lib/playlist-access.js";
+import {
+  requestCanAccessPlaylist,
+  requestSessionUserId,
+} from "../lib/playlist-access.js";
 import type { Env } from "../types.js";
 
 const commentsRouter = new Hono<Env>();
@@ -50,19 +53,24 @@ commentsRouter.post("/", async (c) => {
   // owner's session or a valid share token may comment (the invite-listener
   // flow). Anonymous without a token is indistinguishable from a nonexistent
   // target -> the same non-enumerable 404.
-  let targetPlaylistId: string | null = null;
+  let allowed = false;
   if (trackId) {
     const [track] = await db
-      .select({ playlistId: tracks.playlistId })
+      .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
       .from(tracks)
       .where(eq(tracks.id, trackId))
       .limit(1);
-    targetPlaylistId = track?.playlistId ?? null;
+    if (track?.playlistId) {
+      allowed = await requestCanAccessPlaylist(c, track.playlistId);
+    } else if (track) {
+      // library track outside any playlist — owner only
+      allowed = (await requestSessionUserId(c)) === track.ownerId;
+    }
   } else if (playlistId) {
-    targetPlaylistId = playlistId;
+    allowed = await requestCanAccessPlaylist(c, playlistId);
   }
 
-  if (!(await requestCanAccessPlaylist(c, targetPlaylistId))) {
+  if (!allowed) {
     return c.json({ error: "not found" }, 404);
   }
 
@@ -91,11 +99,14 @@ commentsRouter.get("/track/:trackId", async (c) => {
   const db = getDb(c.env.DATABASE_URL);
 
   const [track] = await db
-    .select({ playlistId: tracks.playlistId })
+    .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
     .from(tracks)
     .where(eq(tracks.id, trackId))
     .limit(1);
-  if (!(await requestCanAccessPlaylist(c, track?.playlistId ?? null))) {
+  const canAccess = track?.playlistId
+    ? await requestCanAccessPlaylist(c, track.playlistId)
+    : !!track && (await requestSessionUserId(c)) === track.ownerId;
+  if (!canAccess) {
     return c.json({ error: "not found" }, 404);
   }
 

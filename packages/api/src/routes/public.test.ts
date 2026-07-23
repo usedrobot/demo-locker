@@ -47,11 +47,11 @@ beforeAll(async () => {
   await bucket.put("k-priv", Buffer.from("0123456789"));
   const [tPub] = await db
     .insert(tracks)
-    .values({ playlistId: publicId, title: "pub track", position: 0, originalKey: "k-pub", streamKey: "k-pub", duration: 1.5 })
+    .values({ playlistId: publicId, ownerId: user.id, title: "pub track", position: 0, originalKey: "k-pub", streamKey: "k-pub", duration: 1.5 })
     .returning();
   const [tPriv] = await db
     .insert(tracks)
-    .values({ playlistId: privateId, title: "priv track", position: 0, originalKey: "k-priv", streamKey: "k-priv" })
+    .values({ playlistId: privateId, ownerId: user.id, title: "priv track", position: 0, originalKey: "k-priv", streamKey: "k-priv" })
     .returning();
   publicTrackId = tPub.id;
   privateTrackId = tPriv.id;
@@ -88,7 +88,12 @@ describe("public API boundary", () => {
     };
     expect(body.playlist.name).toBe("public one");
     expect(body.playlist.tracks).toHaveLength(1);
-    expect(body.playlist.tracks[0]).toEqual({ id: publicTrackId, title: "pub track", duration: 1.5 });
+    expect(body.playlist.tracks[0]).toEqual({
+      id: publicTrackId,
+      title: "pub track",
+      duration: 1.5,
+      waveformData: null,
+    });
     // no private fields anywhere in the payload
     const raw = JSON.stringify(body);
     expect(raw).not.toContain("ownerId");

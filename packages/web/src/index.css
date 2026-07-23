@@ -2,8 +2,8 @@
   --bg: #0a0a0a;
   --fg: #ffffff;
   --fg-dim: #ccc;
-  --accent: #4af;
-  --accent-dim: rgba(68, 170, 255, 0.08);
+  --accent: #fc0;
+  --accent-dim: rgba(255, 204, 0, 0.08);
   --border: #282828;
   --error: #f44;
   --marker: #f80;
@@ -59,6 +59,23 @@ a {
   width: 100%;
 }
 
+/* ascii logo */
+.ascii-logo {
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: min(11px, 1.5vw);
+  line-height: 1.2;
+  white-space: pre;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ascii page titles (playlist names) — font-size set inline, scaled to fit */
+.ascii-title {
+  color: var(--accent);
+  overflow-x: auto;
+}
+
 /* TUI box */
 .box {
   border: 1px solid var(--border);
@@ -98,61 +115,32 @@ button:active {
   opacity: 0.6;
 }
 
-/* player transport buttons — actually look like buttons */
-.player-btn {
-  background: linear-gradient(180deg, #1c1c1c 0%, #131313 100%);
-  border: 1px solid #2e2e2e;
-  border-top-color: #3a3a3a;
-  border-bottom-color: #0a0a0a;
-  color: var(--accent);
+/* player transport keys — bare CLI-style bracket buttons */
+.player-key {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
   font-family: var(--font);
-  font-size: 13px;
-  min-width: 38px;
-  height: 32px;
-  padding: 0 10px;
-  border-radius: 4px;
+  font-size: 14px;
+  padding: 6px 2px;
   cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 1px 2px rgba(0, 0, 0, 0.6);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.05s ease, box-shadow 0.05s ease, background 0.1s ease;
+  white-space: pre;
 }
-.player-btn:hover {
+.player-key:hover {
   opacity: 1;
-  background: linear-gradient(180deg, #232323 0%, #181818 100%);
+  color: var(--accent);
 }
-.player-btn:active {
+.player-key:active {
   opacity: 1;
-  transform: translateY(1px);
-  box-shadow:
-    inset 0 2px 4px rgba(0, 0, 0, 0.7),
-    0 0 0 1px #2e2e2e;
-  background: linear-gradient(180deg, #0f0f0f 0%, #161616 100%);
+  color: var(--accent);
+  text-shadow: 0 0 6px var(--accent);
 }
-.player-btn-primary {
-  min-width: 48px;
-  height: 38px;
+.player-key-primary {
+  color: var(--accent);
   font-size: 15px;
-  color: var(--bg);
-  background: linear-gradient(180deg, #66bbff 0%, #3a99e6 100%);
-  border-color: #2a7ec0;
-  border-top-color: #88ccff;
-  border-bottom-color: #1d5a8c;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 2px 4px rgba(0, 0, 0, 0.6);
 }
-.player-btn-primary:hover {
-  background: linear-gradient(180deg, #7ac6ff 0%, #4aa6ee 100%);
-}
-.player-btn-primary:active {
-  background: linear-gradient(180deg, #2f8ad6 0%, #4aa6ee 100%);
-  box-shadow:
-    inset 0 2px 4px rgba(0, 0, 0, 0.5),
-    0 0 0 1px #2a7ec0;
+.player-key-primary:hover {
+  color: var(--fg);
 }
 
 /* player layout */

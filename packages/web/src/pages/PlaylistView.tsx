@@ -8,26 +8,14 @@ import {
   type Track,
 } from "../lib/api";
 import { player } from "../lib/audio";
-import { extractPeaks } from "../lib/peaks";
 import TrackList from "../components/TrackList";
-import Upload from "../components/Upload";
 import Comments from "../components/Comments";
 import SharePanel from "../components/SharePanel";
+import AsciiText from "../components/AsciiText";
 
 type Props = {
   playlistId: string;
   onBack: () => void;
-};
-
-type PendingUpload = {
-  id: string;
-  file: File;
-  title: string;
-  progress: number; // 0..1
-  status: "decoding" | "ready" | "uploading" | "error";
-  error?: string;
-  waveformData?: string;
-  duration?: number;
 };
 
 export default function PlaylistView({ playlistId, onBack }: Props) {
@@ -35,8 +23,9 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [showAddTracks, setShowAddTracks] = useState(false);
+  const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,62 +42,16 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
   const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
 
-  function queueUploads(files: File[]) {
-    const items: PendingUpload[] = files.map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      title: file.name.replace(/\.[^.]+$/, ""),
-      progress: 0,
-      status: "decoding",
-    }));
-    setPendingUploads((prev) => [...prev, ...items]);
-
-    // decode peaks in the background so they're ready by the time the user
-    // hits [upload] — failures here are non-fatal, the upload still works
-    // without waveform data.
-    items.forEach(async (item) => {
-      try {
-        const { peaks, duration } = await extractPeaks(item.file);
-        updatePending(item.id, {
-          status: "ready",
-          waveformData: JSON.stringify(peaks),
-          duration,
-        });
-      } catch {
-        updatePending(item.id, { status: "ready" });
-      }
-    });
+  async function openAddTracks() {
+    const r = await tracksApi.list();
+    setLibraryTracks(r.tracks.filter((t) => t.playlistId === null));
+    setShowAddTracks(true);
   }
 
-  function updatePending(id: string, patch: Partial<PendingUpload>) {
-    setPendingUploads((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...patch } : p))
-    );
-  }
-
-  function removePending(id: string) {
-    setPendingUploads((prev) => prev.filter((p) => p.id !== id));
-  }
-
-  async function startUpload(id: string) {
-    const item = pendingUploads.find((p) => p.id === id);
-    if (!item) return;
-    updatePending(id, { status: "uploading", progress: 0, error: undefined });
-    try {
-      await tracksApi.upload(playlistId, item.file, {
-        title: item.title.trim() || undefined,
-        waveformData: item.waveformData,
-        duration: item.duration,
-        onProgress: (pct) => updatePending(id, { progress: pct }),
-      });
-      removePending(id);
-      load();
-    } catch (err) {
-      updatePending(id, {
-        status: "error",
-        error: err instanceof Error ? err.message : "upload failed",
-      });
-    }
+  async function addTrack(id: string) {
+    await tracksApi.attach(id, playlistId);
+    setLibraryTracks(libraryTracks.filter((t) => t.id !== id));
+    load();
   }
 
   const load = useCallback(() => {
@@ -164,28 +107,22 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", gap: "1rem", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
+        <div style={{ minWidth: 0 }}>
+          <AsciiText text={playlist.name} />
+          {isOwner && (
+            <button
+              onClick={togglePublic}
+              style={{ ...linkStyle, color: "var(--accent)", marginTop: "0.4rem" }}
+            >
+              [{playlist.isPublic ? "make private" : "make public"}]
+            </button>
+          )}
+        </div>
         <PlaylistArtwork
           playlist={playlist}
           onUpdated={(p) => setPlaylist(p)}
         />
-        <div style={{ flex: 1, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <div className="box-header">playlist</div>
-            <h2 style={{ color: "var(--fg)", fontSize: "18px", fontFamily: "var(--font)", fontWeight: "normal" }}>
-              {playlist.name}
-            </h2>
-            {isOwner && (
-              <button
-                onClick={togglePublic}
-                style={{ ...linkStyle, color: "var(--accent)", marginTop: "0.4rem" }}
-              >
-                [{playlist.isPublic ? "make private" : "make public"}]
-              </button>
-            )}
-          </div>
-          <Upload onPick={queueUploads} />
-        </div>
       </div>
 
       {playlist.isPublic && (
@@ -224,16 +161,6 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
           selectedId={selectedTrackId}
           onSelect={setSelectedTrackId}
         />
-        {pendingUploads.map((p) => (
-          <PendingTrackRow
-            key={p.id}
-            item={p}
-            position={tracks.length + pendingUploads.indexOf(p) + 1}
-            onTitleChange={(title) => updatePending(p.id, { title })}
-            onStart={() => startUpload(p.id)}
-            onCancel={() => removePending(p.id)}
-          />
-        ))}
       </div>
 
       {/* Track comments for selected track */}
@@ -271,7 +198,56 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
       {/* Sharing */}
       <div style={{ marginTop: "2rem" }}>
-        <SharePanel playlistId={playlistId} />
+        <SharePanel
+          playlistId={playlistId}
+          extraAction={
+            isOwner ? (
+              <button
+                onClick={() => (showAddTracks ? setShowAddTracks(false) : openAddTracks())}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--border)",
+                  color: "var(--accent)",
+                  fontFamily: "var(--font)",
+                  fontSize: "13px",
+                  padding: "0.4rem 0.75rem",
+                  cursor: "pointer",
+                }}
+              >
+                [+ add tracks]
+              </button>
+            ) : null
+          }
+        />
+        {showAddTracks && (
+          <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+            {libraryTracks.length === 0 && (
+              <div style={{ color: "var(--fg-dim)", padding: "0.75rem 0", fontSize: "12px" }}>
+                no unattached tracks in your library — upload from the main page
+              </div>
+            )}
+            {libraryTracks.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  padding: "0.5rem 0",
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                }}
+              >
+                <span style={{ flex: 1 }}>{t.title}</span>
+                <button
+                  onClick={() => addTrack(t.id)}
+                  style={{ ...linkStyle, color: "var(--accent)" }}
+                >
+                  [+ add]
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Playlist-level comments */}
@@ -444,173 +420,6 @@ function PlaylistArtwork({
           >
             [close]
           </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PendingTrackRow({
-  item,
-  position,
-  onTitleChange,
-  onStart,
-  onCancel,
-}: {
-  item: PendingUpload;
-  position: number;
-  onTitleChange: (title: string) => void;
-  onStart: () => void;
-  onCancel: () => void;
-}) {
-  const pct = Math.round(item.progress * 100);
-  const isDecoding = item.status === "decoding";
-  const isUploading = item.status === "uploading";
-  const isError = item.status === "error";
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "0.75rem",
-        padding: "0.5rem 0.25rem",
-        borderBottom: "1px solid var(--border)",
-        position: "relative",
-        background: "transparent",
-      }}
-    >
-      {/* Progress fill behind the row */}
-      {isUploading && (
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: `${pct}%`,
-            background: "rgba(68,170,255,0.18)",
-            transition: "width 0.15s linear",
-            pointerEvents: "none",
-          }}
-        />
-      )}
-
-      <span
-        style={{ color: "var(--fg-dim)", fontSize: "11px", userSelect: "none", position: "relative" }}
-        title="Pending upload"
-      >
-        ⠿
-      </span>
-
-      <span
-        style={{
-          color: "var(--fg-dim)",
-          width: "2ch",
-          textAlign: "right",
-          fontSize: "12px",
-          position: "relative",
-        }}
-      >
-        {String(position).padStart(2, "0")}
-      </span>
-
-      <span style={{ width: "1.5ch", color: "var(--accent)", fontSize: "12px", position: "relative" }}>
-        {isUploading ? "↑" : ""}
-      </span>
-
-      <input
-        value={item.title}
-        onChange={(e) => onTitleChange(e.target.value)}
-        disabled={isUploading}
-        placeholder="track title"
-        style={{
-          flex: 1,
-          background: "transparent",
-          border: "1px solid var(--border)",
-          color: "var(--fg)",
-          fontFamily: "var(--font)",
-          fontSize: "13px",
-          padding: "0.25rem 0.5rem",
-          position: "relative",
-        }}
-      />
-
-      {isUploading && (
-        <span
-          style={{
-            color: "var(--fg-dim)",
-            fontSize: "11px",
-            width: "3ch",
-            textAlign: "right",
-            position: "relative",
-          }}
-        >
-          {pct}%
-        </span>
-      )}
-
-      {isDecoding && (
-        <span
-          className="dots"
-          style={{
-            color: "var(--fg-dim)",
-            fontSize: "11px",
-            position: "relative",
-          }}
-        >
-          decoding
-        </span>
-      )}
-
-      {!isUploading && !isDecoding && (
-        <button
-          onClick={onStart}
-          title="Start upload"
-          style={{
-            background: "none",
-            border: "1px solid var(--border)",
-            color: "var(--accent)",
-            fontFamily: "var(--font)",
-            fontSize: "12px",
-            padding: "0.25rem 0.5rem",
-            cursor: "pointer",
-            position: "relative",
-          }}
-        >
-          {isError ? "[retry]" : "[upload]"}
-        </button>
-      )}
-
-      <button
-        onClick={onCancel}
-        disabled={isUploading}
-        title="Remove"
-        style={{
-          background: "none",
-          border: "none",
-          color: "var(--fg-dim)",
-          fontFamily: "var(--font)",
-          fontSize: "12px",
-          cursor: isUploading ? "default" : "pointer",
-          padding: "0 0.25rem",
-          position: "relative",
-          opacity: isUploading ? 0.4 : 1,
-        }}
-      >
-        [x]
-      </button>
-
-      {isError && (
-        <div
-          style={{
-            position: "absolute",
-            left: "5rem",
-            bottom: "-1.1rem",
-            color: "#f44",
-            fontSize: "11px",
-          }}
-        >
-          {item.error}
         </div>
       )}
     </div>

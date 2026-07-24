@@ -1,49 +1,44 @@
-import {
-  pgTable,
-  text,
-  timestamp,
-  integer,
-  real,
-  uuid,
-  boolean,
-} from "drizzle-orm/pg-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { generateId } from "../lib/ids.js";
 
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
+const now = () => new Date();
+
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey().$defaultFn(generateId),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
 });
 
-export const sessions = pgTable("sessions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
+export const sessions = sqliteTable("sessions", {
+  id: text("id").primaryKey().$defaultFn(generateId),
+  userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   token: text("token").notNull().unique(),
-  expiresAt: timestamp("expires_at").notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
 });
 
-export const playlists = pgTable("playlists", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  ownerId: uuid("owner_id")
+export const playlists = sqliteTable("playlists", {
+  id: text("id").primaryKey().$defaultFn(generateId),
+  ownerId: text("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   artworkKey: text("artwork_key"),
-  isPublic: boolean("is_public").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(now),
 });
 
-export const tracks = pgTable("tracks", {
-  id: uuid("id").primaryKey().defaultRandom(),
+export const tracks = sqliteTable("tracks", {
+  id: text("id").primaryKey().$defaultFn(generateId),
   // Tracks are library items owned by a user; playlist membership is optional.
   // Deleting a playlist detaches its tracks (SET NULL) instead of deleting them.
-  playlistId: uuid("playlist_id").references(() => playlists.id, {
+  playlistId: text("playlist_id").references(() => playlists.id, {
     onDelete: "set null",
   }),
-  ownerId: uuid("owner_id")
+  ownerId: text("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
@@ -52,35 +47,35 @@ export const tracks = pgTable("tracks", {
   streamKey: text("stream_key"),
   waveformData: text("waveform_data"),
   duration: real("duration"),
-  uploadedAt: timestamp("uploaded_at").notNull().defaultNow(),
+  uploadedAt: integer("uploaded_at", { mode: "timestamp" }).notNull().$defaultFn(now),
 });
 
-export const comments = pgTable("comments", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  trackId: uuid("track_id").references(() => tracks.id, {
+export const comments = sqliteTable("comments", {
+  id: text("id").primaryKey().$defaultFn(generateId),
+  trackId: text("track_id").references(() => tracks.id, {
     onDelete: "cascade",
   }),
-  playlistId: uuid("playlist_id").references(() => playlists.id, {
+  playlistId: text("playlist_id").references(() => playlists.id, {
     onDelete: "cascade",
   }),
-  parentId: uuid("parent_id"),
+  parentId: text("parent_id"),
   authorName: text("author_name").notNull(),
   body: text("body").notNull(),
   timestampSec: real("timestamp_sec"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  resolvedAt: timestamp("resolved_at"),
-  resolvedBy: uuid("resolved_by").references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
+  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  resolvedBy: text("resolved_by").references(() => users.id),
   deleteToken: text("delete_token"),
 });
 
-export const shares = pgTable("shares", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  playlistId: uuid("playlist_id")
+export const shares = sqliteTable("shares", {
+  id: text("id").primaryKey().$defaultFn(generateId),
+  playlistId: text("playlist_id")
     .notNull()
     .references(() => playlists.id, { onDelete: "cascade" }),
   token: text("token").notNull().unique(),
   permission: text("permission", { enum: ["listen", "edit"] }).notNull(),
   email: text("email"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  expiresAt: timestamp("expires_at"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
 });

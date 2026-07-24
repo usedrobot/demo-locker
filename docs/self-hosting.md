@@ -2,16 +2,18 @@
 
 Deploying via an agent, or just want the fast path? See [AGENTS.md](../AGENTS.md) for the operator runbook.
 
-This page covers the Postgres + S3 path — separate database and storage
-services, meant for production deployments or local development where you
-want full control over each piece. If you just want your music online
-without managing a database or a storage bucket, use the standalone
-image and see [Host Your Music](host-your-music.md) instead.
+This page covers the build-from-source path — running the API and web
+services from source via Docker Compose, meant for production deployments
+or local development where you want full control over each piece. The
+database is always an embedded SQLite file; storage can be local disk or
+any S3-compatible bucket. If you just want your music online without
+building from source, use the standalone image and see
+[Host Your Music](host-your-music.md) instead.
 
 ## Requirements
 
 - **Docker** + **Docker Compose** (recommended)
-- Or: Node 22+, PostgreSQL 16+, FFmpeg, and an S3-compatible bucket
+- Or: Node 22+, FFmpeg, and (optionally) an S3-compatible bucket
 
 ## Quick Start (Docker)
 
@@ -35,29 +37,16 @@ call from the built app will target `http://localhost:3001`, which only
 works from the host machine itself.
 
 Docker Compose includes:
-- **Postgres** — database
 - **MinIO** — local S3-compatible storage (stands in for Cloudflare R2)
 - **API** — Hono backend
 - **Web** — React frontend served via nginx
 
+The database needs no separate service — it's an embedded SQLite file the
+API creates automatically at `DATA_DIR/db/demolocker.db`.
+
 ## Manual Setup (No Docker)
 
-### 1. Database
-
-Set up a Postgres instance and create a database:
-
-```sql
-CREATE DATABASE demolocker;
-```
-
-Run migrations:
-
-```bash
-cd packages/api
-DATABASE_URL=postgres://user:pass@localhost:5432/demolocker npx drizzle-kit migrate
-```
-
-### 2. Storage
+### 1. Storage
 
 Point `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `S3_BUCKET` at any S3-compatible service:
 
@@ -70,7 +59,7 @@ Point `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `S3_BUCKET` at any S3
 
 Create a bucket named `demos` (or whatever you set `S3_BUCKET` to).
 
-### 3. FFmpeg
+### 2. FFmpeg
 
 FFmpeg must be installed and on the PATH. It's used for transcoding uploads.
 
@@ -85,7 +74,7 @@ apt install ffmpeg
 apk add ffmpeg
 ```
 
-### 4. audiowaveform (Optional)
+### 3. audiowaveform (Optional)
 
 For waveform generation. If not installed, tracks will work without waveforms.
 
@@ -97,7 +86,7 @@ brew install audiowaveform
 # https://github.com/bbc/audiowaveform
 ```
 
-### 5. Environment
+### 4. Environment
 
 Copy `.env.example` and fill in your values:
 
@@ -106,7 +95,6 @@ cp .env.example .env
 ```
 
 ```env
-DATABASE_URL=postgres://user:pass@localhost:5432/demolocker
 PORT=3001
 S3_ENDPOINT=http://localhost:9000
 S3_BUCKET=demos
@@ -115,7 +103,7 @@ S3_SECRET_KEY=your-secret
 S3_REGION=auto
 ```
 
-### 6. Run
+### 5. Run
 
 ```bash
 # install deps
@@ -152,8 +140,10 @@ Migrations run automatically on API start.
 
 ## Backups
 
-Back up Postgres and your S3 bucket. The database is small (metadata only). The S3 bucket has the actual audio files.
+The database is an embedded SQLite file at `DATA_DIR/db/demolocker.db` — backing up your locker means copying the data directory.
 
 ```bash
-pg_dump demolocker > backup.sql
+cp -r $DATA_DIR ./backup
 ```
+
+If you're using S3-compatible storage instead of local disk, back up your S3 bucket too — it has the actual audio files.

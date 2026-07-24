@@ -140,10 +140,19 @@ Migrations run automatically on API start.
 
 ## Backups
 
-The database is an embedded SQLite file at `DATA_DIR/db/demolocker.db` — backing up your locker means copying the data directory.
+The database is an embedded SQLite file at `DATA_DIR/db/demolocker.db` — backing up your locker means copying the data directory. Where that directory lives depends on how you're running it:
 
-```bash
-cp -r $DATA_DIR ./backup
-```
+- **This Docker Compose setup:** the data directory is the `data` named volume defined in `docker-compose.yml`. Find its full (project-prefixed) name with `docker volume ls | grep _data`, then:
+
+  ```bash
+  docker run --rm -v <project>_data:/data -v $(pwd):/backup alpine tar czf /backup/demolocker-backup.tar.gz /data
+  ```
+
+- **Standalone image** (`docker run -v demolocker:/data ...`, see the main [README](../README.md)): back up the `demolocker` volume the same way — see [Host Your Music](host-your-music.md#backing-up) for the full command.
+- **Manual (no Docker) setup:** copy `$DATA_DIR` directly:
+
+  ```bash
+  cp -r $DATA_DIR ./backup
+  ```
 
 If you're using S3-compatible storage instead of local disk, back up your S3 bucket too — it has the actual audio files.

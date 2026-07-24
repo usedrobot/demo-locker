@@ -74,7 +74,7 @@ export async function requestCanEditPlaylist(
   c: Context<Env>,
   playlistId: string
 ): Promise<string | null> {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const [playlist] = await db
     .select({ ownerId: playlists.ownerId })
     .from(playlists)
@@ -123,7 +123,7 @@ export async function requestCanEditPlaylist(
 export async function requestSessionUserId(
   c: Context<Env>
 ): Promise<string | null> {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const queryToken = c.req.query("token") || null;
   const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
 
@@ -146,7 +146,7 @@ export async function requestCanAccessPlaylist(
   c: Context<Env>,
   playlistId: string | null | undefined
 ): Promise<boolean> {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const queryToken = c.req.query("token") || null;
   const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
 

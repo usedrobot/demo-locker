@@ -13,7 +13,7 @@ import type { Env } from "../types.js";
 const playlistsRouter = new Hono<Env>();
 
 playlistsRouter.get("/", requireAuth, async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const userId = c.get("user").id;
   const result = await db
     .select()
@@ -28,7 +28,7 @@ playlistsRouter.post("/", requireAuth, async (c) => {
   const { name } = await c.req.json();
   if (!name) return c.json({ error: "name required" }, 400);
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const userId = c.get("user").id;
   const limits = getLimits(c.env);
 
@@ -54,7 +54,7 @@ playlistsRouter.post("/", requireAuth, async (c) => {
 });
 
 playlistsRouter.get("/:id", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
   // Gate: owner session or a valid share token (see lib/playlist-access.ts).
@@ -81,7 +81,7 @@ playlistsRouter.get("/:id", async (c) => {
 });
 
 playlistsRouter.patch("/:id", requireAuth, async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
   const userId = c.get("user").id;
   const body = await c.req.json();
@@ -112,7 +112,7 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
 
 // Upload playlist artwork — multipart, stored in R2 under playlist-art/<id>
 playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
   const userId = c.get("user").id;
 
@@ -150,7 +150,7 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
 // <img> can't send an Authorization header, so a `?token=` query param
 // (session OR share token) is also accepted.
 playlistsRouter.get("/:id/artwork", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
   if (!(await requestCanAccessPlaylist(c, id))) {
@@ -182,7 +182,7 @@ playlistsRouter.get("/:id/artwork", async (c) => {
 });
 
 playlistsRouter.delete("/:id", requireAuth, async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
   const userId = c.get("user").id;
 
@@ -202,7 +202,7 @@ playlistsRouter.delete("/:id", requireAuth, async (c) => {
 
 // Reorder: owner session OR an "edit" share token for this playlist.
 playlistsRouter.patch("/:id/reorder", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
   const { trackIds } = await c.req.json();
 

@@ -19,7 +19,7 @@ function notFound(c: Context<Env>) {
 }
 
 publicRouter.get("/playlists/:id", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
   const [playlist] = await db
@@ -52,7 +52,7 @@ publicRouter.get("/playlists/:id", async (c) => {
 });
 
 publicRouter.get("/playlists/:id/artwork", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
   const [playlist] = await db
@@ -74,7 +74,7 @@ publicRouter.get("/playlists/:id/artwork", async (c) => {
 });
 
 publicRouter.get("/tracks/:id/stream", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
   const [row] = await db

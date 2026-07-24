@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
-import { createPgliteDb } from "../db/pglite.js";
+import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
 import { users, playlists, tracks, sessions, shares } from "../db/schema.js";
 
@@ -28,11 +28,11 @@ let privateTrackId: string;
 const NONEXISTENT = "00000000-0000-0000-0000-000000000000";
 
 beforeAll(async () => {
-  db = await createPgliteDb();
+  db = createSqliteDb();
   setDbFactory(() => db);
   root = await mkdtemp(join(tmpdir(), "dl-legacy-"));
   const bucket = createFsBucket(root);
-  env = { DATABASE_URL: "pglite", DEMOS_BUCKET: bucket };
+  env = { DB: "sqlite", DEMOS_BUCKET: bucket };
 
   const [owner] = await db
     .insert(users)

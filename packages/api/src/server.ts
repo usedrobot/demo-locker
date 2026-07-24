@@ -1,17 +1,14 @@
 // Node entry point for self-hosted deployments.
-// Zero-dependency mode: with no DATABASE_URL / S3_ENDPOINT set, runs on
-// embedded PGlite + local-disk storage under DATA_DIR (default ./data).
+// Zero-dependency mode: embedded SQLite + local-disk storage under DATA_DIR
+// (default ./data); set S3_ENDPOINT to use S3 storage.
 
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import * as schema from "./db/schema.js";
 import { setDbFactory } from "./db/index.js";
-import { createPgliteDb } from "./db/pglite.js";
+import { createSqliteDb } from "./db/sqlite.js";
 import { createS3Bucket } from "./lib/storage-s3.js";
 import { createFsBucket } from "./lib/storage-fs.js";
 import type { StorageBucket } from "./lib/storage.js";
@@ -21,25 +18,13 @@ async function main() {
   const dataDir = process.env.DATA_DIR || "./data";
 
   // --- database ---
-  let databaseUrl: string;
-  let dbIsZeroDep = false;
-  if (process.env.DATABASE_URL) {
-    databaseUrl = process.env.DATABASE_URL;
-    setDbFactory((url: string) => {
-      const client = postgres(url);
-      return drizzle(client, { schema });
-    });
-    console.log("db: postgres (DATABASE_URL)");
-  } else {
-    const dbDir = join(dataDir, "db");
-    await mkdir(dbDir, { recursive: true }); // fail fast if DATA_DIR unwritable
-    const pgliteDb = await createPgliteDb(dbDir);
-    // getDb caches per url string; the sentinel keeps the cache stable
-    databaseUrl = "pglite";
-    setDbFactory(() => pgliteDb);
-    console.log(`db: pglite (${dbDir}) — set DATABASE_URL to use Postgres`);
-    dbIsZeroDep = true;
-  }
+  // Always embedded sqlite; the file lives in the data volume next to the audio.
+  const dbDir = join(dataDir, "db");
+  await mkdir(dbDir, { recursive: true }); // fail fast if DATA_DIR unwritable
+  const dbPath = join(dbDir, "demolocker.db");
+  const sqliteDb = createSqliteDb(dbPath);
+  setDbFactory(() => sqliteDb);
+  console.log(`db: sqlite (${dbPath})`);
 
   // --- storage ---
   let bucket: StorageBucket;
@@ -61,13 +46,10 @@ async function main() {
     storageIsZeroDep = true;
   }
 
-  if (dbIsZeroDep || storageIsZeroDep) {
-    const parts: string[] = [];
-    if (dbIsZeroDep) parts.push("db is embedded (pglite)");
-    if (storageIsZeroDep) parts.push("storage is local disk");
+  if (storageIsZeroDep) {
     console.warn(
-      `⚠ zero-dependency mode: ${parts.join(" and ")} — all data lives under ${dataDir}. ` +
-        "If you expected Postgres/S3, check your DATABASE_URL / S3_ENDPOINT env vars.",
+      `⚠ storage is local disk — audio lives under ${dataDir}. ` +
+        "Set S3_ENDPOINT to use S3.",
     );
   }
 
@@ -85,7 +67,7 @@ async function main() {
   // (Don't inject via app.use — index.ts registers routes at import time,
   // so any middleware added here would run after the route handlers.)
   const bindings = {
-    DATABASE_URL: databaseUrl,
+    DB: "sqlite", // sentinel — setDbFactory above ignores it and returns the shared db
     DEMOS_BUCKET: bucket,
     MAX_PLAYLISTS: process.env.MAX_PLAYLISTS,
     MAX_STORAGE_BYTES: process.env.MAX_STORAGE_BYTES,

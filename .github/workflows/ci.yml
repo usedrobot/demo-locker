@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# Merging two PRs seconds apart used to race their deploy jobs: both ran, and
+# whichever finished last won — so the older tree could land on top of the
+# newer one, with every check green and production quietly missing the change
+# that had just been merged. Cancelling the superseded run means the newest
+# commit is always the one that deploys.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -144,21 +153,21 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-  deploy-web:
+  # The `demo-locker` Pages project now serves the brochure (site/), not the
+  # app. There is no reference web deployment any more: the running instances
+  # are the ones the wizard installs, which serve the web app from their own
+  # Worker via the assets binding. deploy-api below still ships a reference API
+  # Worker to exercise API changes against.
+  #
+  # Do not re-add a job that deploys packages/web to --project-name=demo-locker.
+  # It would overwrite the brochure on the next push to main.
+  deploy-site:
     needs: [check, test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm install
-      - run: npm run build -w packages/web
-        env:
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy packages/web/dist --project-name=demo-locker
+          command: pages deploy site --project-name=demo-locker --branch=main

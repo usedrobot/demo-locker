@@ -131,7 +131,7 @@ describe("collectAnswers", () => {
     await waitForOutput(read, "What do you need?");
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
-    write("2\n"); // target: docker
+    write("2\n"); // target: docker (option 1 is cloudflare, 3 is existing)
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
@@ -166,7 +166,7 @@ describe("collectAnswers", () => {
     await waitForOutput(read, "What do you need?");
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
-    write("2\n"); // target: docker
+    write("2\n"); // target: docker (option 1 is cloudflare, 3 is existing)
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
@@ -257,5 +257,99 @@ describe("cloudflare flags", () => {
         "empty",
       ),
     ).rejects.toThrow(/only valid with --target cloudflare/);
+  });
+
+  it("lowercases the domain, since it lands in routes, URLs, and the embed snippet", async () => {
+    const { io } = fakeIO();
+    const a = await collectAnswers(
+      parseFlags(["--mode", "instance", "--target", "cloudflare", "--domain", "Demos.Example.COM", "--yes"]),
+      io,
+      "empty",
+    );
+    expect(a.cloudflare?.domain).toBe("demos.example.com");
+  });
+
+  it("rejects --port and --volume on the cloudflare target rather than ignoring them", async () => {
+    const { io } = fakeIO();
+    await expect(
+      collectAnswers(
+        parseFlags(["--mode", "instance", "--target", "cloudflare", "--port", "8080", "--yes"]),
+        io,
+        "empty",
+      ),
+    ).rejects.toThrow(/--port is not valid with --target cloudflare/);
+    await expect(
+      collectAnswers(
+        parseFlags(["--mode", "instance", "--target", "cloudflare", "--volume", "vol", "--yes"]),
+        io,
+        "empty",
+      ),
+    ).rejects.toThrow(/--volume is not valid with --target cloudflare/);
+  });
+
+  it("rejects --email/--password on cloudflare with no domain, where there is no URL to sign up against", async () => {
+    const { io } = fakeIO();
+    await expect(
+      collectAnswers(
+        parseFlags([
+          "--mode", "instance", "--target", "cloudflare", "--yes",
+          "--email", "dl@fldl.space", "--password", "hunter22",
+        ]),
+        io,
+        "empty",
+      ),
+    ).rejects.toThrow(/--domain/);
+  });
+
+  it("accepts --email/--password on cloudflare when a domain is given", async () => {
+    const { io } = fakeIO();
+    const a = await collectAnswers(
+      parseFlags([
+        "--mode", "instance", "--target", "cloudflare", "--domain", "demos.example.com",
+        "--email", "dl@fldl.space", "--password", "hunter22", "--yes",
+      ]),
+      io,
+      "empty",
+    );
+    expect(a.signup).toEqual({ email: "dl@fldl.space", password: "hunter22" });
+  });
+
+  it("interactive: re-asks on an invalid domain instead of throwing out of collectAnswers", async () => {
+    const { io, write, read } = fakeIO();
+    const p = collectAnswers(parseFlags([]), io, "empty");
+
+    await waitForOutput(read, "What do you need?");
+    write("1\n"); // mode: instance
+    await waitForOutput(read, "Where will it run?");
+    write("1\n"); // target: cloudflare
+    await waitForOutput(read, "Custom domain?");
+    write("https://demos.example.com\n"); // a URL, not a bare hostname
+    await waitForOutput(read, "bare hostname");
+    write("demos.example.com\n"); // valid this time
+    // A domain means there IS a reachable URL, so the signup question is asked.
+    await waitForOutput(read, "Create the first account now?");
+    write("\n"); // email: empty → skip signup
+
+    const a = await p;
+    expect(a.cloudflare?.domain).toBe("demos.example.com");
+  });
+
+  it("interactive: a blank domain means workers.dev and skips the signup question entirely", async () => {
+    const { io, write, read } = fakeIO();
+    const p = collectAnswers(parseFlags([]), io, "empty");
+
+    await waitForOutput(read, "What do you need?");
+    write("1\n"); // mode: instance
+    await waitForOutput(read, "Where will it run?");
+    write("1\n"); // target: cloudflare
+    await waitForOutput(read, "Custom domain?");
+    write("\n"); // blank → workers.dev
+
+    const a = await p;
+    expect(a.cloudflare?.domain).toBeNull();
+    expect(a.signup).toBeNull();
+    // No reachable URL exists yet, so the wizard must not collect a credential
+    // it would only throw away.
+    expect(read()).not.toContain("Create the first account now?");
   });
 });

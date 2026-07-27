@@ -78,7 +78,12 @@ function validateUrl(raw: string): string {
   return raw;
 }
 
-/** Validate a bare hostname (no scheme, no path, no port). Throws on invalid input. */
+/**
+ * Validate a bare hostname (no scheme, no path, no port). Throws on invalid input.
+ * Returns the hostname lowercased — it ends up in wrangler routes, the health/app
+ * URLs, and the embed snippet written into the user's project, all of which should
+ * be canonical regardless of how the user typed it.
+ */
 function validateHostname(raw: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || raw.includes("/")) {
     throw new Error(
@@ -88,7 +93,7 @@ function validateHostname(raw: string): string {
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(raw)) {
     throw new Error("must be a bare hostname, e.g. demos.example.com");
   }
-  return raw;
+  return raw.toLowerCase();
 }
 
 export function parseFlags(argv: string[]): Flags {
@@ -204,6 +209,22 @@ async function askUrl(io: IO, question: string): Promise<string> {
   }
 }
 
+/**
+ * Prompt for a custom domain, looping until it is a valid bare hostname.
+ * An empty answer means "no custom domain" — a workers.dev URL — not an error.
+ */
+async function askDomain(io: IO): Promise<string | null> {
+  while (true) {
+    const raw = await ask(io, "Custom domain? (blank for a workers.dev URL)", "");
+    if (raw === "") return null;
+    try {
+      return validateHostname(raw);
+    } catch (e) {
+      io.output.write(`${(e as Error).message}\n`);
+    }
+  }
+}
+
 /** Validate a password. Throws on invalid input. */
 function validatePassword(pw: string): void {
   if (pw.length < 8) {
@@ -279,6 +300,18 @@ export async function collectAnswers(
       }
     }
 
+    // The mirror of the check above: the docker-shaped flags mean nothing on
+    // Cloudflare (the Worker has no host port and no volume), so reject them
+    // rather than silently ignoring what the user asked for.
+    const dockerFlags: [string, string | undefined][] = [
+      ["port", flags.port], ["volume", flags.volume],
+    ];
+    for (const [name, value] of dockerFlags) {
+      if (value !== undefined && target === "cloudflare") {
+        throw new Error(`--${name} is not valid with --target cloudflare`);
+      }
+    }
+
     if (target === "existing") {
       url = flags.url ?? (flags.yes ? null : await askUrl(io, "Instance URL (e.g. https://demos.example.com)?"));
       if (!url) throw new Error("--url is required for --target existing");
@@ -286,16 +319,15 @@ export async function collectAnswers(
     }
 
     if (target === "cloudflare") {
-      const domain = flags.domain
-        ?? (flags.yes ? "" : await ask(io, "Custom domain? (blank for a workers.dev URL)", ""));
+      const domain = flags.domain !== undefined
+        ? validateHostname(flags.domain)
+        : flags.yes ? null : await askDomain(io);
       cloudflare = {
         workerName: flags.workerName ?? "demo-locker",
         d1Name: flags.d1Name ?? "demo-locker-db",
         r2Bucket: flags.r2Bucket ?? "demo-locker-demos",
-        domain: domain === "" ? null : validateHostname(domain),
+        domain,
       };
-      port = 3001;
-      volume = "demolocker";
     } else {
       storage = await resolve<(typeof STORAGES)[number]>(flags.storage, flags.yes, () =>
         select(io, "Where should audio files live?", [
@@ -321,22 +353,34 @@ export async function collectAnswers(
         };
       }
 
-      if (target === "docker") {
-        if (flags.port !== undefined) {
-          port = parsePort(flags.port);
-        } else if (flags.yes) {
-          port = 3001;
-        } else {
-          port = await askPort(io, "3001");
-        }
-        volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
+      // Only the docker target reaches here (existing returned above, cloudflare
+      // took the branch above), so no target check is needed.
+      if (flags.port !== undefined) {
+        port = parsePort(flags.port);
+      } else if (flags.yes) {
+        port = 3001;
+      } else {
+        port = await askPort(io, "3001");
       }
+      volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
+    }
+
+    // On Cloudflare without a custom domain the app lives at a workers.dev URL
+    // that is not knowable until wrangler has deployed, so there is nothing to
+    // POST a signup to. Asking would silently throw the credential away.
+    const noKnownUrl = target === "cloudflare" && !cloudflare?.domain;
+    if (noKnownUrl && (flags.email !== undefined || flags.password !== undefined)) {
+      throw new Error(
+        "--email/--password need a reachable URL, but --target cloudflare without --domain " +
+        "deploys to a workers.dev URL that is not known until after the deploy. " +
+        "Re-run with --domain <host>, or open the workers.dev URL afterwards and sign up there.",
+      );
     }
 
     if (flags.email && flags.password) {
       validatePassword(flags.password);
       signup = { email: flags.email, password: flags.password };
-    } else if (!flags.yes) {
+    } else if (!flags.yes && !noKnownUrl) {
       const email = await ask(io, "Create the first account now? Email (empty to skip):", "");
       if (email) signup = { email, password: await askPassword(io) };
     }

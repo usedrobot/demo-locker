@@ -1,6 +1,6 @@
 # Deployment Templates
 
-Self-host Demo Locker on your preferred platform using these configuration templates. The app is packaged as a single `standalone` Docker image: API + web UI + embedded PGlite database in one container, with a persistent volume for your data.
+Self-host Demo Locker on your preferred platform using these configuration templates. The app is packaged as a single `standalone` Docker image: API + web UI + embedded SQLite database in one container, with a persistent volume for your data.
 
 ## Fly.io
 

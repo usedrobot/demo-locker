@@ -148,20 +148,36 @@ from Path 1 applies — cheap VPS plans usually cap around 1 Gbit/s of
 shared network, and CPU limits will matter before that ceiling for
 anything more than a modest audience.
 
-## Path 3: One-click-ish — Fly.io or Railway
+## Path 3: No server at all — Cloudflare
 
-If you'd rather not touch a terminal on a server at all, deploy to a
-platform-as-a-service (PaaS) — a host that builds and runs your container
-for you from config files already in this repo.
+If you'd rather not run a machine anywhere, the setup wizard can deploy
+Demo Locker to Cloudflare: a Worker serving the app and the API, a D1
+database, and an R2 bucket for your audio. One command:
 
-See [docs/deploy-templates.md](deploy-templates.md) for step-by-step
-instructions for Fly.io, Railway, and Coolify.
+```bash
+npx demo-locker --target cloudflare --domain music.example.com
+```
 
-**The honest caveat:** these platforms change their pricing and free
-allowances often, and as of this writing both Fly.io and Railway require
-a credit card on file even for their cheapest tiers. Fly.io roughly
-$2–5/month, Railway has a $5/month minimum, similar to the VPS path,
-just with less server maintenance.
+It provisions all three, deploys, and points your domain at it. You need
+[wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
+installed and logged in (`wrangler login`), and the domain has to be on the
+same Cloudflare account. Leave `--domain` off and you get a free
+`workers.dev` address instead.
+
+**The honest caveat:** R2 requires billing enabled on your Cloudflare
+account before it will create a bucket. The free tier still applies — 10 GB
+of storage and no charge for bandwidth out — but a card has to be on file.
+Within those allowances this path costs nothing, and unlike the paths above
+there's no machine of yours to saturate.
+
+### Or a platform-as-a-service
+
+Fly.io, Railway, and Coolify will build and run the container for you from
+config files already in this repo. The wizard doesn't drive these — see
+[docs/deploy-templates.md](deploy-templates.md) for the manual steps. These
+platforms change their pricing and free allowances often, and as of this
+writing both Fly.io and Railway require a credit card even for their
+cheapest tiers: Fly.io roughly $2–5/month, Railway a $5/month minimum.
 
 ## How loud can this get?
 
@@ -173,7 +189,9 @@ Where it breaks down: a genuinely popular release, shared widely on the
 day it drops. The bandwidth arithmetic from Path 1 doesn't change — one
 320 kbps listener costs about 0.32 Mbit/s of upload. A home line saturates
 around 30–60 listeners; a $5 VPS saturates somewhere in the low hundreds.
-Past that, either path will slow to a crawl or fall over.
+Past that, either of those two will slow to a crawl or fall over. Path 3 is
+the exception: Cloudflare serves your audio from its own network, so there's
+no upload pipe of yours to saturate.
 
 If that's the problem you're having, congratulations, and the fixes are:
 a bigger server, a CDN (content delivery network — a service that caches

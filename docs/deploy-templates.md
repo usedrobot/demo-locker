@@ -2,6 +2,8 @@
 
 Self-host Demo Locker on your preferred platform using these configuration templates. The app is packaged as a single `standalone` Docker image: API + web UI + embedded PGlite database in one container, with a persistent volume for your data.
 
+These are **manual** paths. The `npx demo-locker` wizard does not drive any of them — it deploys either to Docker on a machine you control or to Cloudflare (Worker + D1 + R2). Use the templates here if you already have an account on one of these platforms and would rather deploy the container there.
+
 ## Fly.io
 
 Deploy to Fly.io with zero configuration beyond copying the config file.

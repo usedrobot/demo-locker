@@ -43,7 +43,8 @@ A web app for **self-hosted music streaming**: share and sequence unfinished dem
 npx demo-locker
 ```
 
-The wizard asks where you want it running and takes it from there. Manual paths below.
+The wizard asks where you want it running — Cloudflare (Worker + D1 + R2) or
+Docker on a machine you control — and takes it from there. Manual paths below.
 
 One container, zero external services — database and audio files live in a single volume:
 

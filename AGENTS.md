@@ -24,9 +24,27 @@ npx demo-locker --mode instance --target docker --storage local --yes \
   --email USER_EMAIL --password USER_PASSWORD
 ```
 
-Interview the human first: what hardware is on hand (old laptop / Pi / VPS / PaaS)?
-public listening or band-and-friends? Then map their answers onto the flags above
-(`--target fly` for PaaS; `--storage s3 --s3-endpoint ...` when they already have a bucket).
+The wizard's targets are `cloudflare`, `docker`, and `existing`. For no hardware
+at all, deploy to Cloudflare instead — a Worker plus a D1 database and an R2
+bucket, provisioned by the wizard:
+
+```bash
+npx demo-locker --mode instance --target cloudflare --yes \
+  --domain DEMOS_EXAMPLE_COM --email USER_EMAIL --password USER_PASSWORD
+```
+
+Needs `wrangler` installed and logged in (`wrangler login`), R2 billing enabled
+on the account (free tier still applies, but a card must be on file), and the
+domain to be a zone on that same account. Drop `--domain` for a `workers.dev`
+URL — but then also drop `--email`/`--password`, which the wizard rejects on
+that path: the URL isn't known until the deploy prints it, so there's nothing to
+sign up against. Open it afterwards and register; the first account in wins.
+
+Interview the human first: what hardware is on hand (old laptop / Pi / VPS /
+nothing)? public listening or band-and-friends? Then map their answers onto the
+flags above (`--target cloudflare` when there's no machine to run on;
+`--storage s3 --s3-endpoint ...` on the docker target when they already have a
+bucket). `--dry-run` prints the plan without touching anything.
 
 ## Path 1 (primary): standalone Docker
 
@@ -62,7 +80,10 @@ expect: `200` with `{"status":"ok","timestamp":"<ISO-8601 string>"}`.
 
 ## Path 2: Fly.io / Railway / Coolify
 
-Platform-as-a-service, no server to manage. Full instructions in
+Platform-as-a-service, no server to manage. These are manual paths — the
+wizard does not drive them; it deploys the same container to Cloudflare
+instead (see "Scripted setup" above). The config templates still work if the
+human already has an account on one of these. Full instructions in
 [docs/deploy-templates.md](docs/deploy-templates.md). Fly.io in three
 commands:
 

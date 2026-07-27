@@ -14,6 +14,28 @@ describe("main", () => {
     expect(read()).toContain("--mode");
   });
 
+  it("--help documents every flag parseFlags accepts", async () => {
+    const { io, read } = fakeIO();
+    await main(["--help"], io);
+    const usage = read();
+    // Guards against a flag being added to parseFlags but never surfaced in
+    // --help. Keep this list in sync with the options map in questions.ts.
+    const flags = [
+      "--mode", "--target", "--storage", "--port", "--volume", "--url",
+      "--email", "--password", "--s3-endpoint", "--s3-bucket", "--s3-access-key",
+      "--s3-secret-key", "--s3-region", "--worker-name", "--d1-name",
+      "--r2-bucket", "--domain", "--yes", "--dry-run", "--help", "--version",
+    ];
+    for (const flag of flags) expect(usage, `${flag} missing from --help`).toContain(flag);
+  });
+
+  it("--help lists the real targets and no retired ones", async () => {
+    const { io, read } = fakeIO();
+    await main(["--help"], io);
+    expect(read()).toContain("--target <cloudflare|docker|existing>");
+    expect(read()).not.toMatch(/\bfly\b|railway/i);
+  });
+
   it("--version prints the package version", async () => {
     const { io, read } = fakeIO();
     const code = await main(["--version"], io);
@@ -97,6 +119,46 @@ describe("main end-to-end (non-interactive)", () => {
       expect.stringContaining("1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
     );
     expect(writeFile.mock.calls[0][1]).not.toContain("__DATABASE_ID__");
+  });
+
+  it("instance-only cloudflare with no domain deploys, then says where to find the app", async () => {
+    const { io, read } = fakeIO();
+    const dir = mkdtempSync(join(tmpdir(), "dle-"));
+    const exec = vi.fn(async () => 0);
+    const execCapture = vi.fn(async () => ({
+      code: 0,
+      stdout: '"database_id": "0ea573b2-861c-482c-a9c7-de5335d29fa0"\n',
+    }));
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+    const code = await main(
+      ["--mode", "instance", "--target", "cloudflare", "--yes"],
+      io,
+      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {} }, cwd: dir },
+    );
+    expect(code).toBe(0);
+    // There is no knowable URL yet, so no health poll and no signup POST — but
+    // the run must not end silently on "→ Deploy" either.
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(read()).toContain("workers.dev");
+    expect(read()).toContain("first account in wins");
+  });
+
+  it("cloudflare with a domain polls health and prints the app URL", async () => {
+    const { io, read } = fakeIO();
+    const dir = mkdtempSync(join(tmpdir(), "dle-"));
+    const exec = vi.fn(async () => 0);
+    const execCapture = vi.fn(async () => ({
+      code: 0,
+      stdout: '"database_id": "0ea573b2-861c-482c-a9c7-de5335d29fa0"\n',
+    }));
+    const fetchFn = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+    const code = await main(
+      ["--mode", "instance", "--target", "cloudflare", "--domain", "demos.example.com", "--yes"],
+      io,
+      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {} }, cwd: dir },
+    );
+    expect(code).toBe(0);
+    expect(read()).toContain("Your Demo Locker: https://demos.example.com");
   });
 
   it("player-only-with-url + --dry-run never execs and exits 0", async () => {

@@ -213,7 +213,14 @@ describe("copy step", () => {
     const { io, read } = fakeIO();
     const r = fakeRunner({
       copyDir: async () => {
-        throw new Error("ENOTDIR: not a directory, mkdir 'demo-locker'");
+        // Verbatim shape of what node:fs/promises cp() rejects with when the
+        // destination exists as a file (checked against Node on 2026-07-27).
+        const err: NodeJS.ErrnoException = new Error(
+          "Cannot overwrite non-directory with directory: cp returned EISDIR" +
+          " (cannot overwrite non-directory demo-locker with directory /pkg/assets) demo-locker",
+        );
+        err.code = "ERR_FS_CP_DIR_TO_NON_DIR";
+        throw err;
       },
     });
     const code = await executePlan(copyPlan, null, io, r);

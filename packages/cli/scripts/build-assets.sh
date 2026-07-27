@@ -61,6 +61,21 @@ if [ ! -s "$OUT/public/index.html" ]; then
   exit 1
 fi
 
+# A non-empty index.html is not proof the app boots: a vite `base`/`assetsDir`
+# change leaves a valid document pointing at a bundle that was never packed, and
+# the deployed site is blank. Assert the entry script it names is really here.
+# `|| true`: under `set -o pipefail` a non-matching grep would abort the script
+# here, losing the diagnostic below — let the empty-entry branch report it instead.
+entry="$(grep -o 'src="[^"]*\.js"' "$OUT/public/index.html" | head -1 | sed 's/.*src="//;s/"$//' || true)"
+if [ -z "$entry" ]; then
+  echo "build-assets: no module script found in public/index.html" >&2
+  exit 1
+fi
+if [ ! -s "$OUT/public/${entry#/}" ]; then
+  echo "build-assets: index.html references $entry, which was not packed" >&2
+  exit 1
+fi
+
 # Player bundle (built above) and API description, served as assets.
 cp "$ROOT/packages/player/dist/embed.js" "$OUT/public/embed.js"
 cp "$ROOT/docs/openapi.json" "$OUT/public/openapi.json"

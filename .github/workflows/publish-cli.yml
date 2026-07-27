@@ -80,5 +80,8 @@ jobs:
           test -s packages/cli/assets/worker.js
           test -s packages/cli/assets/public/index.html
           ls packages/cli/assets/migrations/*.sql >/dev/null
+          # No `set -o pipefail` here on purpose (GitHub runs steps as `bash -e`):
+          # grep -q exits on its first match, npm then dies with EPIPE, and under
+          # pipefail that non-zero would fail this step spuriously.
           npm pack --dry-run -w packages/cli 2>&1 | grep -q 'assets/worker.js'
       - run: npm publish --provenance --access public -w packages/cli

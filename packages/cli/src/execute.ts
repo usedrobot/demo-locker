@@ -140,7 +140,12 @@ export async function executePlan(
         const message = err instanceof Error ? err.message : String(err);
         io.output.write(`✗ step failed: ${step.title}\n`);
         io.output.write(`  ${message}\n`);
-        const hint = /ENOTDIR|EEXIST|not a directory/i.test(message)
+        // Match on the error code, not the prose: Node's cp() rejects a
+        // dir-onto-file collision with ERR_FS_CP_DIR_TO_NON_DIR and the message
+        // "Cannot overwrite non-directory with directory ... EISDIR".
+        const code = (err as NodeJS.ErrnoException | undefined)?.code ?? "";
+        const hint = code === "ERR_FS_CP_DIR_TO_NON_DIR" ||
+          /EISDIR|ENOTDIR|non-directory/i.test(message)
           ? `hint: "${step.to}" already exists as a file — move or delete it, then re-run.`
           : `hint: could not read the packaged deployable at ${step.from}, or could not write` +
             ` to "${step.to}". If this install of demo-locker is missing its assets, re-run` +

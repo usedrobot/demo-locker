@@ -4,6 +4,7 @@ export const IMAGE = "ghcr.io/usedrobot/demo-locker:latest";
 
 export type Step =
   | { kind: "run"; title: string; cmd: string; args: string[] }
+  | { kind: "run-capture"; title: string; cmd: string; args: string[]; capture: string }
   | { kind: "write"; title: string; path: string; contents: string }
   | { kind: "note"; text: string };
 
@@ -60,6 +61,7 @@ function redactEnvArg(arg: string): string {
 export function renderPlan(p: DeployPlan): string {
   const lines = p.steps.map((s) => {
     if (s.kind === "run") return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
+    if (s.kind === "run-capture") return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
     if (s.kind === "write") return `write ${s.path}`;
     return `# ${s.text}`;
   });

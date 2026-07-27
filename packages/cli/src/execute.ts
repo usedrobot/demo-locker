@@ -6,6 +6,7 @@ import type { DeployPlan } from "./plan.js";
 
 export interface Runner {
   exec(cmd: string, args: string[]): Promise<number>;
+  execCapture(cmd: string, args: string[]): Promise<{ code: number; stdout: string }>;
   writeFile(path: string, contents: string): Promise<void>;
   fetchFn: typeof fetch;
   sleep(ms: number): Promise<void>;
@@ -22,6 +23,22 @@ export function defaultRunner(_io: IO): Runner {
           ),
         );
         child.on("close", (code) => resolve(code ?? 1));
+      }),
+    execCapture: (cmd, args) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(cmd, args, { stdio: ["inherit", "pipe", "inherit"] });
+        let stdout = "";
+        child.stdout.on("data", (chunk) => {
+          const text = chunk.toString();
+          stdout += text;
+          process.stdout.write(text);
+        });
+        child.on("error", (err) =>
+          reject(
+            new Error(`could not run "${cmd}" — is it installed and on PATH? (${err.message})`),
+          ),
+        );
+        child.on("close", (code) => resolve({ code: code ?? 1, stdout }));
       }),
     writeFile: (path, contents) => fsWriteFile(path, contents),
     fetchFn: fetch,
@@ -48,14 +65,35 @@ export async function executePlan(
   io: IO,
   runner: Runner,
 ): Promise<number> {
+  const captured = new Map<string, string>();
   for (const step of plan.steps) {
     if (step.kind === "note") {
       io.output.write(`${step.text}\n`);
       continue;
     }
     io.output.write(`→ ${step.title}\n`);
+    if (step.kind === "run-capture") {
+      const { code, stdout } = await runner.execCapture(step.cmd, step.args);
+      if (code !== 0) {
+        io.output.write(`✗ step failed (${step.cmd} exited ${code}): ${step.title}\n`);
+        return 1;
+      }
+      const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(stdout);
+      if (!uuid) {
+        io.output.write(
+          `✗ could not read ${step.capture} from ${step.cmd} output:\n${stdout}\n`,
+        );
+        return 1;
+      }
+      captured.set(step.capture, uuid[0]);
+      continue;
+    }
     if (step.kind === "write") {
-      await runner.writeFile(step.path, step.contents);
+      let contents = step.contents;
+      for (const [key, value] of captured) {
+        contents = contents.split(`__${key}__`).join(value);
+      }
+      await runner.writeFile(step.path, contents);
       continue;
     }
     const code = await runner.exec(step.cmd, step.args);

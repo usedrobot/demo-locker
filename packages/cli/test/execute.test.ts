@@ -12,6 +12,7 @@ function fakeRunner(overrides: Partial<Runner> = {}): Runner & { calls: string[]
       calls.push(`${cmd} ${args.join(" ")}`);
       return 0;
     }),
+    execCapture: vi.fn(async () => ({ code: 0, stdout: "" })),
     writeFile: vi.fn(async (path: string) => {
       calls.push(`write ${path}`);
     }),
@@ -117,5 +118,63 @@ describe("executePlan", () => {
     const code = await executePlan(dockerPlan, null, io, r);
     expect(code).toBe(1);
     expect(read()).toContain("never became healthy");
+  });
+});
+
+describe("run-capture", () => {
+  it("captures a uuid from stdout and substitutes it into a later write", async () => {
+    const { io, read } = fakeIO();
+    const written: Record<string, string> = {};
+    const runner: Runner = {
+      exec: async () => 0,
+      execCapture: async () => ({
+        code: 0,
+        stdout: 'database_id = "11111111-2222-3333-4444-555555555555"',
+      }),
+      writeFile: async (p, c) => { written[p] = c; },
+      fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
+      sleep: async () => {},
+    };
+
+    const code = await executePlan(
+      {
+        steps: [
+          { kind: "run-capture", title: "Create D1", cmd: "wrangler", args: ["d1", "create", "db"], capture: "DATABASE_ID" },
+          { kind: "write", title: "Write config", path: "wrangler.jsonc", contents: '{"database_id":"__DATABASE_ID__"}' },
+        ],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, runner,
+    );
+
+    expect(code).toBe(0);
+    expect(written["wrangler.jsonc"]).toBe('{"database_id":"11111111-2222-3333-4444-555555555555"}');
+    expect(read()).toContain("Create D1");
+  });
+
+  it("fails with the raw output when no uuid is present", async () => {
+    const { io, read } = fakeIO();
+    const runner: Runner = {
+      exec: async () => 0,
+      execCapture: async () => ({ code: 0, stdout: "something unexpected" }),
+      writeFile: async () => {},
+      fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
+      sleep: async () => {},
+    };
+
+    const code = await executePlan(
+      {
+        steps: [
+          { kind: "run-capture", title: "Create D1", cmd: "wrangler", args: [], capture: "DATABASE_ID" },
+        ],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, runner,
+    );
+
+    expect(code).toBe(1);
+    expect(read()).toContain("something unexpected");
   });
 });

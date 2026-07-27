@@ -1,20 +1,38 @@
 {
   "name": "demo-locker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Setup wizard for Demo Locker — self-hosted music streaming for demos, mixes, and playlists your band can comment on.",
   "license": "MIT",
   "type": "module",
-  "bin": { "demo-locker": "dist/cli.js" },
-  "files": ["dist", "assets"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "demo-locker": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "assets"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/usedrobot/demo-locker.git",
     "directory": "packages/cli"
   },
   "homepage": "https://github.com/usedrobot/demo-locker#readme",
-  "keywords": ["self-hosted", "music", "audio", "playlist", "demo-locker", "setup", "wizard"],
-  "publishConfig": { "access": "public", "provenance": true },
+  "keywords": [
+    "self-hosted",
+    "music",
+    "audio",
+    "playlist",
+    "demo-locker",
+    "setup",
+    "wizard"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:assets": "bash scripts/build-assets.sh",

@@ -132,14 +132,14 @@ describe("collectAnswers", () => {
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
     write("2\n"); // target: docker
+    await waitForOutput(read, "Create the first account now?");
+    write("\n"); // email: empty → skip signup
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
     write("\n"); // port: default 3001
     await waitForOutput(read, "Docker volume name");
     write("\n"); // volume: default demolocker
-    await waitForOutput(read, "Create the first account now?");
-    write("\n"); // email: empty → skip signup
 
     const a = await p;
     expect(a.mode).toBe("instance");
@@ -167,6 +167,8 @@ describe("collectAnswers", () => {
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
     write("2\n"); // target: docker
+    await waitForOutput(read, "Create the first account now?");
+    write("\n"); // email: empty → skip signup
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
@@ -175,10 +177,59 @@ describe("collectAnswers", () => {
     write("8080\n"); // valid port
     await waitForOutput(read, "Docker volume name");
     write("\n"); // volume: default demolocker
-    await waitForOutput(read, "Create the first account now?");
-    write("\n"); // email: empty → skip signup
 
     const a = await p;
     expect(a.port).toBe(8080);
+  });
+});
+
+describe("cloudflare flags", () => {
+  it("--yes fills cloudflare defaults with no domain", async () => {
+    const { io } = fakeIO();
+    const a = await collectAnswers(
+      parseFlags(["--mode", "instance", "--target", "cloudflare", "--yes"]),
+      io,
+      "empty",
+    );
+    expect(a.cloudflare).toEqual({
+      workerName: "demo-locker",
+      d1Name: "demo-locker-db",
+      r2Bucket: "demo-locker-demos",
+      domain: null,
+    });
+    expect(a.storage).toBeNull();
+  });
+
+  it("accepts explicit cloudflare flags", async () => {
+    const { io } = fakeIO();
+    const a = await collectAnswers(
+      parseFlags([
+        "--mode", "instance", "--target", "cloudflare", "--yes",
+        "--worker-name", "dl", "--d1-name", "dl-db",
+        "--r2-bucket", "dl-demos", "--domain", "demolocker.dlisok.com",
+      ]),
+      io,
+      "empty",
+    );
+    expect(a.cloudflare).toEqual({
+      workerName: "dl", d1Name: "dl-db",
+      r2Bucket: "dl-demos", domain: "demolocker.dlisok.com",
+    });
+  });
+
+  it("rejects a --domain that is a URL rather than a hostname", () => {
+    expect(() => parseFlags(["--domain", "https://demolocker.dlisok.com"]))
+      .toThrow(/bare hostname/);
+  });
+
+  it("rejects --domain on a non-cloudflare target", async () => {
+    const { io } = fakeIO();
+    await expect(
+      collectAnswers(
+        parseFlags(["--mode", "instance", "--target", "docker", "--domain", "x.example.com", "--yes"]),
+        io,
+        "empty",
+      ),
+    ).rejects.toThrow(/only valid with --target cloudflare/);
   });
 });

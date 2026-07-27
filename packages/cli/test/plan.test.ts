@@ -3,7 +3,7 @@ import { buildPlan, renderPlan } from "../src/plan.js";
 import type { Answers } from "../src/questions.js";
 
 const base: Answers = {
-  mode: "instance", target: "docker", storage: "local", s3: null,
+  mode: "instance", target: "docker", storage: "local", s3: null, cloudflare: null,
   port: 3001, volume: "demolocker", url: null, signup: null, dryRun: false,
 };
 

@@ -22,6 +22,10 @@ export interface Flags {
   s3AccessKey?: string;
   s3SecretKey?: string;
   s3Region?: string;
+  workerName?: string;
+  d1Name?: string;
+  r2Bucket?: string;
+  domain?: string;
   yes: boolean;
   dryRun: boolean;
 }
@@ -31,6 +35,7 @@ export interface Answers {
   target: (typeof TARGETS)[number] | null;
   storage: (typeof STORAGES)[number] | null;
   s3: { endpoint: string; accessKey: string; secretKey: string; bucket: string; region: string } | null;
+  cloudflare: { workerName: string; d1Name: string; r2Bucket: string; domain: string | null } | null;
   port: number;
   volume: string;
   url: string | null;
@@ -73,6 +78,19 @@ function validateUrl(raw: string): string {
   return raw;
 }
 
+/** Validate a bare hostname (no scheme, no path, no port). Throws on invalid input. */
+function validateHostname(raw: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) || raw.includes("/")) {
+    throw new Error(
+      "must be a bare hostname, e.g. demos.example.com (not a URL)",
+    );
+  }
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(raw)) {
+    throw new Error("must be a bare hostname, e.g. demos.example.com");
+  }
+  return raw;
+}
+
 export function parseFlags(argv: string[]): Flags {
   const { values: v } = parseArgs({
     args: argv,
@@ -90,6 +108,10 @@ export function parseFlags(argv: string[]): Flags {
       "s3-access-key": { type: "string" },
       "s3-secret-key": { type: "string" },
       "s3-region": { type: "string" },
+      "worker-name": { type: "string" },
+      "d1-name": { type: "string" },
+      "r2-bucket": { type: "string" },
+      domain: { type: "string" },
       yes: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
     },
@@ -111,6 +133,14 @@ export function parseFlags(argv: string[]): Flags {
     }
   }
 
+  if (v.domain !== undefined) {
+    try {
+      validateHostname(v.domain);
+    } catch (e) {
+      throw new Error(`--domain ${(e as Error).message}`);
+    }
+  }
+
   return {
     mode: oneOf("mode", v.mode, MODES),
     target: oneOf("target", v.target, TARGETS),
@@ -125,6 +155,10 @@ export function parseFlags(argv: string[]): Flags {
     s3AccessKey: v["s3-access-key"],
     s3SecretKey: v["s3-secret-key"],
     s3Region: v["s3-region"],
+    workerName: v["worker-name"],
+    d1Name: v["d1-name"],
+    r2Bucket: v["r2-bucket"],
+    domain: v.domain,
     yes: v.yes ?? false,
     dryRun: v["dry-run"] ?? false,
   };
@@ -213,13 +247,14 @@ export async function collectAnswers(
   let port = Number(flags.port ?? 3001);
   let volume = flags.volume ?? "demolocker";
   let signup: Answers["signup"] = null;
+  let cloudflare: Answers["cloudflare"] = null;
 
   if (playerOnly && url) {
     if (flags.target !== undefined) {
       throw new Error("--target has no effect when --mode player is used with --url");
     }
     // Pointing the player at an existing instance — nothing to deploy.
-    return { mode, target: null, storage: null, s3: null, port, volume, url, signup: null, dryRun: flags.dryRun };
+    return { mode, target: null, storage: null, s3: null, cloudflare: null, port, volume, url, signup: null, dryRun: flags.dryRun };
   }
 
   if (needsInstance) {
@@ -234,10 +269,42 @@ export async function collectAnswers(
       throw new Error("--url is only valid with --target existing or --mode player");
     }
 
+    const cfFlags: [string, string | undefined][] = [
+      ["domain", flags.domain], ["worker-name", flags.workerName],
+      ["d1-name", flags.d1Name], ["r2-bucket", flags.r2Bucket],
+    ];
+    for (const [name, value] of cfFlags) {
+      if (value !== undefined && target !== "cloudflare") {
+        throw new Error(`--${name} is only valid with --target cloudflare`);
+      }
+    }
+
     if (target === "existing") {
       url = flags.url ?? (flags.yes ? null : await askUrl(io, "Instance URL (e.g. https://demos.example.com)?"));
       if (!url) throw new Error("--url is required for --target existing");
-      return { mode, target, storage: null, s3: null, port, volume, url, signup: null, dryRun: flags.dryRun };
+      return { mode, target, storage: null, s3: null, cloudflare: null, port, volume, url, signup: null, dryRun: flags.dryRun };
+    }
+
+    if (flags.email && flags.password) {
+      validatePassword(flags.password);
+      signup = { email: flags.email, password: flags.password };
+    } else if (!flags.yes) {
+      const email = await ask(io, "Create the first account now? Email (empty to skip):", "");
+      if (email) signup = { email, password: await askPassword(io) };
+    }
+
+    if (target === "cloudflare") {
+      const domain = flags.domain
+        ?? (flags.yes ? "" : await ask(io, "Custom domain? (blank for a workers.dev URL)", ""));
+      cloudflare = {
+        workerName: flags.workerName ?? "demo-locker",
+        d1Name: flags.d1Name ?? "demo-locker-db",
+        r2Bucket: flags.r2Bucket ?? "demo-locker-demos",
+        domain: domain === "" ? null : validateHostname(domain),
+      };
+      port = 3001;
+      volume = "demolocker";
+      return { mode, target, storage: null, s3: null, cloudflare, port, volume, url: null, signup, dryRun: flags.dryRun };
     }
 
     storage = await resolve<(typeof STORAGES)[number]>(flags.storage, flags.yes, () =>
@@ -274,15 +341,7 @@ export async function collectAnswers(
       }
       volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
     }
-
-    if (flags.email && flags.password) {
-      validatePassword(flags.password);
-      signup = { email: flags.email, password: flags.password };
-    } else if (!flags.yes) {
-      const email = await ask(io, "Create the first account now? Email (empty to skip):", "");
-      if (email) signup = { email, password: await askPassword(io) };
-    }
   }
 
-  return { mode, target, storage, s3, port, volume, url, signup, dryRun: flags.dryRun };
+  return { mode, target, storage, s3, cloudflare, port, volume, url, signup, dryRun: flags.dryRun };
 }

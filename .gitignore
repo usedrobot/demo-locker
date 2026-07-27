@@ -5,3 +5,6 @@ dist/
 *.local
 .DS_Store
 packages/api/data/
+# Neon->D1 cutover dump: password hashes + live session tokens. The runbook
+# writes it outside the repo; this is a belt-and-braces guard.
+dump.sql

@@ -49,10 +49,86 @@ describe("buildPlan existing", () => {
 });
 
 describe("buildPlan cloudflare target is recognized", () => {
-  it.skip("does not fall through to the empty default case", () => {
-    // unskipped in Task 5
-    const p = buildPlan({ ...base, target: "cloudflare", storage: null, port: 3001 });
+  it("does not fall through to the empty default case", () => {
+    const p = buildPlan({
+      ...base, target: "cloudflare", storage: null, port: 3001,
+      cloudflare: { workerName: "demo-locker", d1Name: "demo-locker-db", r2Bucket: "demo-locker-demos", domain: null },
+    });
     expect(p.steps.length).toBeGreaterThan(0);
+  });
+});
+
+const cfBase: Answers = {
+  ...base,
+  target: "cloudflare",
+  storage: null,
+  cloudflare: {
+    workerName: "demo-locker",
+    d1Name: "demo-locker-db",
+    r2Bucket: "demo-locker-demos",
+    domain: null,
+  },
+};
+
+describe("buildPlan cloudflare", () => {
+  it("emits create, capture, write, migrate, deploy in order", () => {
+    const p = buildPlan(cfBase);
+    expect(p.steps.map((s) => s.kind)).toEqual([
+      "note", "run", "run-capture", "run", "write", "run", "run",
+    ]);
+  });
+
+  it("warns about the R2 billing requirement before provisioning anything", () => {
+    const p = buildPlan(cfBase);
+    expect(p.steps[0]).toMatchObject({ kind: "note" });
+    expect((p.steps[0] as { text: string }).text).toMatch(/billing/i);
+  });
+
+  it("captures the database id from d1 create", () => {
+    const p = buildPlan(cfBase);
+    const cap = p.steps.find((s) => s.kind === "run-capture")!;
+    expect(cap).toMatchObject({
+      cmd: "wrangler",
+      args: ["d1", "create", "demo-locker-db"],
+      capture: "DATABASE_ID",
+    });
+  });
+
+  it("writes a wrangler config with both bindings and the id placeholder", () => {
+    const p = buildPlan(cfBase);
+    const write = p.steps.find((s): s is Extract<typeof p.steps[number], { kind: "write" }> => s.kind === "write")!;
+    expect(write.path).toBe("demo-locker/wrangler.jsonc");
+    const cfg = JSON.parse(write.contents);
+    expect(cfg.d1_databases[0]).toMatchObject({
+      binding: "DB", database_name: "demo-locker-db", database_id: "__DATABASE_ID__",
+    });
+    expect(cfg.r2_buckets[0]).toMatchObject({
+      binding: "DEMOS_BUCKET", bucket_name: "demo-locker-demos",
+    });
+    expect(cfg.assets.directory).toBe("public");
+    expect(cfg.assets.not_found_handling).toBe("single-page-application");
+    expect(cfg.assets.run_worker_first).toContain("/health");
+    expect(cfg.routes).toBeUndefined();
+  });
+
+  it("adds a custom_domain route when a domain is given", () => {
+    const p = buildPlan({ ...cfBase, cloudflare: { ...cfBase.cloudflare!, domain: "demolocker.dlisok.com" } });
+    const write = p.steps.find((s): s is Extract<typeof p.steps[number], { kind: "write" }> => s.kind === "write")!;
+    const cfg = JSON.parse(write.contents);
+    expect(cfg.routes).toEqual([{ pattern: "demolocker.dlisok.com", custom_domain: true }]);
+    expect(p.appUrl).toBe("https://demolocker.dlisok.com");
+    expect(p.healthUrl).toBe("https://demolocker.dlisok.com/health");
+  });
+
+  it("has no health url without a domain, since workers.dev is not known ahead of deploy", () => {
+    const p = buildPlan(cfBase);
+    expect(p.appUrl).toBeNull();
+    expect(p.healthUrl).toBeNull();
+  });
+
+  it("never emits a secret", () => {
+    const p = buildPlan({ ...cfBase, cloudflare: { ...cfBase.cloudflare!, domain: "d.example.com" } });
+    expect(renderPlan(p)).not.toMatch(/secret|SECRET|ACCESS_KEY/);
   });
 });
 

@@ -79,14 +79,16 @@ describe("main end-to-end (non-interactive)", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("both-mode with a null-appUrl target (cloudflare, not yet implemented) prints guidance and exits 0 after a successful deploy", async () => {
+  it("both-mode with a null-appUrl target (cloudflare, no custom domain) prints guidance and exits 0 after a successful deploy", async () => {
     const { io, read } = fakeIO();
     const dir = mkdtempSync(join(tmpdir(), "dle-"));
     const exec = vi.fn(async () => 0);
+    const execCapture = vi.fn(async () => ({ code: 0, stdout: "database_id = \"1b4e28ba-2fa1-11d2-883f-0016d3cca427\"\n" }));
+    const writeFile = vi.fn(async () => {});
     const code = await main(
       ["--mode", "both", "--target", "cloudflare", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("--mode player --url");

@@ -14,6 +14,45 @@ export interface DeployPlan {
   appUrl: string | null;
 }
 
+export const ASSETS_DIR = "demo-locker";
+
+const API_PATHS = [
+  "/health",
+  "/auth/*",
+  "/playlists/*",
+  "/comments/*",
+  "/shares/*",
+  "/tracks/*",
+  "/public/v1/*",
+];
+
+function wranglerConfig(cf: NonNullable<Answers["cloudflare"]>): string {
+  const config: Record<string, unknown> = {
+    name: cf.workerName,
+    main: "worker.js",
+    compatibility_date: "2024-12-01",
+    compatibility_flags: ["nodejs_compat"],
+    d1_databases: [
+      {
+        binding: "DB",
+        database_name: cf.d1Name,
+        database_id: "__DATABASE_ID__",
+        migrations_dir: "migrations",
+      },
+    ],
+    r2_buckets: [{ binding: "DEMOS_BUCKET", bucket_name: cf.r2Bucket }],
+    assets: {
+      directory: "public",
+      not_found_handling: "single-page-application",
+      run_worker_first: API_PATHS,
+    },
+  };
+  if (cf.domain) {
+    config.routes = [{ pattern: cf.domain, custom_domain: true }];
+  }
+  return JSON.stringify(config, null, 2) + "\n";
+}
+
 export function buildPlan(a: Answers): DeployPlan {
   switch (a.target) {
     case "docker": {
@@ -38,6 +77,42 @@ export function buildPlan(a: Answers): DeployPlan {
           },
         ],
         healthUrl: `${appUrl}/health`,
+        appUrl,
+      };
+    }
+    case "cloudflare": {
+      const cf = a.cloudflare;
+      if (!cf) return { steps: [], healthUrl: null, appUrl: null };
+      const appUrl = cf.domain ? `https://${cf.domain}` : null;
+      return {
+        steps: [
+          {
+            kind: "note",
+            text: "R2 storage needs billing enabled on your Cloudflare account. The free tier still applies, but a card must be on file — otherwise bucket creation fails below.",
+          },
+          { kind: "run", title: "Check Cloudflare login", cmd: "wrangler", args: ["whoami"] },
+          {
+            kind: "run-capture", title: "Create D1 database", cmd: "wrangler",
+            args: ["d1", "create", cf.d1Name], capture: "DATABASE_ID",
+          },
+          {
+            kind: "run", title: "Create R2 bucket", cmd: "wrangler",
+            args: ["r2", "bucket", "create", cf.r2Bucket],
+          },
+          {
+            kind: "write", title: "Write wrangler.jsonc",
+            path: `${ASSETS_DIR}/wrangler.jsonc`, contents: wranglerConfig(cf),
+          },
+          {
+            kind: "run", title: "Apply database migrations", cmd: "wrangler",
+            args: ["d1", "migrations", "apply", cf.d1Name, "--remote", "--config", `${ASSETS_DIR}/wrangler.jsonc`],
+          },
+          {
+            kind: "run", title: "Deploy", cmd: "wrangler",
+            args: ["deploy", "--config", `${ASSETS_DIR}/wrangler.jsonc`],
+          },
+        ],
+        healthUrl: appUrl ? `${appUrl}/health` : null,
         appUrl,
       };
     }

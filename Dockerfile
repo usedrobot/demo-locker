@@ -1,5 +1,7 @@
 # --- Base ---
-FROM node:22-alpine AS base
+# better-sqlite3 ships glibc prebuilds only; alpine/musl would compile from
+# source and need a toolchain in the image.
+FROM node:22-slim AS base
 WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY packages/api/package.json packages/api/

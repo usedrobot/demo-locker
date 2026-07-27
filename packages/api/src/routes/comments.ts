@@ -15,7 +15,7 @@ const commentsRouter = new Hono<Env>();
 async function resolveAuthedUser(c: any) {
   const token = c.req.header("Authorization")?.replace("Bearer ", "");
   if (!token) return null;
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const [session] = await db
     .select()
     .from(sessions)
@@ -47,7 +47,7 @@ commentsRouter.post("/", async (c) => {
     return c.json({ error: "trackId or playlistId required" }, 400);
   }
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   // Resolve the playlist this comment targets, then gate on it: only the
   // owner's session or a valid share token may comment (the invite-listener
@@ -96,7 +96,7 @@ commentsRouter.post("/", async (c) => {
 
 commentsRouter.get("/track/:trackId", async (c) => {
   const trackId = c.req.param("trackId");
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [track] = await db
     .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
@@ -129,7 +129,7 @@ commentsRouter.get("/track/:trackId", async (c) => {
 
 commentsRouter.get("/playlist/:playlistId", async (c) => {
   const playlistId = c.req.param("playlistId");
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   if (!(await requestCanAccessPlaylist(c, playlistId))) {
     return c.json({ error: "not found" }, 404);
@@ -160,7 +160,7 @@ commentsRouter.patch("/:id/resolve", async (c) => {
   const user = await resolveAuthedUser(c);
   if (!user) return c.json({ error: "unauthorized" }, 401);
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   // Look up the comment and resolve its playlist (via comment.playlistId or
   // via the comment's track → playlist).
@@ -209,7 +209,7 @@ commentsRouter.patch("/:id/resolve", async (c) => {
 //   - The request supplies the matching X-Delete-Token (anonymous author).
 commentsRouter.delete("/:id", async (c) => {
   const id = c.req.param("id");
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [comment] = await db
     .select()

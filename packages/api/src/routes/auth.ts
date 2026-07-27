@@ -18,7 +18,7 @@ auth.post("/signup", async (c) => {
     return c.json({ error: "password must be at least 8 characters" }, 400);
   }
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [existing] = await db
     .select({ id: users.id })
@@ -51,7 +51,7 @@ auth.post("/login", async (c) => {
     return c.json({ error: "email and password required" }, 400);
   }
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [user] = await db
     .select()
@@ -81,7 +81,7 @@ auth.get("/me", requireAuth, async (c) => {
 auth.post("/logout", requireAuth, async (c) => {
   const token = c.req.header("Authorization")?.replace("Bearer ", "");
   if (token) {
-    const db = getDb(c.env.DATABASE_URL);
+    const db = getDb(c.env.DB);
     await db.delete(sessions).where(eq(sessions.token, token));
   }
   return c.json({ ok: true });

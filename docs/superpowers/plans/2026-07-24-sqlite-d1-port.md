@@ -587,7 +587,14 @@ git commit -m "docs: sqlite everywhere — no more Postgres/DATABASE_URL"
 
 **Interfaces:**
 - Consumes: D1 database from Task 6; frozen Neon data via `packages/api/.dev.vars` (`DATABASE_URL=...`, gitignored — DL recreates it from the Neon dashboard if absent).
-- Produces: `dump.sql` (D1-ready INSERTs) + verified row counts.
+- Produces: a D1-ready INSERT dump + verified row counts.
+
+> **Stale copy warning.** The script and runbook text embedded below are the
+> *original* drafts. Both have since been revised (UTC date-parser override,
+> `INSERT OR REPLACE`, epoch-**milliseconds**, dump written outside the repo,
+> `--local` rehearsal, value spot-checks, reset-and-rerun recovery). Follow
+> `scripts/neon-to-d1.mjs` and
+> `docs/superpowers/plans/2026-07-24-cutover-runbook.md` — not this section.
 
 - [ ] **Step 1: Write the export script**
 

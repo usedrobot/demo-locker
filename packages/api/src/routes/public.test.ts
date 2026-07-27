@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
-import { createPgliteDb } from "../db/pglite.js";
+import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
 import { users, playlists, tracks, sessions } from "../db/schema.js";
 
@@ -20,11 +20,11 @@ let ownerToken: string;
 let privateWithArtworkId: string;
 
 beforeAll(async () => {
-  db = await createPgliteDb();
+  db = createSqliteDb();
   setDbFactory(() => db);
   root = await mkdtemp(join(tmpdir(), "dl-public-"));
   const bucket = createFsBucket(root);
-  env = { DATABASE_URL: "pglite", DEMOS_BUCKET: bucket };
+  env = { DB: "sqlite", DEMOS_BUCKET: bucket };
 
   const [user] = await db
     .insert(users)

@@ -8,12 +8,11 @@ prove the instance works.
 
 ## What you're deploying
 
-Demo Locker is one container: API + web UI + (in zero-dependency mode) an
-embedded PGlite database, all in a single process. Point it at a
-`DATABASE_URL` and `S3_ENDPOINT` and it uses real Postgres and S3 instead —
-otherwise everything, database and audio files alike, lives under one
-`/data` volume. Back up that volume and you've backed up the whole
-instance, no separate database export needed.
+Demo Locker is one container: API + web UI + an embedded SQLite database,
+all in a single process. Point it at `S3_ENDPOINT` and it uses real S3
+storage instead of local disk — either way, database and audio files live
+under one `/data` volume. Back up that volume and you've backed up the
+whole instance, no separate database export needed.
 
 ## Scripted setup (preferred)
 
@@ -58,9 +57,9 @@ restarting).
 Boot log (`docker logs <container>`), in order:
 
 ```
-db: pglite (/data/db) — set DATABASE_URL to use Postgres
+db: sqlite (/data/db/demolocker.db)
 storage: local disk (/data/audio) — set S3_ENDPOINT to use S3
-⚠ zero-dependency mode: db is embedded (pglite) and storage is local disk — all data lives under /data. If you expected Postgres/S3, check your DATABASE_URL / S3_ENDPOINT env vars.
+⚠ zero-dependency mode: db is embedded (sqlite) and storage is local disk — all data lives under /data. If you expected S3, check your S3_ENDPOINT env var.
 embed: serving ../player/dist/embed.js
 openapi: serving ../../docs/openapi.json
 web: serving ../web/dist
@@ -97,11 +96,11 @@ expect: `fly deploy` finishes with a deployed app URL; `curl
 https://<app>.fly.dev/health` returns the same `{"status":"ok",...}` shape
 as Path 1.
 
-## Path 3: Postgres + S3 (Docker Compose)
+## Path 3: Build from Source (Docker Compose)
 
-For production deployments where you want a real Postgres instance and an
-S3-compatible bucket instead of the embedded zero-dependency mode. Full
-instructions in [docs/self-hosting.md](docs/self-hosting.md):
+For production deployments where you want to build from source and use an
+S3-compatible bucket instead of the zero-dependency image's local disk
+storage. Full instructions in [docs/self-hosting.md](docs/self-hosting.md):
 
 ```bash
 git clone https://github.com/usedrobot/demo-locker.git

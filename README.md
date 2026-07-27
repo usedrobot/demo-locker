@@ -54,18 +54,18 @@ docker run -d -v demolocker:/data -p 3001:3001 ghcr.io/usedrobot/demo-locker:lat
 
 Open `http://localhost:3001`. That's the whole stack.
 
-For development, or to run against your own Postgres + S3, see below.
+For development, or to build from source with your own S3-compatible storage, see below.
 
 ## Self-Host
 
 New to hosting? Start with [Host Your Music](docs/host-your-music.md) — the beginner guide.
 
-The Postgres + S3 path, for production deployments or local development:
+The build-from-source path, for production deployments or local development:
 
 ```bash
 git clone https://github.com/usedrobot/demo-locker.git
 cd demo-locker
-cp .env.example .env    # point at your own Postgres + S3 bucket
+cp .env.example .env    # optionally point at your own S3-compatible bucket
 docker compose up
 ```
 
@@ -77,7 +77,7 @@ Three commands. See [docs/self-hosting.md](docs/self-hosting.md) for the full gu
 |---|---|
 | Frontend | React + Vite |
 | Backend | Hono |
-| Database | Postgres + Drizzle |
+| Database | SQLite — D1 hosted, embedded file self-host |
 | Storage | Cloudflare R2 (any S3-compatible) |
 | Transcoding | FFmpeg |
 | Style | Vanilla CSS — TUI in the browser |

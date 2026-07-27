@@ -19,7 +19,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
     return c.json({ error: "permission must be 'listen' or 'edit'" }, 400);
   }
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [playlist] = await db
     .select()
@@ -64,7 +64,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
 // to my locker" view. Includes the playlist name for display.
 sharesRouter.get("/", requireAuth, async (c) => {
   const userId = c.get("user").id;
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const rows = await db
     .select({
@@ -92,7 +92,7 @@ sharesRouter.patch("/:id", requireAuth, async (c) => {
   if (permission !== "listen" && permission !== "edit") {
     return c.json({ error: "permission must be 'listen' or 'edit'" }, 400);
   }
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [share] = await db
     .select({ id: shares.id, playlistId: shares.playlistId })
@@ -122,7 +122,7 @@ sharesRouter.patch("/:id", requireAuth, async (c) => {
 sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
   const playlistId = c.req.param("playlistId");
   const userId = c.get("user").id;
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [playlist] = await db
     .select()
@@ -145,7 +145,7 @@ sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
 sharesRouter.delete("/:id", requireAuth, async (c) => {
   const shareId = c.req.param("id");
   const userId = c.get("user").id;
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [share] = await db
     .select()
@@ -171,7 +171,7 @@ sharesRouter.delete("/:id", requireAuth, async (c) => {
 
 sharesRouter.get("/invite/:token", async (c) => {
   const token = c.req.param("token");
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [share] = await db
     .select()

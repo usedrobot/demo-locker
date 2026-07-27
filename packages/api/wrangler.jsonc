@@ -8,8 +8,18 @@
       "bucket_name": "demo-locker-demos"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "demo-locker-db",
+      "database_id": "0ea573b2-861c-482c-a9c7-de5335d29fa0",
+      "migrations_dir": "src/db/migrations"
+    }
+  ],
   "assets": {
     "directory": "../player/dist"
   }
-  // DATABASE_URL and limit vars are set as secrets/env via wrangler or dashboard
+  // Limit vars (MAX_PLAYLISTS, MAX_STORAGE_BYTES, MAX_COLLABORATORS) are set
+  // as env vars via wrangler or the dashboard. The database and bucket are
+  // bindings above — there are no secrets on this deployment.
 }

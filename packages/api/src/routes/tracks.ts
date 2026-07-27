@@ -41,7 +41,7 @@ tracksRouter.post("/upload", async (c) => {
     return c.json({ error: "file required" }, 400);
   }
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const bucket = c.env.DEMOS_BUCKET;
 
   let ownerId: string | null = null;
@@ -91,7 +91,7 @@ tracksRouter.post("/upload", async (c) => {
 
 // List the user's whole track library (every upload, in or out of playlists)
 tracksRouter.get("/", requireAuth, async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const rows = await db
     .select()
     .from(tracks)
@@ -106,7 +106,7 @@ tracksRouter.get("/", requireAuth, async (c) => {
 // via the separate /public/v1/tracks/:id/stream route.
 tracksRouter.get("/:id/stream", async (c) => {
   const trackId = c.req.param("id");
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [track] = await db
     .select()
@@ -142,7 +142,7 @@ tracksRouter.get("/:id/stream", async (c) => {
 tracksRouter.patch("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");
   const { playlistId } = await c.req.json<{ playlistId: string | null }>();
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
   const userId = c.get("user").id;
 
   const [track] = await db
@@ -179,7 +179,7 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
 // Delete a track
 tracksRouter.delete("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [track] = await db
     .select()

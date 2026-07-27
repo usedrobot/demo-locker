@@ -1,33 +1,12 @@
 {
   "version": "7",
-  "dialect": "postgresql",
+  "dialect": "sqlite",
   "entries": [
     {
       "idx": 0,
-      "version": "7",
-      "when": 1775401500403,
-      "tag": "0000_colossal_cassandra_nova",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1783355217014,
-      "tag": "0001_heavy_photon",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1783367327058,
-      "tag": "0002_supreme_calypso",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1784736080593,
-      "tag": "0003_tracks-library",
+      "version": "6",
+      "when": 1784929662135,
+      "tag": "0000_init",
       "breakpoints": true
     }
   ]

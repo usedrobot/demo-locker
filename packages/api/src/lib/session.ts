@@ -8,7 +8,7 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
   const token = c.req.header("Authorization")?.replace("Bearer ", "");
   if (!token) return c.json({ error: "unauthorized" }, 401);
 
-  const db = getDb(c.env.DATABASE_URL);
+  const db = getDb(c.env.DB);
 
   const [session] = await db
     .select()

@@ -6,7 +6,7 @@ export type User = {
 };
 
 export type Bindings = {
-  DATABASE_URL: string;
+  DB: unknown; // D1Database on Workers; "sqlite" sentinel on Node (factory ignores it)
   DEMOS_BUCKET: StorageBucket;
   MAX_PLAYLISTS?: string;
   MAX_STORAGE_BYTES?: string;

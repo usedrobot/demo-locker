@@ -1,29 +1,28 @@
-import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
-function createNeonDb(url: string): Db {
-  const sql = neon(url);
-  return drizzle(sql, { schema });
+function createD1Db(binding: unknown): Db {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return drizzle(binding as any, { schema });
 }
 
-let _factory: ((url: string) => Db) | null = null;
+let _factory: ((binding: unknown) => Db) | null = null;
 let _db: Db = null;
-let _lastUrl: string | null = null;
+let _lastBinding: unknown = null;
 
-// Self-hosted: call this to swap in the postgres driver
-export function setDbFactory(factory: (url: string) => Db) {
+// Self-hosted: call this to swap in the sqlite driver
+export function setDbFactory(factory: (binding: unknown) => Db) {
   _factory = factory;
   _db = null;
 }
 
-export function getDb(url: string): Db {
-  if (_db && _lastUrl === url) return _db;
-  _lastUrl = url;
-  _db = _factory ? _factory(url) : createNeonDb(url);
+export function getDb(binding: unknown): Db {
+  if (_db && _lastBinding === binding) return _db;
+  _lastBinding = binding;
+  _db = _factory ? _factory(binding) : createD1Db(binding);
   return _db;
 }
 

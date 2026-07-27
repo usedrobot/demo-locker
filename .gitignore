@@ -5,3 +5,11 @@ dist/
 *.local
 .DS_Store
 packages/api/data/
+# Neon->D1 cutover dump: password hashes + live session tokens. The runbook
+# writes it outside the repo; this is a belt-and-braces guard.
+dump.sql
+# Wrangler's local state, including the miniflare D1 sqlite files. The cutover
+# runbook's rehearsal step imports the production dump with `--remote` omitted,
+# which lands real password hashes and session tokens in here. Same hazard as
+# dump.sql above, different path.
+.wrangler/

@@ -285,14 +285,6 @@ export async function collectAnswers(
       return { mode, target, storage: null, s3: null, cloudflare: null, port, volume, url, signup: null, dryRun: flags.dryRun };
     }
 
-    if (flags.email && flags.password) {
-      validatePassword(flags.password);
-      signup = { email: flags.email, password: flags.password };
-    } else if (!flags.yes) {
-      const email = await ask(io, "Create the first account now? Email (empty to skip):", "");
-      if (email) signup = { email, password: await askPassword(io) };
-    }
-
     if (target === "cloudflare") {
       const domain = flags.domain
         ?? (flags.yes ? "" : await ask(io, "Custom domain? (blank for a workers.dev URL)", ""));
@@ -304,42 +296,49 @@ export async function collectAnswers(
       };
       port = 3001;
       volume = "demolocker";
-      return { mode, target, storage: null, s3: null, cloudflare, port, volume, url: null, signup, dryRun: flags.dryRun };
-    }
+    } else {
+      storage = await resolve<(typeof STORAGES)[number]>(flags.storage, flags.yes, () =>
+        select(io, "Where should audio files live?", [
+          { value: "local", label: "Local disk (inside the data volume — simplest, back up one folder)" },
+          { value: "s3", label: "S3-compatible bucket (R2, B2, MinIO, AWS)" },
+        ], "local"), "local");
 
-    storage = await resolve<(typeof STORAGES)[number]>(flags.storage, flags.yes, () =>
-      select(io, "Where should audio files live?", [
-        { value: "local", label: "Local disk (inside the data volume — simplest, back up one folder)" },
-        { value: "s3", label: "S3-compatible bucket (R2, B2, MinIO, AWS)" },
-      ], "local"), "local");
-
-    if (storage === "s3") {
-      const need = async (flag: string | undefined, name: string, q: string, def?: string) => {
-        if (flag !== undefined) return flag;
-        if (flags.yes) {
-          if (def !== undefined) return def;
-          throw new Error(`--storage s3 with --yes requires --${name}`);
-        }
-        return ask(io, q, def);
-      };
-      s3 = {
-        endpoint: await need(flags.s3Endpoint, "s3-endpoint", "S3 endpoint URL?"),
-        accessKey: await need(flags.s3AccessKey, "s3-access-key", "S3 access key?"),
-        secretKey: await need(flags.s3SecretKey, "s3-secret-key", "S3 secret key?"),
-        bucket: await need(flags.s3Bucket, "s3-bucket", "Bucket name?", "demos"),
-        region: await need(flags.s3Region, "s3-region", "Region?", "auto"),
-      };
-    }
-
-    if (target === "docker") {
-      if (flags.port !== undefined) {
-        port = parsePort(flags.port);
-      } else if (flags.yes) {
-        port = 3001;
-      } else {
-        port = await askPort(io, "3001");
+      if (storage === "s3") {
+        const need = async (flag: string | undefined, name: string, q: string, def?: string) => {
+          if (flag !== undefined) return flag;
+          if (flags.yes) {
+            if (def !== undefined) return def;
+            throw new Error(`--storage s3 with --yes requires --${name}`);
+          }
+          return ask(io, q, def);
+        };
+        s3 = {
+          endpoint: await need(flags.s3Endpoint, "s3-endpoint", "S3 endpoint URL?"),
+          accessKey: await need(flags.s3AccessKey, "s3-access-key", "S3 access key?"),
+          secretKey: await need(flags.s3SecretKey, "s3-secret-key", "S3 secret key?"),
+          bucket: await need(flags.s3Bucket, "s3-bucket", "Bucket name?", "demos"),
+          region: await need(flags.s3Region, "s3-region", "Region?", "auto"),
+        };
       }
-      volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
+
+      if (target === "docker") {
+        if (flags.port !== undefined) {
+          port = parsePort(flags.port);
+        } else if (flags.yes) {
+          port = 3001;
+        } else {
+          port = await askPort(io, "3001");
+        }
+        volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
+      }
+    }
+
+    if (flags.email && flags.password) {
+      validatePassword(flags.password);
+      signup = { email: flags.email, password: flags.password };
+    } else if (!flags.yes) {
+      const email = await ask(io, "Create the first account now? Email (empty to skip):", "");
+      if (email) signup = { email, password: await askPassword(io) };
     }
   }
 

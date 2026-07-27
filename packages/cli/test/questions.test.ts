@@ -132,14 +132,14 @@ describe("collectAnswers", () => {
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
     write("2\n"); // target: docker
-    await waitForOutput(read, "Create the first account now?");
-    write("\n"); // email: empty → skip signup
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
     write("\n"); // port: default 3001
     await waitForOutput(read, "Docker volume name");
     write("\n"); // volume: default demolocker
+    await waitForOutput(read, "Create the first account now?");
+    write("\n"); // email: empty → skip signup
 
     const a = await p;
     expect(a.mode).toBe("instance");
@@ -167,8 +167,6 @@ describe("collectAnswers", () => {
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
     write("2\n"); // target: docker
-    await waitForOutput(read, "Create the first account now?");
-    write("\n"); // email: empty → skip signup
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
@@ -177,9 +175,37 @@ describe("collectAnswers", () => {
     write("8080\n"); // valid port
     await waitForOutput(read, "Docker volume name");
     write("\n"); // volume: default demolocker
+    await waitForOutput(read, "Create the first account now?");
+    write("\n"); // email: empty → skip signup
 
     const a = await p;
     expect(a.port).toBe(8080);
+  });
+
+  it("pins the docker interactive prompt order (mode, target, storage, port, volume, signup)", async () => {
+    const { io, write, read } = fakeIO();
+    const flags = parseFlags([]);
+    const p = collectAnswers(flags, io, "empty");
+
+    const order: string[] = [];
+    const markers = [
+      "What do you need?",
+      "Where will it run?",
+      "Where should audio files live?",
+      "Host port?",
+      "Docker volume name",
+      "Create the first account now?",
+    ];
+    const answers = ["1\n", "2\n", "1\n", "\n", "\n", "\n"];
+
+    for (let i = 0; i < markers.length; i++) {
+      await waitForOutput(read, markers[i]);
+      order.push(markers[i]);
+      write(answers[i]);
+    }
+
+    await p;
+    expect(order).toEqual(markers);
   });
 });
 

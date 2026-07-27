@@ -68,4 +68,8 @@ jobs:
           head -1 packages/cli/dist/cli.js | grep -q '^#!/usr/bin/env node' || {
             echo "dist/cli.js missing shebang" >&2; exit 1;
           }
+      # The tarball ships a prebuilt Worker, web app and D1 migrations so the
+      # cloudflare target never runs a build on the user's machine.
+      - name: Build deployable assets
+        run: bash packages/cli/scripts/build-assets.sh
       - run: npm publish --provenance --access public -w packages/cli

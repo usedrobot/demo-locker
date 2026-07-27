@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPlan, renderPlan } from "../src/plan.js";
+import { buildPlan, renderPlan, ASSETS_DIR } from "../src/plan.js";
 import type { Answers } from "../src/questions.js";
 
 const base: Answers = {
@@ -100,17 +100,27 @@ const cfBase: Answers = {
 };
 
 describe("buildPlan cloudflare", () => {
-  it("emits create, capture, write, migrate, deploy in order", () => {
+  it("emits copy, create, capture, write, migrate, deploy in order", () => {
     const p = buildPlan(cfBase);
     expect(p.steps.map((s) => s.kind)).toEqual([
-      "note", "run", "run-capture", "run", "write", "run", "run",
+      "copy", "note", "run", "run-capture", "run", "write", "run", "run",
     ]);
+  });
+
+  it("unpacks the packaged deployable into the same dir the config is written to", () => {
+    const p = buildPlan(cfBase);
+    const copy = p.steps.find((s) => s.kind === "copy")!;
+    expect(copy.to).toBe(ASSETS_DIR);
+    expect(copy.from).toMatch(/assets$/);
   });
 
   it("warns about the R2 billing requirement before provisioning anything", () => {
     const p = buildPlan(cfBase);
-    expect(p.steps[0]).toMatchObject({ kind: "note" });
-    expect((p.steps[0] as { text: string }).text).toMatch(/billing/i);
+    const kinds = p.steps.map((s) => s.kind);
+    const firstNote = kinds.indexOf("note");
+    expect(firstNote).toBeGreaterThanOrEqual(0);
+    expect(firstNote).toBeLessThan(kinds.indexOf("run"));
+    expect((p.steps[firstNote] as { text: string }).text).toMatch(/billing/i);
   });
 
   it("captures the database id from d1 create", () => {

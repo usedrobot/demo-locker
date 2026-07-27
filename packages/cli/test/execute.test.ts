@@ -16,6 +16,9 @@ function fakeRunner(overrides: Partial<Runner> = {}): Runner & { calls: string[]
     writeFile: vi.fn(async (path: string) => {
       calls.push(`write ${path}`);
     }),
+    copyDir: vi.fn(async (from: string, to: string) => {
+      calls.push(`copy ${from} -> ${to}`);
+    }),
     fetchFn: vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
     sleep: async () => {},
     ...overrides,
@@ -168,6 +171,44 @@ describe("executePlan", () => {
   });
 });
 
+describe("copy step", () => {
+  const copyPlan: DeployPlan = {
+    steps: [
+      { kind: "copy", title: "Unpack Demo Locker", from: "/pkg/assets", to: "demo-locker" },
+      { kind: "write", title: "Write wrangler.jsonc", path: "demo-locker/wrangler.jsonc", contents: "{}" },
+    ],
+    healthUrl: null,
+    appUrl: null,
+  };
+
+  it("unpacks the assets before writing the config into that directory", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner();
+    const code = await executePlan(copyPlan, null, io, r);
+    expect(code).toBe(0);
+    expect(r.calls).toEqual([
+      "copy /pkg/assets -> demo-locker",
+      "write demo-locker/wrangler.jsonc",
+    ]);
+    expect(read()).toContain("Unpack Demo Locker");
+  });
+
+  it("stops with a hint when the packaged assets are missing", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner({
+      copyDir: async () => {
+        throw new Error("ENOENT: no such file or directory, lstat '/pkg/assets'");
+      },
+    });
+    const code = await executePlan(copyPlan, null, io, r);
+    expect(code).toBe(1);
+    expect(read()).toContain("ENOENT");
+    expect(read()).toContain("build:assets");
+    // The config must not be written into a directory that was never unpacked.
+    expect(r.calls).not.toContain("write demo-locker/wrangler.jsonc");
+  });
+});
+
 describe("run-capture", () => {
   it("captures a uuid from stdout and substitutes it into a later write", async () => {
     const { io, read } = fakeIO();
@@ -181,6 +222,7 @@ describe("run-capture", () => {
       writeFile: async (p, c) => { written[p] = c; },
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
+      copyDir: async () => {},
     };
 
     const code = await executePlan(
@@ -225,6 +267,7 @@ describe("run-capture", () => {
       writeFile: async (p, c) => { written[p] = c; },
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
+      copyDir: async () => {},
     };
 
     const code = await executePlan(
@@ -251,6 +294,7 @@ describe("run-capture", () => {
       writeFile: async () => {},
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
+      copyDir: async () => {},
     };
     const code = await executePlan(
       {
@@ -275,6 +319,7 @@ describe("run-capture", () => {
       writeFile: async () => {},
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
+      copyDir: async () => {},
     };
 
     const code = await executePlan(

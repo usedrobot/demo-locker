@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFile as fsWriteFile } from "node:fs/promises";
+import { cp, writeFile as fsWriteFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import type { IO } from "./main.js";
 import type { DeployPlan } from "./plan.js";
@@ -8,6 +8,7 @@ export interface Runner {
   exec(cmd: string, args: string[]): Promise<number>;
   execCapture(cmd: string, args: string[]): Promise<{ code: number; stdout: string }>;
   writeFile(path: string, contents: string): Promise<void>;
+  copyDir(from: string, to: string): Promise<void>;
   fetchFn: typeof fetch;
   sleep(ms: number): Promise<void>;
 }
@@ -41,6 +42,7 @@ export function defaultRunner(_io: IO): Runner {
         child.on("close", (code) => resolve({ code: code ?? 1, stdout }));
       }),
     writeFile: (path, contents) => fsWriteFile(path, contents),
+    copyDir: (from, to) => cp(from, to, { recursive: true }),
     fetchFn: fetch,
     sleep: (ms) => delay(ms),
   };
@@ -129,6 +131,21 @@ export async function executePlan(
         return 1;
       }
       captured.set(step.capture, id);
+      continue;
+    }
+    if (step.kind === "copy") {
+      try {
+        await runner.copyDir(step.from, step.to);
+      } catch (err) {
+        io.output.write(`✗ step failed: ${step.title}\n`);
+        io.output.write(`  ${err instanceof Error ? err.message : String(err)}\n`);
+        io.output.write(
+          `  hint: the packaged deployable is missing from this install of demo-locker.` +
+          ` Re-run with npx demo-locker@latest; if you are running from a source checkout,` +
+          ` build it first: npm run build:assets -w packages/cli\n`,
+        );
+        return 1;
+      }
       continue;
     }
     if (step.kind === "write") {

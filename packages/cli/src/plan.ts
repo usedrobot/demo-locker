@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Answers } from "./questions.js";
 
 export const IMAGE = "ghcr.io/usedrobot/demo-locker:latest";
@@ -6,6 +8,7 @@ export type Step =
   | { kind: "run"; title: string; cmd: string; args: string[] }
   | { kind: "run-capture"; title: string; cmd: string; args: string[]; capture: string }
   | { kind: "write"; title: string; path: string; contents: string }
+  | { kind: "copy"; title: string; from: string; to: string }
   | { kind: "note"; text: string };
 
 export interface DeployPlan {
@@ -14,7 +17,17 @@ export interface DeployPlan {
   appUrl: string | null;
 }
 
+/** Directory the deployable is unpacked into, relative to the user's cwd. */
 export const ASSETS_DIR = "demo-locker";
+
+/**
+ * The prebuilt deployable shipped inside the npm tarball: worker.js, public/,
+ * and migrations/. Built by scripts/build-assets.sh. Resolved from this
+ * module's own location — at runtime that is dist/plan.js, so the assets sit
+ * one level up at <package>/assets. Resolving a path is not filesystem access,
+ * so buildPlan stays pure.
+ */
+const PACKAGED_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
 const API_PATHS = [
   "/health",
@@ -110,6 +123,12 @@ export function buildPlan(a: Answers): DeployPlan {
       return {
         steps: [
           {
+            kind: "copy",
+            title: `Unpack Demo Locker (worker, web app, migrations) into ${ASSETS_DIR}/`,
+            from: PACKAGED_ASSETS,
+            to: ASSETS_DIR,
+          },
+          {
             kind: "note",
             text: "R2 storage needs billing enabled on your Cloudflare account. The free tier still applies, but a card must be on file — otherwise bucket creation fails below.",
           },
@@ -168,6 +187,7 @@ export function renderPlan(p: DeployPlan): string {
       return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
     }
     if (s.kind === "write") return `write ${s.path}`;
+    if (s.kind === "copy") return `copy ${s.from} → ${s.to}`;
     return `# ${s.text}`;
   });
   if (p.healthUrl) lines.push(`then wait for ${p.healthUrl}`);

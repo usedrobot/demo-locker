@@ -52,7 +52,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "docker", "--storage", "local", "--yes", "--dry-run"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("docker run -d");
@@ -67,7 +67,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "docker", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(exec).toHaveBeenCalledTimes(2); // volume create + docker run
@@ -81,7 +81,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "player", "--url", "https://demos.fldl.space", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("https://demos.fldl.space/embed.js");
@@ -94,7 +94,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "docker", "--url", "https://x", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(1);
     expect(read()).toContain("--url");
@@ -110,7 +110,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "both", "--target", "cloudflare", "--yes"],
       io,
-      { runner: { exec, execCapture, writeFile, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("--mode player --url");
@@ -133,7 +133,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "cloudflare", "--yes"],
       io,
-      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     // There is no knowable URL yet, so no health poll and no signup POST — but
@@ -155,7 +155,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "cloudflare", "--domain", "demos.example.com", "--yes"],
       io,
-      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("Your Demo Locker: https://demos.example.com");
@@ -168,7 +168,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "player", "--url", "https://demos.fldl.space", "--yes", "--dry-run"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(exec).not.toHaveBeenCalled();

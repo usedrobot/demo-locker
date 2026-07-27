@@ -84,7 +84,7 @@ describe("main end-to-end (non-interactive)", () => {
     const dir = mkdtempSync(join(tmpdir(), "dle-"));
     const exec = vi.fn(async () => 0);
     const execCapture = vi.fn(async () => ({ code: 0, stdout: "database_id = \"1b4e28ba-2fa1-11d2-883f-0016d3cca427\"\n" }));
-    const writeFile = vi.fn(async () => {});
+    const writeFile = vi.fn(async (_path: string, _contents: string) => {});
     const code = await main(
       ["--mode", "both", "--target", "cloudflare", "--yes"],
       io,
@@ -92,6 +92,11 @@ describe("main end-to-end (non-interactive)", () => {
     );
     expect(code).toBe(0);
     expect(read()).toContain("--mode player --url");
+    expect(writeFile).toHaveBeenCalledWith(
+      "demo-locker/wrangler.jsonc",
+      expect.stringContaining("1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
+    );
+    expect(writeFile.mock.calls[0][1]).not.toContain("__DATABASE_ID__");
   });
 
   it("player-only-with-url + --dry-run never execs and exits 0", async () => {

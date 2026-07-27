@@ -99,16 +99,27 @@ describe("buildPlan cloudflare", () => {
     const write = p.steps.find((s): s is Extract<typeof p.steps[number], { kind: "write" }> => s.kind === "write")!;
     expect(write.path).toBe("demo-locker/wrangler.jsonc");
     const cfg = JSON.parse(write.contents);
+    expect(cfg.main).toBe("worker.js");
+    expect(cfg.compatibility_flags).toEqual(["nodejs_compat"]);
     expect(cfg.d1_databases[0]).toMatchObject({
       binding: "DB", database_name: "demo-locker-db", database_id: "__DATABASE_ID__",
+      migrations_dir: "migrations",
     });
     expect(cfg.r2_buckets[0]).toMatchObject({
       binding: "DEMOS_BUCKET", bucket_name: "demo-locker-demos",
     });
     expect(cfg.assets.directory).toBe("public");
     expect(cfg.assets.not_found_handling).toBe("single-page-application");
-    expect(cfg.assets.run_worker_first).toContain("/health");
+    expect(cfg.assets.run_worker_first).toEqual([
+      "/health", "/auth/*", "/playlists/*", "/comments/*", "/shares/*", "/tracks/*", "/public/v1/*",
+    ]);
     expect(cfg.routes).toBeUndefined();
+
+    const runs = p.steps.filter((s): s is Extract<typeof p.steps[number], { kind: "run" }> => s.kind === "run");
+    const migrate = runs.find((s) => s.args.includes("migrations"))!;
+    const deploy = runs.find((s) => s.args.includes("deploy"))!;
+    expect(migrate.args.slice(migrate.args.indexOf("--config"))).toEqual(["--config", "demo-locker/wrangler.jsonc"]);
+    expect(deploy.args.slice(deploy.args.indexOf("--config"))).toEqual(["--config", "demo-locker/wrangler.jsonc"]);
   });
 
   it("adds a custom_domain route when a domain is given", () => {

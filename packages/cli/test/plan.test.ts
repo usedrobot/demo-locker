@@ -76,6 +76,17 @@ describe("buildPlan cloudflare target is recognized", () => {
   });
 });
 
+describe("buildPlan refuses to silently do nothing", () => {
+  it("throws rather than returning an empty plan when cloudflare answers are missing", () => {
+    expect(() => buildPlan({ ...base, target: "cloudflare", cloudflare: null }))
+      .toThrow(/cloudflare/);
+  });
+
+  it("throws when there is no target at all", () => {
+    expect(() => buildPlan({ ...base, target: null })).toThrow(/no deploy target/);
+  });
+});
+
 const cfBase: Answers = {
   ...base,
   target: "cloudflare",

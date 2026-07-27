@@ -101,7 +101,11 @@ export function buildPlan(a: Answers): DeployPlan {
     }
     case "cloudflare": {
       const cf = a.cloudflare;
-      if (!cf) return { steps: [], healthUrl: null, appUrl: null };
+      if (!cf) {
+        // A zero-step plan would make the wizard report success having deployed
+        // nothing. collectAnswers always fills this in for the cloudflare target.
+        throw new Error("internal error: --target cloudflare reached buildPlan with no cloudflare answers");
+      }
       const appUrl = cf.domain ? `https://${cf.domain}` : null;
       return {
         steps: [
@@ -141,8 +145,14 @@ export function buildPlan(a: Answers): DeployPlan {
         healthUrl: a.url ? `${a.url.replace(/\/$/, "")}/health` : null,
         appUrl: a.url,
       };
-    default:
-      return { steps: [], healthUrl: null, appUrl: a.url };
+    case null:
+      // The player-only-with-url path never reaches buildPlan (see main.ts);
+      // anything else that gets here has no target and nothing to deploy.
+      throw new Error("no deploy target — pass --target, or use --mode player --url <instance-url>");
+    default: {
+      const _exhaustive: never = a.target;
+      throw new Error(`unhandled target: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -154,8 +164,9 @@ function redactEnvArg(arg: string): string {
 
 export function renderPlan(p: DeployPlan): string {
   const lines = p.steps.map((s) => {
-    if (s.kind === "run") return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
-    if (s.kind === "run-capture") return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
+    if (s.kind === "run" || s.kind === "run-capture") {
+      return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
+    }
     if (s.kind === "write") return `write ${s.path}`;
     return `# ${s.text}`;
   });

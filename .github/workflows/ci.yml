@@ -18,6 +18,11 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm run lint
+      # The npm tarball ships a prebuilt Worker, web app and D1 migrations. That
+      # build only otherwise runs at release time, so a break in it would first
+      # surface as a failed publish — run it on every PR instead. Its own guards
+      # assert the worker bundle, the web entry document and the migration SQL.
+      - run: bash packages/cli/scripts/build-assets.sh
 
   test:
     runs-on: ubuntu-latest

@@ -25,7 +25,7 @@ describe("setupPlayer", () => {
     const { io, read } = fakeIO();
     const exec = vi.fn(async () => 0);
     const code = await setupPlayer("https://demos.fldl.space", dir, io, {
-      exec, writeFile: async () => {}, fetchFn: fetch, sleep: async () => {},
+      exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {},
     });
     expect(code).toBe(0);
     expect(exec).toHaveBeenCalledWith("npm", ["install", "@demo-locker/player"]);
@@ -37,7 +37,7 @@ describe("setupPlayer", () => {
     const { io, read } = fakeIO();
     const exec = vi.fn(async () => 0);
     const code = await setupPlayer("https://demos.fldl.space", dir, io, {
-      exec, writeFile: async () => {}, fetchFn: fetch, sleep: async () => {},
+      exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {},
     });
     expect(code).toBe(0);
     expect(exec).not.toHaveBeenCalled();

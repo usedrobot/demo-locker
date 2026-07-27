@@ -1,10 +1,14 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Answers } from "./questions.js";
 
 export const IMAGE = "ghcr.io/usedrobot/demo-locker:latest";
 
 export type Step =
   | { kind: "run"; title: string; cmd: string; args: string[] }
+  | { kind: "run-capture"; title: string; cmd: string; args: string[]; capture: string }
   | { kind: "write"; title: string; path: string; contents: string }
+  | { kind: "copy"; title: string; from: string; to: string }
   | { kind: "note"; text: string };
 
 export interface DeployPlan {
@@ -13,28 +17,70 @@ export interface DeployPlan {
   appUrl: string | null;
 }
 
-const FLY_TOML = `# Fly.io deploy for the Demo Locker standalone image.
-app = "demo-locker"
-primary_region = "mia"
+/** Directory the deployable is unpacked into, relative to the user's cwd. */
+export const ASSETS_DIR = "demo-locker";
 
-[build]
-  image = "${IMAGE}"
+/**
+ * The prebuilt deployable shipped inside the npm tarball: worker.js, public/,
+ * and migrations/. Built by scripts/build-assets.sh. Resolved from this
+ * module's own location — at runtime that is dist/plan.js, so the assets sit
+ * one level up at <package>/assets. Resolving a path is not filesystem access,
+ * so buildPlan stays pure.
+ */
+const PACKAGED_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
-[mounts]
-  source = "data"
-  destination = "/data"
+const API_PATHS = [
+  "/health",
+  "/auth/*",
+  "/playlists/*",
+  "/comments/*",
+  "/shares/*",
+  "/tracks/*",
+  "/public/v1/*",
+];
 
-[http_service]
-  internal_port = 3001
-  force_https = true
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
+function wranglerConfig(cf: NonNullable<Answers["cloudflare"]>): string {
+  const config: Record<string, unknown> = {
+    name: cf.workerName,
+    main: "worker.js",
+    compatibility_date: "2024-12-01",
+    compatibility_flags: ["nodejs_compat"],
+    d1_databases: [
+      {
+        binding: "DB",
+        database_name: cf.d1Name,
+        database_id: "__DATABASE_ID__",
+        migrations_dir: "migrations",
+      },
+    ],
+    r2_buckets: [{ binding: "DEMOS_BUCKET", bucket_name: cf.r2Bucket }],
+    assets: {
+      directory: "public",
+      not_found_handling: "single-page-application",
+      run_worker_first: API_PATHS,
+    },
+  };
+  if (cf.domain) {
+    config.routes = [{ pattern: cf.domain, custom_domain: true }];
+  }
+  return JSON.stringify(config, null, 2) + "\n";
+}
 
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
-`;
+const EXPOSE_NOTES: Step[] = [
+  { kind: "note", text: "" },
+  { kind: "note", text: "To reach this from outside the machine, pick one:" },
+  { kind: "note", text: "  cloudflared — free https on your own domain, no open ports:" },
+  { kind: "note", text: "    brew install cloudflared   # or see https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" },
+  { kind: "note", text: "    cloudflared tunnel login" },
+  { kind: "note", text: "    cloudflared tunnel create demolocker" },
+  { kind: "note", text: "    cloudflared tunnel route dns demolocker demos.example.com" },
+  { kind: "note", text: "    cloudflared tunnel run --url http://localhost:PORT demolocker" },
+  { kind: "note", text: "  caddy — if the machine already has a public IP and DNS:" },
+  { kind: "note", text: "    caddy reverse-proxy --from demos.example.com --to localhost:PORT" },
+  { kind: "note", text: "  lan only — reachable at http://<this-machine-ip>:PORT, no setup needed." },
+  { kind: "note", text: "    Note: browsers treat plain http as an insecure context, which disables" },
+  { kind: "note", text: "    clipboard and some upload features. https via one of the above avoids that." },
+];
 
 export function buildPlan(a: Answers): DeployPlan {
   switch (a.target) {
@@ -58,43 +104,74 @@ export function buildPlan(a: Answers): DeployPlan {
               "-v", `${a.volume}:/data`, "-p", `${a.port}:3001`, ...envArgs, IMAGE,
             ],
           },
+          ...EXPOSE_NOTES.map((n) =>
+            n.kind === "note" ? { ...n, text: n.text.replaceAll("PORT", String(a.port)) } : n,
+          ),
         ],
         healthUrl: `${appUrl}/health`,
         appUrl,
       };
     }
-    case "fly":
+    case "cloudflare": {
+      const cf = a.cloudflare;
+      if (!cf) {
+        // A zero-step plan would make the wizard report success having deployed
+        // nothing. collectAnswers always fills this in for the cloudflare target.
+        throw new Error("internal error: --target cloudflare reached buildPlan with no cloudflare answers");
+      }
+      const appUrl = cf.domain ? `https://${cf.domain}` : null;
       return {
         steps: [
-          { kind: "write", title: "Write fly.toml", path: "fly.toml", contents: FLY_TOML },
-          { kind: "run", title: "Create fly app", cmd: "fly", args: ["launch", "--copy-config", "--no-deploy"] },
-          { kind: "run", title: "Create data volume", cmd: "fly", args: ["volumes", "create", "data", "--size", "3"] },
-          { kind: "run", title: "Deploy", cmd: "fly", args: ["deploy"] },
-          { kind: "note", text: "fly prints your app URL above — open it and sign up; the first account in wins." },
+          {
+            kind: "copy",
+            title: `Unpack Demo Locker (worker, web app, migrations) into ${ASSETS_DIR}/`,
+            from: PACKAGED_ASSETS,
+            to: ASSETS_DIR,
+          },
+          {
+            kind: "note",
+            text: "R2 storage needs billing enabled on your Cloudflare account. The free tier still applies, but a card must be on file — otherwise bucket creation fails below.",
+          },
+          { kind: "run", title: "Check Cloudflare login", cmd: "wrangler", args: ["whoami"] },
+          {
+            kind: "run-capture", title: "Create D1 database", cmd: "wrangler",
+            args: ["d1", "create", cf.d1Name], capture: "DATABASE_ID",
+          },
+          {
+            kind: "run", title: "Create R2 bucket", cmd: "wrangler",
+            args: ["r2", "bucket", "create", cf.r2Bucket],
+          },
+          {
+            kind: "write", title: "Write wrangler.jsonc",
+            path: `${ASSETS_DIR}/wrangler.jsonc`, contents: wranglerConfig(cf),
+          },
+          {
+            kind: "run", title: "Apply database migrations", cmd: "wrangler",
+            args: ["d1", "migrations", "apply", cf.d1Name, "--remote", "--config", `${ASSETS_DIR}/wrangler.jsonc`],
+          },
+          {
+            kind: "run", title: "Deploy", cmd: "wrangler",
+            args: ["deploy", "--config", `${ASSETS_DIR}/wrangler.jsonc`],
+          },
         ],
-        healthUrl: null,
-        appUrl: null,
+        healthUrl: appUrl ? `${appUrl}/health` : null,
+        appUrl,
       };
-    case "railway":
-      return {
-        steps: [
-          { kind: "note", text: "Railway can't be driven headlessly from here. In the Railway dashboard:" },
-          { kind: "note", text: `1. New Project → Deploy a Docker image → ${IMAGE}` },
-          { kind: "note", text: "2. Add a volume mounted at /data" },
-          { kind: "note", text: "3. Settings → Networking → expose port 3001" },
-          { kind: "note", text: "4. Open the generated URL and sign up — first account in wins." },
-        ],
-        healthUrl: null,
-        appUrl: null,
-      };
+    }
     case "existing":
       return {
         steps: [],
         healthUrl: a.url ? `${a.url.replace(/\/$/, "")}/health` : null,
         appUrl: a.url,
       };
-    default:
-      return { steps: [], healthUrl: null, appUrl: a.url };
+    case null:
+      // The player-only-with-url path never reaches buildPlan (see main.ts);
+      // anything else that gets here has no target and nothing to deploy.
+      throw new Error("no deploy target — pass --target, or use --mode player --url <instance-url>");
+    default: {
+      const _exhaustive: never = a.target;
+      throw new Error(`unhandled target: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -106,8 +183,11 @@ function redactEnvArg(arg: string): string {
 
 export function renderPlan(p: DeployPlan): string {
   const lines = p.steps.map((s) => {
-    if (s.kind === "run") return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
+    if (s.kind === "run" || s.kind === "run-capture") {
+      return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
+    }
     if (s.kind === "write") return `write ${s.path}`;
+    if (s.kind === "copy") return `copy ${s.from} → ${s.to}`;
     return `# ${s.text}`;
   });
   if (p.healthUrl) lines.push(`then wait for ${p.healthUrl}`);

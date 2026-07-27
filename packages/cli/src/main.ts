@@ -16,13 +16,18 @@ Sets up a Demo Locker — self-hosted music streaming for demos and mixes.
 
 Options:
   --mode <instance|player|both>   what to set up
-  --target <docker|fly|railway|existing>  where the instance runs
-  --storage <local|s3>            where audio files live
+  --target <cloudflare|docker|existing>   where the instance runs
+  --storage <local|s3>            where audio files live (docker target)
   --port <n>                      host port for docker target (default 3001)
   --volume <name>                 docker volume name (default demolocker)
   --url <https://...>             existing instance URL (player/existing)
   --email <addr> --password <pw>  create the first account after boot
   --s3-endpoint --s3-bucket --s3-access-key --s3-secret-key --s3-region
+  --domain <host>                 custom domain for the cloudflare target
+                                  (omit for a workers.dev URL)
+  --worker-name <name>            cloudflare Worker name (default demo-locker)
+  --d1-name <name>                cloudflare D1 database name (default demo-locker-db)
+  --r2-bucket <name>              cloudflare R2 bucket name (default demo-locker-demos)
   --yes                           accept defaults for unanswered questions
   --dry-run                       print the deploy plan without running it
   --help, --version

@@ -68,4 +68,20 @@ jobs:
           head -1 packages/cli/dist/cli.js | grep -q '^#!/usr/bin/env node' || {
             echo "dist/cli.js missing shebang" >&2; exit 1;
           }
+      # The tarball ships a prebuilt Worker, web app and D1 migrations so the
+      # cloudflare target never runs a build on the user's machine.
+      - name: Build deployable assets
+        run: bash packages/cli/scripts/build-assets.sh
+      # Last gate before the tarball goes to third parties: the pieces the
+      # generated wrangler.jsonc references must exist and be packed. A missing
+      # web build would otherwise deploy cleanly and serve nothing.
+      - name: Verify deployable assets
+        run: |
+          test -s packages/cli/assets/worker.js
+          test -s packages/cli/assets/public/index.html
+          ls packages/cli/assets/migrations/*.sql >/dev/null
+          # No `set -o pipefail` here on purpose (GitHub runs steps as `bash -e`):
+          # grep -q exits on its first match, npm then dies with EPIPE, and under
+          # pipefail that non-zero would fail this step spuriously.
+          npm pack --dry-run -w packages/cli 2>&1 | grep -q 'assets/worker.js'
       - run: npm publish --provenance --access public -w packages/cli

@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildPlan, renderPlan } from "../src/plan.js";
+import { buildPlan, renderPlan, ASSETS_DIR } from "../src/plan.js";
 import type { Answers } from "../src/questions.js";
 
 const base: Answers = {
-  mode: "instance", target: "docker", storage: "local", s3: null,
+  mode: "instance", target: "docker", storage: "local", s3: null, cloudflare: null,
   port: 3001, volume: "demolocker", url: null, signup: null, dryRun: false,
 };
 
@@ -39,31 +39,146 @@ describe("buildPlan docker", () => {
   });
 });
 
-describe("buildPlan fly", () => {
-  it("writes fly.toml then launch/volume/deploy", () => {
-    const p = buildPlan({ ...base, target: "fly" });
-    expect(p.steps[0]).toMatchObject({ kind: "write", path: "fly.toml" });
-    const cmds = p.steps.filter((s): s is Extract<typeof p.steps[number], {kind:"run"}> => s.kind === "run").map((s) => s.args.join(" "));
-    expect(cmds).toEqual([
-      "launch --copy-config --no-deploy",
-      "volumes create data --size 3",
-      "deploy",
-    ]);
-    expect(p.steps[p.steps.length - 1]).toMatchObject({ kind: "note", text: expect.stringContaining("first account in wins") });
-    expect(p.healthUrl).toBeNull(); // app name chosen by fly launch; verify step prints instructions
+describe("docker expose guidance", () => {
+  it("prints cloudflared, caddy, and lan-only options after the run step", () => {
+    const p = buildPlan(base);
+    const notes = p.steps.filter((s): s is Extract<typeof p.steps[number], { kind: "note" }> => s.kind === "note");
+    const text = notes.map((n) => n.text).join("\n");
+    expect(text).toContain("cloudflared");
+    expect(text).toContain("caddy");
+    expect(text.toLowerCase()).toContain("lan");
+  });
+
+  it("puts the notes after the docker run step", () => {
+    const p = buildPlan(base);
+    const lastRun = p.steps.map((s) => s.kind).lastIndexOf("run");
+    const firstNote = p.steps.map((s) => s.kind).indexOf("note");
+    expect(firstNote).toBeGreaterThan(lastRun);
   });
 });
 
-describe("buildPlan railway / existing", () => {
-  it("railway emits notes only", () => {
-    const p = buildPlan({ ...base, target: "railway" });
-    expect(p.steps.every((s) => s.kind === "note")).toBe(true);
-  });
+describe("buildPlan existing", () => {
   it("existing instance emits no steps, appUrl passthrough", () => {
     const p = buildPlan({ ...base, target: "existing", url: "https://demos.fldl.space" });
     expect(p.steps).toHaveLength(0);
     expect(p.appUrl).toBe("https://demos.fldl.space");
     expect(p.healthUrl).toBe("https://demos.fldl.space/health");
+  });
+});
+
+describe("buildPlan cloudflare target is recognized", () => {
+  it("does not fall through to the empty default case", () => {
+    const p = buildPlan({
+      ...base, target: "cloudflare", storage: null, port: 3001,
+      cloudflare: { workerName: "demo-locker", d1Name: "demo-locker-db", r2Bucket: "demo-locker-demos", domain: null },
+    });
+    expect(p.steps.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildPlan refuses to silently do nothing", () => {
+  it("throws rather than returning an empty plan when cloudflare answers are missing", () => {
+    expect(() => buildPlan({ ...base, target: "cloudflare", cloudflare: null }))
+      .toThrow(/cloudflare/);
+  });
+
+  it("throws when there is no target at all", () => {
+    expect(() => buildPlan({ ...base, target: null })).toThrow(/no deploy target/);
+  });
+});
+
+const cfBase: Answers = {
+  ...base,
+  target: "cloudflare",
+  storage: null,
+  cloudflare: {
+    workerName: "demo-locker",
+    d1Name: "demo-locker-db",
+    r2Bucket: "demo-locker-demos",
+    domain: null,
+  },
+};
+
+describe("buildPlan cloudflare", () => {
+  it("emits copy, create, capture, write, migrate, deploy in order", () => {
+    const p = buildPlan(cfBase);
+    expect(p.steps.map((s) => s.kind)).toEqual([
+      "copy", "note", "run", "run-capture", "run", "write", "run", "run",
+    ]);
+  });
+
+  it("unpacks the packaged deployable into the same dir the config is written to", () => {
+    const p = buildPlan(cfBase);
+    const copy = p.steps.find((s) => s.kind === "copy")!;
+    expect(copy.to).toBe(ASSETS_DIR);
+    expect(copy.from).toMatch(/assets$/);
+  });
+
+  it("warns about the R2 billing requirement before provisioning anything", () => {
+    const p = buildPlan(cfBase);
+    const kinds = p.steps.map((s) => s.kind);
+    const firstNote = kinds.indexOf("note");
+    expect(firstNote).toBeGreaterThanOrEqual(0);
+    expect(firstNote).toBeLessThan(kinds.indexOf("run"));
+    expect((p.steps[firstNote] as { text: string }).text).toMatch(/billing/i);
+  });
+
+  it("captures the database id from d1 create", () => {
+    const p = buildPlan(cfBase);
+    const cap = p.steps.find((s) => s.kind === "run-capture")!;
+    expect(cap).toMatchObject({
+      cmd: "wrangler",
+      args: ["d1", "create", "demo-locker-db"],
+      capture: "DATABASE_ID",
+    });
+  });
+
+  it("writes a wrangler config with both bindings and the id placeholder", () => {
+    const p = buildPlan(cfBase);
+    const write = p.steps.find((s): s is Extract<typeof p.steps[number], { kind: "write" }> => s.kind === "write")!;
+    expect(write.path).toBe("demo-locker/wrangler.jsonc");
+    const cfg = JSON.parse(write.contents);
+    expect(cfg.main).toBe("worker.js");
+    expect(cfg.compatibility_flags).toEqual(["nodejs_compat"]);
+    expect(cfg.d1_databases[0]).toMatchObject({
+      binding: "DB", database_name: "demo-locker-db", database_id: "__DATABASE_ID__",
+      migrations_dir: "migrations",
+    });
+    expect(cfg.r2_buckets[0]).toMatchObject({
+      binding: "DEMOS_BUCKET", bucket_name: "demo-locker-demos",
+    });
+    expect(cfg.assets.directory).toBe("public");
+    expect(cfg.assets.not_found_handling).toBe("single-page-application");
+    expect(cfg.assets.run_worker_first).toEqual([
+      "/health", "/auth/*", "/playlists/*", "/comments/*", "/shares/*", "/tracks/*", "/public/v1/*",
+    ]);
+    expect(cfg.routes).toBeUndefined();
+
+    const runs = p.steps.filter((s): s is Extract<typeof p.steps[number], { kind: "run" }> => s.kind === "run");
+    const migrate = runs.find((s) => s.args.includes("migrations"))!;
+    const deploy = runs.find((s) => s.args.includes("deploy"))!;
+    expect(migrate.args.slice(migrate.args.indexOf("--config"))).toEqual(["--config", "demo-locker/wrangler.jsonc"]);
+    expect(deploy.args.slice(deploy.args.indexOf("--config"))).toEqual(["--config", "demo-locker/wrangler.jsonc"]);
+  });
+
+  it("adds a custom_domain route when a domain is given", () => {
+    const p = buildPlan({ ...cfBase, cloudflare: { ...cfBase.cloudflare!, domain: "demolocker.dlisok.com" } });
+    const write = p.steps.find((s): s is Extract<typeof p.steps[number], { kind: "write" }> => s.kind === "write")!;
+    const cfg = JSON.parse(write.contents);
+    expect(cfg.routes).toEqual([{ pattern: "demolocker.dlisok.com", custom_domain: true }]);
+    expect(p.appUrl).toBe("https://demolocker.dlisok.com");
+    expect(p.healthUrl).toBe("https://demolocker.dlisok.com/health");
+  });
+
+  it("has no health url without a domain, since workers.dev is not known ahead of deploy", () => {
+    const p = buildPlan(cfBase);
+    expect(p.appUrl).toBeNull();
+    expect(p.healthUrl).toBeNull();
+  });
+
+  it("never emits a secret", () => {
+    const p = buildPlan({ ...cfBase, cloudflare: { ...cfBase.cloudflare!, domain: "d.example.com" } });
+    expect(renderPlan(p)).not.toMatch(/secret|SECRET|ACCESS_KEY/);
   });
 });
 

@@ -21,21 +21,21 @@ describe("ask", () => {
 describe("select", () => {
   const choices = [
     { value: "docker", label: "Docker on this machine" },
-    { value: "fly", label: "Fly.io" },
+    { value: "cloudflare", label: "Cloudflare Workers" },
   ] as const;
 
   it("accepts a number", async () => {
     const { io, write } = fakeIO();
     const p = select(io, "Target?", [...choices], "docker");
     write("2\n");
-    expect(await p).toBe("fly");
+    expect(await p).toBe("cloudflare");
   });
 
   it("accepts the value itself", async () => {
     const { io, write } = fakeIO();
     const p = select(io, "Target?", [...choices], "docker");
-    write("fly\n");
-    expect(await p).toBe("fly");
+    write("cloudflare\n");
+    expect(await p).toBe("cloudflare");
   });
 
   it("returns default on empty input and re-asks on garbage", async () => {

@@ -59,19 +59,36 @@ a {
   width: 100%;
 }
 
-/* ascii logo */
+/* ascii art sizing
+   The wrapper is a size container so 100cqw is the exact width available to the
+   art. Deriving it from the viewport instead (100vw minus an assumed padding)
+   was wrong by ~20px, because ancestor padding isn't fixed — the art overflowed
+   on phones and got clipped. Measured glyph width for var(--font) is 0.602em;
+   0.61 leaves a little slack. --cols and --cap are set per-element below. */
+.ascii-fit {
+  container-type: inline-size;
+}
+
+.ascii-fit > .ascii-logo {
+  font-size: clamp(4px, calc(100cqw / (var(--cols) * 0.61)), var(--cap));
+}
+
 .ascii-logo {
+  --cols: 101; /* logo-art.ts ART is 101 columns wide */
+  --cap: 11px;
   color: var(--accent);
   font-family: var(--font);
-  font-size: min(11px, 1.5vw);
   line-height: 1.2;
   white-space: pre;
   overflow: hidden;
   user-select: none;
 }
 
-/* ascii page titles (playlist names) — font-size set inline, scaled to fit */
+/* ascii page titles (playlist names) — --cols is set inline per title, since it
+   depends on the rendered figlet width. Scrolls rather than clips if a title is
+   long enough to bottom out at the 4px floor. */
 .ascii-title {
+  --cap: 8px;
   color: var(--accent);
   overflow-x: auto;
 }

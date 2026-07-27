@@ -28,19 +28,22 @@ export default function AsciiText({ text }: Props) {
     .filter((line) => line.trim().length > 0)
     .map((line) => line.replace(/\s+$/, ""))
     .join("\n");
-  // Scale down so long names still fit the ~816px content column
-  // (monospace glyphs are ~0.62em wide).
+  // Publish the rendered width as --cols and let CSS size the type against the
+  // real viewport. Sizing against a hardcoded desktop column here instead meant
+  // phones got glyphs scaled for a screen four times wider, and the title
+  // overflowed sideways. CSS also re-solves this on rotate and resize for free.
   const cols = Math.max(...trimmed.split("\n").map((l) => l.length));
-  const fontSize = Math.max(4, Math.min(8, Math.floor(816 / (cols * 0.62))));
   return (
-    <pre
-      className="ascii-logo ascii-title"
-      style={{ fontSize: `${fontSize}px` }}
-      role="heading"
-      aria-level={2}
-      aria-label={text}
-    >
-      {trimmed}
-    </pre>
+    <div className="ascii-fit">
+      <pre
+        className="ascii-logo ascii-title"
+        style={{ "--cols": cols } as React.CSSProperties}
+        role="heading"
+        aria-level={2}
+        aria-label={text}
+      >
+        {trimmed}
+      </pre>
+    </div>
   );
 }

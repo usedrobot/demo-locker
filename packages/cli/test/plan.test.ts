@@ -39,6 +39,24 @@ describe("buildPlan docker", () => {
   });
 });
 
+describe("docker expose guidance", () => {
+  it("prints cloudflared, caddy, and lan-only options after the run step", () => {
+    const p = buildPlan(base);
+    const notes = p.steps.filter((s): s is Extract<typeof p.steps[number], { kind: "note" }> => s.kind === "note");
+    const text = notes.map((n) => n.text).join("\n");
+    expect(text).toContain("cloudflared");
+    expect(text).toContain("caddy");
+    expect(text.toLowerCase()).toContain("lan");
+  });
+
+  it("puts the notes after the docker run step", () => {
+    const p = buildPlan(base);
+    const lastRun = p.steps.map((s) => s.kind).lastIndexOf("run");
+    const firstNote = p.steps.map((s) => s.kind).indexOf("note");
+    expect(firstNote).toBeGreaterThan(lastRun);
+  });
+});
+
 describe("buildPlan existing", () => {
   it("existing instance emits no steps, appUrl passthrough", () => {
     const p = buildPlan({ ...base, target: "existing", url: "https://demos.fldl.space" });

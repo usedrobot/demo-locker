@@ -53,6 +53,22 @@ function wranglerConfig(cf: NonNullable<Answers["cloudflare"]>): string {
   return JSON.stringify(config, null, 2) + "\n";
 }
 
+const EXPOSE_NOTES: Step[] = [
+  { kind: "note", text: "" },
+  { kind: "note", text: "To reach this from outside the machine, pick one:" },
+  { kind: "note", text: "  cloudflared — free https on your own domain, no open ports:" },
+  { kind: "note", text: "    brew install cloudflared   # or see https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" },
+  { kind: "note", text: "    cloudflared tunnel login" },
+  { kind: "note", text: "    cloudflared tunnel create demolocker" },
+  { kind: "note", text: "    cloudflared tunnel route dns demolocker demos.example.com" },
+  { kind: "note", text: "    cloudflared tunnel run --url http://localhost:PORT demolocker" },
+  { kind: "note", text: "  caddy — if the machine already has a public IP and DNS:" },
+  { kind: "note", text: "    caddy reverse-proxy --from demos.example.com --to localhost:PORT" },
+  { kind: "note", text: "  lan only — reachable at http://<this-machine-ip>:PORT, no setup needed." },
+  { kind: "note", text: "    Note: browsers treat plain http as an insecure context, which disables" },
+  { kind: "note", text: "    clipboard and some upload features. https via one of the above avoids that." },
+];
+
 export function buildPlan(a: Answers): DeployPlan {
   switch (a.target) {
     case "docker": {
@@ -75,6 +91,9 @@ export function buildPlan(a: Answers): DeployPlan {
               "-v", `${a.volume}:/data`, "-p", `${a.port}:3001`, ...envArgs, IMAGE,
             ],
           },
+          ...EXPOSE_NOTES.map((n) =>
+            n.kind === "note" ? { ...n, text: n.text.replaceAll("PORT", String(a.port)) } : n,
+          ),
         ],
         healthUrl: `${appUrl}/health`,
         appUrl,

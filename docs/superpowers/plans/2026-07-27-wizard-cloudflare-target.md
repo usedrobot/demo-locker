@@ -38,7 +38,12 @@
 
 ---
 
-### Task 1: Prove the assets-versus-Worker routing
+### Task 1: Prove the assets-versus-Worker routing — ✅ COMPLETE 2026-07-27
+
+**Outcome: PASSED.** `run_worker_first` scoped to the seven API prefixes behaves exactly as designed —
+API paths reach the Worker, unmatched paths get the SPA index, static assets still serve. Results
+recorded in the spec (commit db98c99); the spike Worker was deleted. Task 5 should use the prefix
+list exactly as written below. Steps retained for the record.
 
 This task is a **manual spike, not code**. It de-risks the single assumption the whole target rests on. Do it first; if it fails, stop and report rather than continuing to Task 2.
 
@@ -47,7 +52,7 @@ Cloudflare serves static assets ahead of the Worker. The web app needs SPA fallb
 **Files:**
 - Create: `/tmp/dl-routing-spike/` (throwaway, deleted at the end — not in the repo)
 
-- [ ] **Step 1: Create the spike directory and a minimal Worker**
+- [x] **Step 1: Create the spike directory and a minimal Worker**
 
 ```bash
 mkdir -p /tmp/dl-routing-spike/public && cd /tmp/dl-routing-spike
@@ -66,7 +71,7 @@ cat > public/index.html <<'EOF'
 EOF
 ```
 
-- [ ] **Step 2: Write the wrangler config under test**
+- [x] **Step 2: Write the wrangler config under test**
 
 ```bash
 cat > wrangler.jsonc <<'EOF'
@@ -91,12 +96,12 @@ cat > wrangler.jsonc <<'EOF'
 EOF
 ```
 
-- [ ] **Step 3: Deploy the spike**
+- [x] **Step 3: Deploy the spike**
 
 Run: `cd /tmp/dl-routing-spike && npx wrangler deploy`
 Expected: a deploy URL like `https://dl-routing-spike.<subdomain>.workers.dev`
 
-- [ ] **Step 4: Verify the Worker wins on API paths**
+- [x] **Step 4: Verify the Worker wins on API paths**
 
 ```bash
 BASE=https://dl-routing-spike.<subdomain>.workers.dev
@@ -107,7 +112,7 @@ curl -s $BASE/tracks/abc/stream
 
 Expected: all three return the Worker's JSON (`{"worker":true,...}`), NOT `SPA INDEX`.
 
-- [ ] **Step 5: Verify SPA fallback wins on app paths**
+- [x] **Step 5: Verify SPA fallback wins on app paths**
 
 ```bash
 curl -s $BASE/
@@ -116,7 +121,7 @@ curl -s $BASE/playlist/some-id
 
 Expected: `/` returns `SPA INDEX`. Note what `/playlist/some-id` returns — it is **not** in the `run_worker_first` list, so it should also return `SPA INDEX`. If it returns the Worker JSON instead, `run_worker_first` is matching more broadly than expected; record the actual behavior.
 
-- [ ] **Step 6: Record the result and tear down**
+- [x] **Step 6: Record the result and tear down**
 
 Write the findings into the spec's "The one real technical risk" section, replacing it with what was actually observed — including the exact `run_worker_first` patterns that worked. Then:
 
@@ -125,7 +130,7 @@ cd /tmp/dl-routing-spike && npx wrangler delete --name dl-routing-spike
 rm -rf /tmp/dl-routing-spike
 ```
 
-- [ ] **Step 7: Commit the spec update**
+- [x] **Step 7: Commit the spec update**
 
 ```bash
 git add docs/superpowers/specs/2026-07-27-wizard-cloudflare-target-design.md

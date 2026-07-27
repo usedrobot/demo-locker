@@ -85,19 +85,44 @@ execCapture(cmd: string, args: string[]): Promise<{ code: number; stdout: string
 `Step` gains a `run-capture` kind carrying a parser, so `buildPlan` stays declarative and
 `executePlan` stays the only place that touches the process.
 
-### Assets-versus-Worker routing
-
-**This is the one part that needs proving before the plan is written.**
+### Assets-versus-Worker routing — PROVEN 2026-07-27
 
 Cloudflare serves static assets ahead of the Worker — `packages/api/src/index.ts:29` already documents
-this for `/embed.js`. The React app needs SPA fallback so deep links resolve, but naive SPA fallback
-returns `index.html` for *every* unmatched path, which means `/health`, `/auth/*`, `/tracks/*` and
-the rest of the Hono routes never execute.
+this for `/embed.js`. The React app needs SPA fallback so deep links resolve, and naive SPA fallback
+would return `index.html` for *every* unmatched path, meaning `/health`, `/auth/*`, `/tracks/*` and
+the rest of the Hono routes would never execute.
 
-The intended fix is `assets.run_worker_first` scoped to the API path prefixes, with
-`not_found_handling: "single-page-application"` for everything else. This must be verified on a
-throwaway Worker before the implementation plan commits to it — the failure mode is a deploy that
-looks successful and serves a completely broken app.
+`assets.run_worker_first` scoped to the API prefixes fixes this. **Verified on a throwaway Worker
+(`dl-routing-spike`, deployed and deleted 2026-07-27, wrangler 4.80.0)** with this config:
+
+```jsonc
+"assets": {
+  "directory": "public",
+  "not_found_handling": "single-page-application",
+  "run_worker_first": [
+    "/health", "/auth/*", "/playlists/*", "/comments/*",
+    "/shares/*", "/tracks/*", "/public/v1/*"
+  ]
+}
+```
+
+Observed behavior, all as intended:
+
+| Request | Served by |
+|---|---|
+| `/health`, `/auth/login`, `/playlists/x`, `/comments/1`, `/shares/z`, `/tracks/abc/stream`, `/public/v1/playlists` | Worker |
+| `/`, `/playlist/some-id`, `/settings`, `/invite/tok`, `/deeply/nested/route` | SPA `index.html` |
+| `/index.html` | Static asset |
+
+The prefix list maps one-to-one onto the `app.route()` mounts at `index.ts:63-68`, plus `/health`.
+`/embed.js` and `/openapi.json` are intentionally absent — they ship as static assets, which is what
+the assets-first comment in `index.ts` already describes.
+
+**Operational note for the wizard:** in roughly the first 30 seconds after `wrangler deploy`,
+requests intermittently returned `error code: 1042` on random paths, then resolved on their own —
+twenty consecutive requests a minute later were all 200. The wizard's health poll already retries for
+60 seconds, which absorbs this. Do not shorten that poll, and do not treat an early non-200 as a
+failed deploy.
 
 ### Docker expose step
 
@@ -144,7 +169,7 @@ Validation: `--domain` must be a bare hostname, not a URL. Passing `--domain`, `
 
 | Risk | Mitigation |
 |---|---|
-| SPA fallback swallows the API routes | Prove `run_worker_first` on a throwaway Worker before writing the plan |
+| ~~SPA fallback swallows the API routes~~ | **Closed 2026-07-27** — `run_worker_first` verified on a throwaway Worker, see above |
 | R2 requires billing enabled on the account | Detect and warn up front, before provisioning anything |
 | `wrangler d1 create` output format changes | Parse defensively, fail with the raw output shown rather than a silent bad binding |
 | CLI/app version coupling causes stale installs | Documented; revisit a GitHub release artifact if it becomes painful |

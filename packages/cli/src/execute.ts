@@ -59,6 +59,47 @@ async function waitHealthy(url: string, runner: Runner): Promise<boolean> {
   return false;
 }
 
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/**
+ * Pull the D1 database id out of `wrangler d1 create` output. Prefers an
+ * anchored match on the `database_id` field so an unrelated UUID elsewhere in
+ * the output (an account tag in a banner, say) can't bind the Worker to the
+ * wrong database. Falls back to the first UUID-shaped substring.
+ */
+function extractDatabaseId(stdout: string): string | null {
+  const anchored = new RegExp(`database_id"?\\s*[:=]\\s*"?(${UUID})`, "i").exec(stdout);
+  if (anchored) return anchored[1];
+  const loose = new RegExp(UUID, "i").exec(stdout);
+  return loose ? loose[0] : null;
+}
+
+/**
+ * A recovery hint for a step that just failed, or null. These cover the failure
+ * modes a first run actually hits: not logged in, and re-running after R2
+ * billing blocked the first attempt part-way through provisioning.
+ */
+function failureHint(cmd: string, args: string[]): string | null {
+  if (cmd === "docker" && args[0] === "run") {
+    const nameIdx = args.indexOf("--name");
+    const name = nameIdx !== -1 ? args[nameIdx + 1] : "<name>";
+    return `a container named like your volume may already exist — try: docker rm -f ${name}`;
+  }
+  if (cmd !== "wrangler") return null;
+  if (args[0] === "whoami") {
+    return "not logged in? run: wrangler login — then re-run this command";
+  }
+  if (args[0] === "d1" && args[1] === "create") {
+    const name = args[2] ?? "<name>";
+    return `if "${name}" already exists from an earlier run, either re-run with --d1-name <existing-name>, or delete it first: wrangler d1 delete ${name}`;
+  }
+  if (args[0] === "r2" && args[1] === "bucket" && args[2] === "create") {
+    const name = args[3] ?? "<name>";
+    return `R2 needs billing enabled on the account. If "${name}" already exists from an earlier run, either re-run with --r2-bucket <existing-name>, or delete it first: wrangler r2 bucket delete ${name}`;
+  }
+  return null;
+}
+
 export async function executePlan(
   plan: DeployPlan,
   signup: { email: string; password: string } | null,
@@ -76,16 +117,18 @@ export async function executePlan(
       const { code, stdout } = await runner.execCapture(step.cmd, step.args);
       if (code !== 0) {
         io.output.write(`✗ step failed (${step.cmd} exited ${code}): ${step.title}\n`);
+        const hint = failureHint(step.cmd, step.args);
+        if (hint) io.output.write(`  hint: ${hint}\n`);
         return 1;
       }
-      const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(stdout);
-      if (!uuid) {
+      const id = extractDatabaseId(stdout);
+      if (!id) {
         io.output.write(
           `✗ could not read ${step.capture} from ${step.cmd} output:\n${stdout}\n`,
         );
         return 1;
       }
-      captured.set(step.capture, uuid[0]);
+      captured.set(step.capture, id);
       continue;
     }
     if (step.kind === "write") {
@@ -99,13 +142,8 @@ export async function executePlan(
     const code = await runner.exec(step.cmd, step.args);
     if (code !== 0) {
       io.output.write(`✗ step failed (${step.cmd} exited ${code}): ${step.title}\n`);
-      if (step.cmd === "docker" && step.args[0] === "run") {
-        const nameIdx = step.args.indexOf("--name");
-        const name = nameIdx !== -1 ? step.args[nameIdx + 1] : "<name>";
-        io.output.write(
-          `  hint: a container named like your volume may already exist — try: docker rm -f ${name}\n`,
-        );
-      }
+      const hint = failureHint(step.cmd, step.args);
+      if (hint) io.output.write(`  hint: ${hint}\n`);
       return 1;
     }
   }
@@ -137,6 +175,14 @@ export async function executePlan(
   if (plan.appUrl) {
     io.output.write(`\nYour Demo Locker: ${plan.appUrl}\n`);
     if (!signup) io.output.write(`Open it and sign up — the first account in wins.\n`);
+  } else if (plan.steps.length > 0) {
+    // Deploy succeeded but the URL isn't knowable ahead of time — the cloudflare
+    // target with no custom domain. Say so rather than exiting silently.
+    io.output.write(
+      `\nDeploy finished. Your Demo Locker is at the URL printed above by the deploy step` +
+      ` (it ends in .workers.dev).\n` +
+      `Open it and sign up — the first account in wins.\n`,
+    );
   }
   return 0;
 }

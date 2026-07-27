@@ -108,6 +108,53 @@ describe("executePlan", () => {
     expect(read()).toContain("docker rm -f demolocker");
   });
 
+  it("hints at wrangler login when the whoami step fails", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner({ exec: vi.fn(async () => 1) });
+    const code = await executePlan(
+      {
+        steps: [{ kind: "run", title: "Check Cloudflare login", cmd: "wrangler", args: ["whoami"] }],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, r,
+    );
+    expect(code).toBe(1);
+    expect(read()).toContain("wrangler login");
+  });
+
+  it("hints that the bucket may already exist when r2 bucket create fails", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner({ exec: vi.fn(async () => 1) });
+    const code = await executePlan(
+      {
+        steps: [{ kind: "run", title: "Create R2 bucket", cmd: "wrangler", args: ["r2", "bucket", "create", "demo-locker-demos"] }],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, r,
+    );
+    expect(code).toBe(1);
+    expect(read()).toContain("--r2-bucket");
+    expect(read()).toContain("wrangler r2 bucket delete demo-locker-demos");
+  });
+
+  it("tells the user where to look when a plan with no known appUrl succeeds", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner();
+    const code = await executePlan(
+      {
+        steps: [{ kind: "run", title: "Deploy", cmd: "wrangler", args: ["deploy"] }],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, r,
+    );
+    expect(code).toBe(0);
+    expect(read()).toContain("workers.dev");
+    expect(read()).toContain("first account in wins");
+  });
+
   it("gives up on health after 60 attempts", async () => {
     const { io, read } = fakeIO();
     const r = fakeRunner({
@@ -151,6 +198,73 @@ describe("run-capture", () => {
     expect(code).toBe(0);
     expect(written["wrangler.jsonc"]).toBe('{"database_id":"11111111-2222-3333-4444-555555555555"}');
     expect(read()).toContain("Create D1");
+  });
+
+  it("prefers the database_id field over an unrelated uuid earlier in stdout", async () => {
+    const { io } = fakeIO();
+    const written: Record<string, string> = {};
+    // Shape of real `wrangler d1 create` output, with a banner that happens to
+    // carry an account tag ahead of the JSON block.
+    const stdout = [
+      "Account ID: 1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+      "✅ Successfully created DB 'demo-locker-db' in region ENAM",
+      "Created your new D1 database.",
+      "{",
+      '  "d1_databases": [',
+      "    {",
+      '      "binding": "demo_locker_db",',
+      '      "database_name": "demo-locker-db",',
+      '      "database_id": "0ea573b2-861c-482c-a9c7-de5335d29fa0"',
+      "    }",
+      "  ]",
+      "}",
+    ].join("\n");
+    const runner: Runner = {
+      exec: async () => 0,
+      execCapture: async () => ({ code: 0, stdout }),
+      writeFile: async (p, c) => { written[p] = c; },
+      fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
+      sleep: async () => {},
+    };
+
+    const code = await executePlan(
+      {
+        steps: [
+          { kind: "run-capture", title: "Create D1", cmd: "wrangler", args: ["d1", "create", "demo-locker-db"], capture: "DATABASE_ID" },
+          { kind: "write", title: "Write config", path: "wrangler.jsonc", contents: "__DATABASE_ID__" },
+        ],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, runner,
+    );
+
+    expect(code).toBe(0);
+    expect(written["wrangler.jsonc"]).toBe("0ea573b2-861c-482c-a9c7-de5335d29fa0");
+  });
+
+  it("hints that the database may already exist when d1 create fails", async () => {
+    const { io, read } = fakeIO();
+    const runner: Runner = {
+      exec: async () => 0,
+      execCapture: async () => ({ code: 1, stdout: "" }),
+      writeFile: async () => {},
+      fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
+      sleep: async () => {},
+    };
+    const code = await executePlan(
+      {
+        steps: [
+          { kind: "run-capture", title: "Create D1", cmd: "wrangler", args: ["d1", "create", "demo-locker-db"], capture: "DATABASE_ID" },
+        ],
+        healthUrl: null,
+        appUrl: null,
+      },
+      null, io, runner,
+    );
+    expect(code).toBe(1);
+    expect(read()).toContain("--d1-name");
+    expect(read()).toContain("wrangler d1 delete demo-locker-db");
   });
 
   it("fails with the raw output when no uuid is present", async () => {

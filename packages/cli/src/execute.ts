@@ -137,13 +137,16 @@ export async function executePlan(
       try {
         await runner.copyDir(step.from, step.to);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         io.output.write(`✗ step failed: ${step.title}\n`);
-        io.output.write(`  ${err instanceof Error ? err.message : String(err)}\n`);
-        io.output.write(
-          `  hint: the packaged deployable is missing from this install of demo-locker.` +
-          ` Re-run with npx demo-locker@latest; if you are running from a source checkout,` +
-          ` build it first: npm run build:assets -w packages/cli\n`,
-        );
+        io.output.write(`  ${message}\n`);
+        const hint = /ENOTDIR|EEXIST|not a directory/i.test(message)
+          ? `hint: "${step.to}" already exists as a file — move or delete it, then re-run.`
+          : `hint: could not read the packaged deployable at ${step.from}, or could not write` +
+            ` to "${step.to}". If this install of demo-locker is missing its assets, re-run` +
+            ` with npx demo-locker@latest; from a source checkout, build them first:` +
+            ` npm run build:assets -w packages/cli`;
+        io.output.write(`  ${hint}\n`);
         return 1;
       }
       continue;

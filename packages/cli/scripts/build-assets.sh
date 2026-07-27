@@ -15,6 +15,16 @@ OUT="$ROOT/packages/cli/assets"
 rm -rf "$OUT"
 mkdir -p "$OUT/public" "$OUT/migrations"
 
+# Player bundle FIRST — order matters, do not tidy this below the wrangler step.
+# packages/api/wrangler.jsonc points assets.directory at ../player/dist, and
+# wrangler validates that path even on --dry-run. player/dist is gitignored, so
+# on a clean CI checkout it does not exist until this runs and the dry-run
+# aborts with "the directory specified by the assets.directory field ... does
+# not exist". (.github/workflows/ci.yml's deploy-api job builds it first for the
+# same reason.)
+cd "$ROOT"
+npm run build -w packages/player
+
 # Worker bundle — pre-bundled so the user's machine never runs npm install.
 # wrangler 4.80.0 emits index.js, index.js.map and a README.md into the outdir.
 cd "$ROOT/packages/api"
@@ -42,8 +52,16 @@ cd "$ROOT"
 VITE_API_URL="" npm run build -w packages/web
 cp -R "$ROOT/packages/web/dist/." "$OUT/public/"
 
-# Player bundle and API description, served as assets.
-npm run build -w packages/player
+# `cp -R` of an empty dist exits 0, so an upstream vite outDir change would ship
+# a Worker that deploys fine and serves nothing — and not_found_handling:
+# single-page-application would mask it. Assert the entry document is really here.
+if [ ! -s "$OUT/public/index.html" ]; then
+  echo "build-assets: public/index.html missing or empty — did packages/web build?" >&2
+  ls -la "$ROOT/packages/web/dist" >&2 || true
+  exit 1
+fi
+
+# Player bundle (built above) and API description, served as assets.
 cp "$ROOT/packages/player/dist/embed.js" "$OUT/public/embed.js"
 cp "$ROOT/docs/openapi.json" "$OUT/public/openapi.json"
 

@@ -204,8 +204,22 @@ describe("copy step", () => {
     expect(code).toBe(1);
     expect(read()).toContain("ENOENT");
     expect(read()).toContain("build:assets");
+    expect(read()).not.toContain("already exists as a file");
     // The config must not be written into a directory that was never unpacked.
     expect(r.calls).not.toContain("write demo-locker/wrangler.jsonc");
+  });
+
+  it("says so when the destination already exists as a file", async () => {
+    const { io, read } = fakeIO();
+    const r = fakeRunner({
+      copyDir: async () => {
+        throw new Error("ENOTDIR: not a directory, mkdir 'demo-locker'");
+      },
+    });
+    const code = await executePlan(copyPlan, null, io, r);
+    expect(code).toBe(1);
+    expect(read()).toContain('"demo-locker" already exists as a file');
+    expect(read()).not.toContain("build:assets");
   });
 });
 

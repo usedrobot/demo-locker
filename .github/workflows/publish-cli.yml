@@ -72,4 +72,13 @@ jobs:
       # cloudflare target never runs a build on the user's machine.
       - name: Build deployable assets
         run: bash packages/cli/scripts/build-assets.sh
+      # Last gate before the tarball goes to third parties: the pieces the
+      # generated wrangler.jsonc references must exist and be packed. A missing
+      # web build would otherwise deploy cleanly and serve nothing.
+      - name: Verify deployable assets
+        run: |
+          test -s packages/cli/assets/worker.js
+          test -s packages/cli/assets/public/index.html
+          ls packages/cli/assets/migrations/*.sql >/dev/null
+          npm pack --dry-run -w packages/cli 2>&1 | grep -q 'assets/worker.js'
       - run: npm publish --provenance --access public -w packages/cli

@@ -36,15 +36,36 @@ R5. Local **value** spot-check (counts alone cannot detect value corruption —
     a timezone-shifted or unit-shifted timestamp keeps every count identical).
     Run both and confirm they match **to the second**:
 ```sh
-# Neon (psql against $DATABASE_URL)
-select created_at from users order by created_at limit 1;
+# Neon (packages/api/.dev.vars holds DATABASE_URL; this branch dropped psql/pg
+# deps entirely, so use the `postgres` package the rehearsal step just installed)
+node -e 'const u=require("fs").readFileSync("packages/api/.dev.vars","utf8").match(/^DATABASE_URL=(.+)$/m)[1].trim();
+import("postgres").then(async({default:p})=>{const s=p(u);
+console.log(await s`select created_at from users order by created_at limit 1`);await s.end()})'
 
 # D1 local
 npx wrangler d1 execute demo-locker-db --local \
   --command "select datetime(created_at/1000,'unixepoch') from users order by created_at limit 1"
 ```
     Repeat for at least one more table with a user-visible time, e.g.
-    `tracks.uploaded_at` and `shares.expires_at`.
+    `tracks.uploaded_at` (`NOT NULL`, no changes needed below) and
+    `shares.expires_at`.
+
+    **`shares.expires_at` is nullable — filter both sides.** Postgres sorts
+    NULLs *last* on `ASC`; SQLite sorts NULLs *first*. An unfiltered
+    `order by expires_at limit 1` therefore returns the earliest real expiry
+    on Neon but a blank row on D1 — a false alarm (or worse, a check an
+    operator learns to shrug off). Always add `where expires_at is not null`
+    on both sides:
+```sh
+# Neon
+node -e 'const u=require("fs").readFileSync("packages/api/.dev.vars","utf8").match(/^DATABASE_URL=(.+)$/m)[1].trim();
+import("postgres").then(async({default:p})=>{const s=p(u);
+console.log(await s`select expires_at from shares where expires_at is not null order by expires_at limit 1`);await s.end()})'
+
+# D1 local
+npx wrangler d1 execute demo-locker-db --local \
+  --command "select datetime(expires_at/1000,'unixepoch') from shares where expires_at is not null order by expires_at limit 1"
+```
     A mismatch of a whole number of hours means the export ran with a broken
     date parser — **stop**, do not proceed to the remote import.
 
@@ -69,12 +90,18 @@ R6. Only when R4 and R5 both pass, continue to the live cutover.
 npx wrangler d1 execute demo-locker-db --remote \
   --command "select datetime(created_at/1000,'unixepoch') from users order by created_at limit 1"
 ```
-   Must match the Neon `select created_at from users order by created_at limit 1`
-   to the second. Also spot-check `tracks.uploaded_at` and `shares.expires_at`.
+   Must match the Neon `users` check from R5 (same `node -e ...` command) to
+   the second. Also spot-check `tracks.uploaded_at` and, using the
+   `where expires_at is not null` filter on both sides (see R5 — Postgres
+   sorts NULLs last, SQLite sorts NULLs first), `shares.expires_at`:
+```sh
+npx wrangler d1 execute demo-locker-db --remote \
+  --command "select datetime(expires_at/1000,'unixepoch') from shares where expires_at is not null order by expires_at limit 1"
+```
 7. Merge the PR -> CI deploys the D1-backed Worker + web.
 8. Live verification: login, playback, waveform comments, listen + edit share links, /embed.js player on a public playlist.
 9. Delete the dump: `rm ~/dl-cutover-dump.sql` (contains password hashes + session tokens).
-10. Rollback window: leave Neon untouched for 7 days. Rollback = `git revert` the merge and redeploy (old Worker still speaks Neon). After 7 days with no issues: delete the Neon project and the DATABASE_URL Worker secret (`npx wrangler secret delete DATABASE_URL`), and delete `.dev.vars`.
+10. Rollback window: leave Neon untouched for 7 days. Rollback = `git revert` the merge and redeploy (old Worker still speaks Neon) — but that path only restores Neon; **anything written to D1 after cutover (new uploads, comments, shares) is lost**, since the reverted Worker never reads D1 again. Before reverting, re-freeze and export whatever landed in D1 since cutover (same `wrangler d1 execute --remote` read path used above) so post-cutover activity can be reconciled or replayed by hand afterward. After 7 days with no issues: delete the Neon project and the DATABASE_URL Worker secret (`npx wrangler secret delete DATABASE_URL`), and delete `.dev.vars`.
 
 ---
 
@@ -82,8 +109,12 @@ npx wrangler d1 execute demo-locker-db --remote \
 
 D1's HTTP API has **no client-side transaction across a batch**, so a network
 blip mid-`tracks` leaves the database half-populated. The dump emits
-`INSERT OR REPLACE INTO`, so the simplest recovery is: **wipe the app tables and
-rerun step 4 from the same dump file.** Do not hand-patch.
+`INSERT OR REPLACE INTO`, and `INSERT OR REPLACE` on a parent row fires
+`ON DELETE CASCADE` and wipes its children — so simply rerunning the dump
+against a half-populated database is **not idempotent**: a rerun that itself
+dies partway can leave *fewer* rows than the failed attempt started with.
+Wiping the app tables first is **mandatory** before any rerun, not the
+simplest of several options. Do not hand-patch.
 
 From `packages/api` (swap `--remote` for `--local` when recovering a rehearsal):
 

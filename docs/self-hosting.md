@@ -26,6 +26,15 @@ docker compose up
 
 That's it. Frontend at `:5173`, API at `:3001`.
 
+> **Upgrading from before the SQLite millisecond-timestamp change?** If you
+> ran an earlier build of this project against the same `data` volume (or
+> `packages/api/data/*.db` in a manual setup), its timestamps are stored in
+> **seconds**, but the schema now reads them as **milliseconds** — every date
+> in the app will render around 1970. Don't try to patch the old database:
+> delete it before upgrading. Docker Compose: `docker compose down -v` (removes
+> the `data` volume). Manual setup: delete `packages/api/data/*.db`. A fresh
+> database will be created and migrated automatically on next start.
+
 ### Serving beyond localhost
 
 The `web` service's static build bakes in `VITE_API_URL` at build time (it's a
@@ -137,6 +146,10 @@ docker compose up --build
 ```
 
 Migrations run automatically on API start.
+
+> **Coming from before the SQLite millisecond-timestamp change?** See the
+> warning under Quick Start above — delete your old database (`docker compose
+> down -v` or `packages/api/data/*.db`) before upgrading, don't try to patch it.
 
 ## Backups
 

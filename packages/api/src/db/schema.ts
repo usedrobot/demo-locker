@@ -7,7 +7,7 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey().$defaultFn(generateId),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -16,7 +16,7 @@ export const sessions = sqliteTable("sessions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   token: text("token").notNull().unique(),
-  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
 });
 
 export const playlists = sqliteTable("playlists", {
@@ -27,8 +27,8 @@ export const playlists = sqliteTable("playlists", {
   name: text("name").notNull(),
   artworkKey: text("artwork_key"),
   isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(now),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
 
 export const tracks = sqliteTable("tracks", {
@@ -47,7 +47,7 @@ export const tracks = sqliteTable("tracks", {
   streamKey: text("stream_key"),
   waveformData: text("waveform_data"),
   duration: real("duration"),
-  uploadedAt: integer("uploaded_at", { mode: "timestamp" }).notNull().$defaultFn(now),
+  uploadedAt: integer("uploaded_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
 
 export const comments = sqliteTable("comments", {
@@ -62,8 +62,8 @@ export const comments = sqliteTable("comments", {
   authorName: text("author_name").notNull(),
   body: text("body").notNull(),
   timestampSec: real("timestamp_sec"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
-  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
   resolvedBy: text("resolved_by").references(() => users.id),
   deleteToken: text("delete_token"),
 });
@@ -76,6 +76,6 @@ export const shares = sqliteTable("shares", {
   token: text("token").notNull().unique(),
   permission: text("permission", { enum: ["listen", "edit"] }).notNull(),
   email: text("email"),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(now),
-  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
 });

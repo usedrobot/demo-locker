@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- **Prerequisite:** `feat/sqlite-d1` must be merged to `main` before Task 6. Tasks 1–5 and 7–9 do not depend on it. The D1 migration SQL that Task 6 packages lives only on that branch.
+- **Prerequisite:** `feat/sqlite-d1` must be merged to `main` before Task 6. Tasks 1–5 and 7–9 do not depend on it. The D1 migration SQL that Task 6 packages lives only on that branch, at `packages/api/src/db/migrations/`.
+- **The `demo-locker-db` D1 database already exists** (`0ea573b2-861c-482c-a9c7-de5335d29fa0`, region ENAM), created 2026-07-27 for the reference deployment, with `0000_init` applied. The wizard creates a *separate* database per install — do not reuse this id anywhere in the CLI.
 - **Node ≥20**, ESM only. All relative imports inside `packages/cli/src` end in `.js` (TypeScript ESM convention already used throughout).
 - **Zero runtime dependencies** in `packages/cli`. `typescript` and `vitest` are the only devDependencies. Do not add any package.
 - **`wrangler` is never imported.** It is invoked as a subprocess through `Runner`, exactly as `docker` and `fly` are today.
@@ -875,10 +876,11 @@ cp -R "$ROOT/packages/web/dist/." "$OUT/public/"
 # Player bundle and API description, served as assets.
 npm run build -w packages/player
 cp "$ROOT/packages/player/dist/embed.js" "$OUT/public/embed.js"
-cp "$ROOT/packages/api/openapi.json" "$OUT/public/openapi.json"
+cp "$ROOT/docs/openapi.json" "$OUT/public/openapi.json"
 
-# D1 migrations.
-cp "$ROOT/packages/api/drizzle/"*.sql "$OUT/migrations/"
+# D1 migrations. Path matches drizzle.config.ts `out` and the migrations_dir
+# in packages/api/wrangler.jsonc.
+cp "$ROOT/packages/api/src/db/migrations/"*.sql "$OUT/migrations/"
 
 echo "assets built:"
 find "$OUT" -maxdepth 2 -type f | sed "s|$OUT|assets|"
@@ -893,7 +895,7 @@ bash packages/cli/scripts/build-assets.sh
 ```
 Expected: prints an `assets/` listing containing `assets/worker.js`, files under `assets/public/`, and at least one `.sql` under `assets/migrations/`.
 
-If `wrangler deploy --dry-run --outdir` emits a filename other than `index.js`, correct the `mv` line to match and note it in the commit message.
+The output filename is `index.js` — verified against wrangler 4.80.0 on 2026-07-27, which emits `index.js`, `index.js.map`, and a `README.md` into the outdir. If a future wrangler emits something else, correct the `mv` line and note it in the commit message.
 
 - [ ] **Step 3: Verify the worker bundle has no Node-only imports**
 

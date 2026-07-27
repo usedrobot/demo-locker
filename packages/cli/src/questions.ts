@@ -5,7 +5,7 @@ import type { IO } from "./main.js";
 import { ask, select } from "./prompts.js";
 
 const MODES = ["instance", "player", "both"] as const;
-const TARGETS = ["docker", "fly", "railway", "existing"] as const;
+const TARGETS = ["cloudflare", "docker", "existing"] as const;
 const STORAGES = ["local", "s3"] as const;
 
 export interface Flags {
@@ -225,9 +225,8 @@ export async function collectAnswers(
   if (needsInstance) {
     target = await resolve<(typeof TARGETS)[number]>(flags.target, flags.yes, () =>
       select(io, "Where will it run?", [
+        { value: "cloudflare", label: "Cloudflare (Workers + D1 + R2 — free tier, works from anywhere)" },
         { value: "docker", label: "Docker on this machine (laptop, Pi, VPS — wherever you're running this)" },
-        { value: "fly", label: "Fly.io (managed hosting, free-ish tier, needs flyctl)" },
-        { value: "railway", label: "Railway (guided instructions)" },
         { value: "existing", label: "I already have an instance running" },
       ], "docker"), "docker");
 
@@ -276,12 +275,7 @@ export async function collectAnswers(
       volume = flags.volume ?? (flags.yes ? "demolocker" : await ask(io, "Docker volume name (your music lives here)?", "demolocker"));
     }
 
-    if (target === "fly" || target === "railway") {
-      io.output.write(
-        "Note: account creation isn't automated for this target — sign up in the app after deploy.\n",
-      );
-      signup = null;
-    } else if (flags.email && flags.password) {
+    if (flags.email && flags.password) {
       validatePassword(flags.password);
       signup = { email: flags.email, password: flags.password };
     } else if (!flags.yes) {

@@ -79,12 +79,12 @@ describe("main end-to-end (non-interactive)", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("both-mode with a null-appUrl target (fly) prints guidance and exits 0 after a successful deploy", async () => {
+  it("both-mode with a null-appUrl target (cloudflare, not yet implemented) prints guidance and exits 0 after a successful deploy", async () => {
     const { io, read } = fakeIO();
     const dir = mkdtempSync(join(tmpdir(), "dle-"));
     const exec = vi.fn(async () => 0);
     const code = await main(
-      ["--mode", "both", "--target", "fly", "--yes"],
+      ["--mode", "both", "--target", "cloudflare", "--yes"],
       io,
       { runner: { exec, writeFile: async () => {}, fetchFn: fetch, sleep: async () => {} }, cwd: dir },
     );

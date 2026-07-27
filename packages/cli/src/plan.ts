@@ -13,29 +13,6 @@ export interface DeployPlan {
   appUrl: string | null;
 }
 
-const FLY_TOML = `# Fly.io deploy for the Demo Locker standalone image.
-app = "demo-locker"
-primary_region = "mia"
-
-[build]
-  image = "${IMAGE}"
-
-[mounts]
-  source = "data"
-  destination = "/data"
-
-[http_service]
-  internal_port = 3001
-  force_https = true
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
-
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
-`;
-
 export function buildPlan(a: Answers): DeployPlan {
   switch (a.target) {
     case "docker": {
@@ -63,30 +40,6 @@ export function buildPlan(a: Answers): DeployPlan {
         appUrl,
       };
     }
-    case "fly":
-      return {
-        steps: [
-          { kind: "write", title: "Write fly.toml", path: "fly.toml", contents: FLY_TOML },
-          { kind: "run", title: "Create fly app", cmd: "fly", args: ["launch", "--copy-config", "--no-deploy"] },
-          { kind: "run", title: "Create data volume", cmd: "fly", args: ["volumes", "create", "data", "--size", "3"] },
-          { kind: "run", title: "Deploy", cmd: "fly", args: ["deploy"] },
-          { kind: "note", text: "fly prints your app URL above — open it and sign up; the first account in wins." },
-        ],
-        healthUrl: null,
-        appUrl: null,
-      };
-    case "railway":
-      return {
-        steps: [
-          { kind: "note", text: "Railway can't be driven headlessly from here. In the Railway dashboard:" },
-          { kind: "note", text: `1. New Project → Deploy a Docker image → ${IMAGE}` },
-          { kind: "note", text: "2. Add a volume mounted at /data" },
-          { kind: "note", text: "3. Settings → Networking → expose port 3001" },
-          { kind: "note", text: "4. Open the generated URL and sign up — first account in wins." },
-        ],
-        healthUrl: null,
-        appUrl: null,
-      };
     case "existing":
       return {
         steps: [],

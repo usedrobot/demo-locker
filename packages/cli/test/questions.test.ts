@@ -101,15 +101,9 @@ describe("collectAnswers", () => {
     await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--url/);
   });
 
-  it("rejects --url with --target fly", async () => {
+  it("rejects --url with --target cloudflare", async () => {
     const { io } = fakeIO();
-    const flags = parseFlags(["--mode", "instance", "--target", "fly", "--url", "https://x", "--yes"]);
-    await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--url/);
-  });
-
-  it("rejects --url with --target railway", async () => {
-    const { io } = fakeIO();
-    const flags = parseFlags(["--mode", "instance", "--target", "railway", "--url", "https://x", "--yes"]);
+    const flags = parseFlags(["--mode", "instance", "--target", "cloudflare", "--url", "https://x", "--yes"]);
     await expect(collectAnswers(flags, io, "empty")).rejects.toThrow(/--url/);
   });
 
@@ -137,7 +131,7 @@ describe("collectAnswers", () => {
     await waitForOutput(read, "What do you need?");
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
-    write("1\n"); // target: docker
+    write("2\n"); // target: docker
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");
@@ -150,22 +144,6 @@ describe("collectAnswers", () => {
     const a = await p;
     expect(a.mode).toBe("instance");
     expect(a.signup).toBeNull();
-  });
-
-  it("skips signup for fly target and notes it isn't automated", async () => {
-    const { io, read } = fakeIO();
-    const flags = parseFlags(["--mode", "instance", "--target", "fly", "--email", "dl@fldl.space", "--password", "hunter22", "--yes"]);
-    const a = await collectAnswers(flags, io, "empty");
-    expect(a.signup).toBeNull();
-    expect(read()).toContain("account creation isn't automated");
-  });
-
-  it("skips signup for railway target and notes it isn't automated", async () => {
-    const { io, read } = fakeIO();
-    const flags = parseFlags(["--mode", "instance", "--target", "railway", "--yes"]);
-    const a = await collectAnswers(flags, io, "empty");
-    expect(a.signup).toBeNull();
-    expect(read()).toContain("account creation isn't automated");
   });
 
   it("rejects a --password under 8 characters", async () => {
@@ -188,7 +166,7 @@ describe("collectAnswers", () => {
     await waitForOutput(read, "What do you need?");
     write("1\n"); // mode: instance
     await waitForOutput(read, "Where will it run?");
-    write("1\n"); // target: docker
+    write("2\n"); // target: docker
     await waitForOutput(read, "Where should audio files live?");
     write("1\n"); // storage: local
     await waitForOutput(read, "Host port?");

@@ -39,31 +39,20 @@ describe("buildPlan docker", () => {
   });
 });
 
-describe("buildPlan fly", () => {
-  it("writes fly.toml then launch/volume/deploy", () => {
-    const p = buildPlan({ ...base, target: "fly" });
-    expect(p.steps[0]).toMatchObject({ kind: "write", path: "fly.toml" });
-    const cmds = p.steps.filter((s): s is Extract<typeof p.steps[number], {kind:"run"}> => s.kind === "run").map((s) => s.args.join(" "));
-    expect(cmds).toEqual([
-      "launch --copy-config --no-deploy",
-      "volumes create data --size 3",
-      "deploy",
-    ]);
-    expect(p.steps[p.steps.length - 1]).toMatchObject({ kind: "note", text: expect.stringContaining("first account in wins") });
-    expect(p.healthUrl).toBeNull(); // app name chosen by fly launch; verify step prints instructions
-  });
-});
-
-describe("buildPlan railway / existing", () => {
-  it("railway emits notes only", () => {
-    const p = buildPlan({ ...base, target: "railway" });
-    expect(p.steps.every((s) => s.kind === "note")).toBe(true);
-  });
+describe("buildPlan existing", () => {
   it("existing instance emits no steps, appUrl passthrough", () => {
     const p = buildPlan({ ...base, target: "existing", url: "https://demos.fldl.space" });
     expect(p.steps).toHaveLength(0);
     expect(p.appUrl).toBe("https://demos.fldl.space");
     expect(p.healthUrl).toBe("https://demos.fldl.space/health");
+  });
+});
+
+describe("buildPlan cloudflare target is recognized", () => {
+  it.skip("does not fall through to the empty default case", () => {
+    // unskipped in Task 5
+    const p = buildPlan({ ...base, target: "cloudflare", storage: null, port: 3001 });
+    expect(p.steps.length).toBeGreaterThan(0);
   });
 });
 

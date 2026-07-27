@@ -16,7 +16,7 @@ Sets up a Demo Locker — self-hosted music streaming for demos and mixes.
 
 Options:
   --mode <instance|player|both>   what to set up
-  --target <docker|fly|railway|existing>  where the instance runs
+  --target <cloudflare|docker|existing>  where the instance runs
   --storage <local|s3>            where audio files live
   --port <n>                      host port for docker target (default 3001)
   --volume <name>                 docker volume name (default demolocker)

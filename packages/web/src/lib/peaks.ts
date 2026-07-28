@@ -27,10 +27,6 @@ export async function decodeAudioFile(file: File): Promise<AudioBuffer> {
   }
 }
 
-export async function extractPeaks(file: File): Promise<PeaksResult> {
-  return peaksFromBuffer(await decodeAudioFile(file));
-}
-
 export function peaksFromBuffer(audioBuffer: AudioBuffer): PeaksResult {
   const channelData = audioBuffer.getChannelData(0);
   const samplesPerPeak = Math.max(1, Math.floor(channelData.length / TARGET_PEAKS));

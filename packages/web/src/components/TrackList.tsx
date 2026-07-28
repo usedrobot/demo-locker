@@ -164,7 +164,7 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
               download
               onClick={(e) => e.stopPropagation()}
               title="Download the original file"
-              aria-label={`Download ${track.title}`}
+              aria-label={`Download original file for ${track.title}`}
               style={{
                 color: "var(--fg-dim)",
                 fontFamily: "var(--font)",

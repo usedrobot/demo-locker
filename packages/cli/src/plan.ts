@@ -29,13 +29,26 @@ export const ASSETS_DIR = "demo-locker";
  */
 const PACKAGED_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
+// Every mounted API prefix needs BOTH the bare path and the wildcard.
+// `/playlists/*` does not match bare `/playlists` — verified against a real
+// Worker: with only the wildcard, `/playlists/x` reaches the Worker but
+// `/playlists` falls through to the assets layer and gets the SPA index. That
+// broke create-playlist, list-playlists and the track library on every fresh
+// Cloudflare install of 0.2.0, while every sub-path looked fine. Collection
+// endpoints live at the bare paths, so leaving one out silently breaks a verb.
 const API_PATHS = [
   "/health",
+  "/auth",
   "/auth/*",
+  "/playlists",
   "/playlists/*",
+  "/comments",
   "/comments/*",
+  "/shares",
   "/shares/*",
+  "/tracks",
   "/tracks/*",
+  "/public/v1",
   "/public/v1/*",
 ];
 

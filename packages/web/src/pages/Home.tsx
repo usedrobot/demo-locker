@@ -151,8 +151,13 @@ export default function Home({ onSelect, onLogout }: Props) {
 
   return (
     <div style={{ padding: "2rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-        <Logo />
+      <div className="page-header">
+        {/* flex:1 + minWidth:0 is load-bearing: Logo is a size container and
+            cannot size itself from its own content. Without a definite width
+            here it collapses to zero and the art disappears. */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Logo />
+        </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.5rem" }}>
           <button onClick={handleLogout} style={linkStyle}>
             [logout]

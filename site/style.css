@@ -59,8 +59,14 @@ a:focus-visible {
    fits a phone instead of clipping. Same approach as the app: 100cqw is the
    exact width available, where deriving it from the viewport minus an assumed
    padding is not. Measured glyph width for the font stack is 0.602em. */
+/* NB `container-type: inline-size` makes this element's width independent of
+   its contents, so it must never sit in a content-sized box — as a flex item it
+   would collapse to zero and take the art with it. That shipped in the app once.
+   Safe here because it's in a plain block context, but the guard is cheap. */
 .ascii-fit {
   container-type: inline-size;
+  width: 100%;
+  min-width: 0;
 }
 
 .ascii-fit > .ascii-logo {

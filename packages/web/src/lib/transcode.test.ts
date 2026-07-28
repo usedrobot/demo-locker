@@ -2,11 +2,12 @@
 // browser couldn't encode. Every impossible or broken path resolves null and
 // the caller uploads the original alone.
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { encodeToAac, STREAM_BITRATE } from "./transcode";
+import { encodeToAac, STREAM_BITRATE, CLAMP_SAMPLE_RATE } from "./transcode";
 
 const originalAudioEncoder = (globalThis as Record<string, unknown>).AudioEncoder;
 const originalAudioData = (globalThis as Record<string, unknown>).AudioData;
 const originalEncodedAudioChunk = (globalThis as Record<string, unknown>).EncodedAudioChunk;
+const originalOfflineAudioContext = (globalThis as Record<string, unknown>).OfflineAudioContext;
 
 function restoreGlobal(name: string, original: unknown) {
   if (original === undefined) {
@@ -22,6 +23,7 @@ afterEach(() => {
   restoreGlobal("AudioEncoder", originalAudioEncoder);
   restoreGlobal("AudioData", originalAudioData);
   restoreGlobal("EncodedAudioChunk", originalEncodedAudioChunk);
+  restoreGlobal("OfflineAudioContext", originalOfflineAudioContext);
 });
 
 function fakeBuffer(overrides: Partial<AudioBuffer> = {}): AudioBuffer {
@@ -136,6 +138,9 @@ describe("encodeToAac", () => {
     // has a null .buffer, and `new Blob([null], ...)` yields a 4-byte blob
     // containing the text "null" rather than MP4 box structure. A real
     // finalized MP4 starts with a box size (4 bytes) followed by "ftyp".
+    // (This byte-offset assertion holds because the muxer is configured with
+    // fastStart: "in-memory", which puts ftyp/moov up front. A different
+    // fastStart mode reorders the boxes and this check would need updating.)
     const bytes = new Uint8Array(await result!.arrayBuffer());
     const ftypTag = String.fromCharCode(...bytes.slice(4, 8));
     expect(ftypTag).toBe("ftyp");
@@ -265,5 +270,128 @@ describe("encodeToAac", () => {
 
     await expect(encodeToAac(fakeBuffer({ numberOfChannels: 0 }))).resolves.toBeNull();
     expect(constructed).toBe(false);
+  });
+});
+
+// The AudioBuffer's sampleRate is the decoding AudioContext's rate — the
+// device's, not the file's. On a 96k interface that either ships 96 kHz
+// AAC-LC (bad on older car head units) or fails isConfigSupported and
+// silently falls back to streaming the multi-Mbit original. Both silent, so
+// these tests prove the clamp rather than assert it.
+describe("encodeToAac sample-rate clamping", () => {
+  // Records the config actually handed to the platform encoder.
+  function installRecordingEncoder(seen: AudioEncoderConfig[]) {
+    installFakeCodecTypes();
+    class RecordingEncoder {
+      output: (chunk: FakeEncodedAudioChunk, meta?: unknown) => void;
+      constructor(opts: { output: (chunk: FakeEncodedAudioChunk, meta?: unknown) => void; error: (e: Error) => void }) {
+        this.output = opts.output;
+      }
+      static isConfigSupported(config: AudioEncoderConfig) {
+        // A real 96 kHz-unsupporting encoder would answer false here; the
+        // point of the clamp is that we never have to ask.
+        return Promise.resolve({ supported: config.sampleRate !== 96000 });
+      }
+      configure(config: AudioEncoderConfig) {
+        seen.push(config);
+      }
+      encode() {
+        this.output(
+          new FakeEncodedAudioChunk({ type: "key", timestamp: 0, duration: 1_000_000, byteLength: 4 }),
+          {},
+        );
+      }
+      flush() {
+        return Promise.resolve();
+      }
+      close() {}
+    }
+    (globalThis as Record<string, unknown>).AudioEncoder = RecordingEncoder;
+  }
+
+  // Stands in for OfflineAudioContext: renders "to" the requested rate by
+  // handing back a buffer that reports it.
+  function installOfflineContext(constructions: { channels: number; frames: number; rate: number }[]) {
+    class FakeOfflineAudioContext {
+      destination = {};
+      rate: number;
+      channels: number;
+      constructor(channels: number, frames: number, rate: number) {
+        this.channels = channels;
+        this.rate = rate;
+        constructions.push({ channels, frames, rate });
+      }
+      createBufferSource() {
+        return { buffer: null as AudioBuffer | null, connect() {}, start() {} };
+      }
+      startRendering() {
+        return Promise.resolve(
+          fakeBuffer({
+            sampleRate: this.rate,
+            numberOfChannels: this.channels,
+            length: this.rate,
+            getChannelData: () => new Float32Array(this.rate),
+          }),
+        );
+      }
+    }
+    (globalThis as Record<string, unknown>).OfflineAudioContext = FakeOfflineAudioContext;
+  }
+
+  it("renders a 96 kHz buffer to 48 kHz before the encoder ever sees it", async () => {
+    const seen: AudioEncoderConfig[] = [];
+    const renders: { channels: number; frames: number; rate: number }[] = [];
+    installRecordingEncoder(seen);
+    installOfflineContext(renders);
+
+    const result = await encodeToAac(
+      fakeBuffer({
+        sampleRate: 96000,
+        length: 96000 * 2,
+        duration: 2,
+        getChannelData: () => new Float32Array(96000 * 2),
+      }),
+    );
+
+    // It encoded at all — i.e. we did NOT take the isConfigSupported-says-no
+    // path that silently drops the rendition.
+    expect(result).toBeInstanceOf(Blob);
+    // And the encoder was configured at 48000, not 96000.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].sampleRate).toBe(CLAMP_SAMPLE_RATE);
+    expect(CLAMP_SAMPLE_RATE).toBe(48000);
+    // One render, at 48k, preserving the channel count.
+    expect(renders).toEqual([{ channels: 2, frames: 96000, rate: 48000 }]);
+  });
+
+  it("leaves 44.1k and 48k buffers alone — no resample pass at all", async () => {
+    for (const rate of [44100, 48000]) {
+      const seen: AudioEncoderConfig[] = [];
+      const renders: { channels: number; frames: number; rate: number }[] = [];
+      installRecordingEncoder(seen);
+      installOfflineContext(renders);
+
+      await encodeToAac(
+        fakeBuffer({ sampleRate: rate, length: rate, getChannelData: () => new Float32Array(rate) }),
+      );
+
+      expect(seen.map((c) => c.sampleRate)).toEqual([rate]);
+      expect(renders).toEqual([]);
+    }
+  });
+
+  it("falls back to the original buffer when OfflineAudioContext is missing", async () => {
+    const seen: AudioEncoderConfig[] = [];
+    installRecordingEncoder(seen);
+    Reflect.deleteProperty(globalThis, "OfflineAudioContext");
+
+    // 22.05k is unusual but supported by our fake encoder, so encoding still
+    // happens at the source rate rather than being dropped.
+    const result = await encodeToAac(
+      fakeBuffer({ sampleRate: 22050, length: 22050, getChannelData: () => new Float32Array(22050) }),
+    );
+
+    expect(result).toBeInstanceOf(Blob);
+    expect(seen[0].sampleRate).toBe(22050);
   });
 });

@@ -149,9 +149,24 @@ describe("buildPlan cloudflare", () => {
     });
     expect(cfg.assets.directory).toBe("public");
     expect(cfg.assets.not_found_handling).toBe("single-page-application");
+    // Both forms per prefix: `/playlists/*` does NOT match bare `/playlists`,
+    // so a wildcard-only list sends every collection endpoint to the SPA index.
     expect(cfg.assets.run_worker_first).toEqual([
-      "/health", "/auth/*", "/playlists/*", "/comments/*", "/shares/*", "/tracks/*", "/public/v1/*",
+      "/health",
+      "/auth", "/auth/*",
+      "/playlists", "/playlists/*",
+      "/comments", "/comments/*",
+      "/shares", "/shares/*",
+      "/tracks", "/tracks/*",
+      "/public/v1", "/public/v1/*",
     ]);
+
+    // Guard the actual invariant rather than just the literal list: every
+    // route prefix mounted in packages/api/src/index.ts must appear bare.
+    for (const prefix of ["/auth", "/playlists", "/comments", "/shares", "/tracks", "/public/v1"]) {
+      expect(cfg.assets.run_worker_first).toContain(prefix);
+      expect(cfg.assets.run_worker_first).toContain(`${prefix}/*`);
+    }
     expect(cfg.routes).toBeUndefined();
 
     const runs = p.steps.filter((s): s is Extract<typeof p.steps[number], { kind: "run" }> => s.kind === "run");

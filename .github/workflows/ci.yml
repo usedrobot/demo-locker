@@ -167,7 +167,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: cloudflare/wrangler-action@v3
+      - uses: actions/setup-node@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy site --project-name=demo-locker --branch=main
+          node-version: 22
+          cache: npm
+      # The site is static and needs no build — but wrangler has to resolve
+      # against an installed workspace. Invoking it without this fails on a
+      # peer conflict in the root package.json (`@demo-locker/api@undefined`),
+      # which is why the old deploy-web appeared to work: it installed first.
+      - run: npm install
+      - run: npx wrangler pages deploy site --project-name=demo-locker --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

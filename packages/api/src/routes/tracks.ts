@@ -149,6 +149,26 @@ tracksRouter.get("/:id/stream", async (c) => {
   );
 });
 
+// Builds an RFC 6266-compliant Content-Disposition header for an arbitrary
+// (user-controlled) filename. `Headers`/`Response` header values must be
+// valid ByteStrings — any codepoint above 0x7E throws — so a raw filename
+// with emoji, CJK, or other non-Latin1 characters (all common in uploaded
+// track titles) would crash the response entirely. Control characters (e.g.
+// a bare newline) would either throw or, if they didn't, inject extra header
+// syntax. We therefore emit BOTH parameters: an ASCII-sanitized `filename=`
+// for old clients, and an RFC 5987 percent-encoded `filename*=UTF-8''...`
+// carrying the real name for everything else.
+export function contentDispositionHeader(filename: string): string {
+  const asciiFallback =
+    filename
+      // eslint-disable-next-line no-control-regex -- deliberately stripping C0/C1 control chars
+      .replace(/[\x00-\x1f\x7f-\uffff]/g, "")
+      .replace(/["\\]/g, "")
+      .trim() || "download";
+  const encoded = encodeURIComponent(filename);
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
 // The original upload, byte-for-byte. Gated identically to /stream: the
 // streaming rendition is lossy, so this is the only way back to the master —
 // and originalKey is referenced nowhere else outside the delete path.
@@ -186,7 +206,7 @@ tracksRouter.get("/:id/download", async (c) => {
   return new Response(object.body, {
     headers: {
       "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+      "Content-Disposition": contentDispositionHeader(filename),
       "Cache-Control": "private, max-age=3600",
     },
   });

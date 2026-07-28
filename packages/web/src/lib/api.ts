@@ -229,6 +229,11 @@ export const tracks = {
     const auth = t ? `?token=${encodeURIComponent(t)}` : "";
     return `${API_URL}/tracks/${id}/stream${auth}`;
   },
+  downloadUrl: (id: string) => {
+    const t = mediaToken();
+    const auth = t ? `?token=${encodeURIComponent(t)}` : "";
+    return `${API_URL}/tracks/${id}/download${auth}`;
+  },
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),
 };

@@ -1259,7 +1259,7 @@
     "/tracks/upload": {
       "post": {
         "summary": "Upload a track",
-        "description": "Session-authenticated caller must own the target playlist. Multipart upload; stored in the demos bucket under `<playlistId>/<uuid>/<filename>`. No transcoding \u2014 the original is served directly.",
+        "description": "Session-authenticated caller must own the target playlist. Multipart upload; stored in the demos bucket under `<playlistId>/<uuid>/<filename>`. The original is stored untouched; the browser also encodes a 256k AAC rendition for streaming, stored alongside it.",
         "operationId": "uploadTrack",
         "security": [
           {

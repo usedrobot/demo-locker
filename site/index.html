@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Demo Locker — a private locker for your rough mixes</title>
+<meta name="description" content="Share unfinished mixes with your band, get comments pinned to the waveform, and keep every file. Open source, MIT, self-hosted. Ask your AI coding assistant to set it up." />
+<meta property="og:title" content="Demo Locker" />
+<meta property="og:description" content="A private locker for your rough mixes. Your band comments on the waveform. You keep the files." />
+<meta property="og:type" content="website" />
+<link rel="icon" href="/favicon.svg" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main class="wrap">
+
+  <header>
+    <div class="ascii-fit">
+      <pre class="ascii-logo" role="img" aria-label="demo locker">     █████                                      ████                    █████
+    ░░███                                      ░░███                   ░░███
+  ███████   ██████  █████████████    ██████     ░███   ██████   ██████  ░███ █████  ██████  ████████
+ ███░░███  ███░░███░░███░░███░░███  ███░░███    ░███  ███░░███ ███░░███ ░███░░███  ███░░███░░███░░███
+░███ ░███ ░███████  ░███ ░███ ░███ ░███ ░███    ░███ ░███ ░███░███ ░░░  ░██████░  ░███████  ░███ ░░░
+░███ ░███ ░███░░░   ░███ ░███ ░███ ░███ ░███    ░███ ░███ ░███░███  ███ ░███░░███ ░███░░░   ░███
+░░████████░░██████  █████░███ █████░░██████     █████░░██████ ░░██████  ████ █████░░██████  █████
+ ░░░░░░░░  ░░░░░░  ░░░░░ ░░░ ░░░░░  ░░░░░░     ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░  ░░░░░</pre>
+    </div>
+    <p class="tagline">
+      A private locker for your rough mixes. Drop in the demo, send your band the link,
+      and their notes land <em>on the waveform</em> at the second they mean.
+      You host it. You keep the files.
+    </p>
+  </header>
+
+  <section class="cta" aria-labelledby="cta-h">
+    <h2 id="cta-h" class="label">get one</h2>
+    <p class="cta-lead">You don't need a terminal. Paste this into Claude Code, Codex, or Cursor:</p>
+    <div class="prompt-box">
+      <pre id="prompt" class="prompt">Set up Demo Locker for me — read https://raw.githubusercontent.com/usedrobot/demo-locker/main/AGENTS.md and follow it.</pre>
+      <button id="copy" class="btn" type="button" data-target="prompt">[copy]</button>
+    </div>
+    <p class="cta-note">It reads the project's own setup runbook and does the rest — asking you to sign in to Cloudflare when it needs to.</p>
+  </section>
+
+  <section aria-labelledby="need-h">
+    <h2 id="need-h" class="label">what you'll need</h2>
+    <ul class="plain">
+      <li><strong>A Cloudflare account.</strong> Free tier is enough.</li>
+      <li><strong>A card on file.</strong> Cloudflare requires one to switch on R2 file storage, even though the free allowance covers a band's worth of mixes.</li>
+      <li><strong>A browser, for one click.</strong> The assistant will ask you to approve its access to your Cloudflare account.</li>
+      <li><strong>About ten minutes</strong>, most of it waiting.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="get-h">
+    <h2 id="get-h" class="label">what you get</h2>
+    <ul class="plain">
+      <li><strong>Rough mixes, streamed as you uploaded them.</strong> No transcode, no quality loss — a 24-bit WAV comes back a 24-bit WAV.</li>
+      <li><strong>Comments pinned to the waveform.</strong> "The snare at 1:42" is a marker at 1:42, not a sentence someone has to decode.</li>
+      <li><strong>Playlists you can re-order.</strong> Drag tracks around until the sequence works, then listen straight through.</li>
+      <li><strong>Private links.</strong> Send a mix to one person, revoke it later.</li>
+      <li><strong>A player you can embed anywhere.</strong> Mark a playlist public and drop it into your own site with one script tag.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="manual-h">
+    <h2 id="manual-h" class="label">or do it yourself</h2>
+    <p>If you'd rather drive:</p>
+    <div class="prompt-box">
+      <pre id="npx" class="prompt">npx demo-locker</pre>
+      <button id="copy-npx" class="btn" type="button" data-target="npx">[copy]</button>
+    </div>
+    <p class="cta-note">
+      A wizard that asks where it should run — Cloudflare, or Docker on your own machine —
+      and where your files should live, then sets it up.
+    </p>
+  </section>
+
+  <footer>
+    <p>
+      Open source, MIT.
+      <a href="https://github.com/usedrobot/demo-locker">github.com/usedrobot/demo-locker</a>
+    </p>
+    <p class="dim">
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/AGENTS.md">setup runbook</a> ·
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">hosting guide</a> ·
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/embed.md">embeddable player</a>
+    </p>
+  </footer>
+
+</main>
+<script src="/copy.js" defer></script>
+</body>
+</html>

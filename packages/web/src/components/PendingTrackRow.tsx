@@ -15,6 +15,7 @@ export default function PendingTrackRow({
 }) {
   const pct = Math.round(item.progress * 100);
   const isDecoding = item.status === "decoding";
+  const isEncoding = item.status === "encoding";
   const isUploading = item.status === "uploading";
   const isError = item.status === "error";
 
@@ -112,7 +113,20 @@ export default function PendingTrackRow({
         </span>
       )}
 
-      {!isUploading && !isDecoding && (
+      {isEncoding && (
+        <span
+          className="dots"
+          style={{
+            color: "var(--fg-dim)",
+            fontSize: "11px",
+            position: "relative",
+          }}
+        >
+          encoding
+        </span>
+      )}
+
+      {!isUploading && !isDecoding && !isEncoding && (
         <button
           onClick={onStart}
           title="Start upload"

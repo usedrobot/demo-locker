@@ -179,12 +179,14 @@ export const tracks = {
       title?: string;
       waveformData?: string;
       duration?: number;
+      stream?: Blob;
       onProgress?: (pct: number) => void;
     }
   ): Promise<{ track: Track }> =>
     new Promise((resolve, reject) => {
       const formData = new FormData();
       formData.append("file", file);
+      if (opts?.stream) formData.append("stream", opts.stream, `${file.name}.m4a`);
       if (playlistId) formData.append("playlistId", playlistId);
       if (opts?.title) formData.append("title", opts.title);
       if (opts?.waveformData) formData.append("waveformData", opts.waveformData);

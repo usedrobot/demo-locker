@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { tracks as tracksApi } from "./api";
-import { extractPeaks } from "./peaks";
+import { decodeAudioFile, peaksFromBuffer } from "./peaks";
+import { encodeToAac } from "./transcode";
 import { randomId } from "./ids";
 
 export type PendingUpload = {
@@ -8,10 +9,11 @@ export type PendingUpload = {
   file: File;
   title: string;
   progress: number; // 0..1
-  status: "decoding" | "ready" | "uploading" | "error";
+  status: "decoding" | "encoding" | "ready" | "uploading" | "error";
   error?: string;
   waveformData?: string;
   duration?: number;
+  stream?: Blob;
 };
 
 // Upload-queue state machine, shared by any page that accepts uploads.
@@ -37,20 +39,26 @@ export function useUploadQueue(playlistId: string | null, onUploaded: () => void
     }));
     setPending((prev) => [...prev, ...items]);
 
-    // decode peaks in the background so they're ready by the time the user
-    // hits [upload] — failures here are non-fatal, the upload still works
-    // without waveform data.
+    // Decode once, then derive both the waveform and the streaming rendition
+    // from the same AudioBuffer — decoding a 24MB WAV twice is pure waste.
+    // Both are optimisations: any failure still yields a working upload.
     items.forEach(async (item) => {
+      let buffer: AudioBuffer | null = null;
       try {
-        const { peaks, duration } = await extractPeaks(item.file);
+        buffer = await decodeAudioFile(item.file);
+        const { peaks, duration } = peaksFromBuffer(buffer);
         update(item.id, {
-          status: "ready",
+          status: "encoding",
           waveformData: JSON.stringify(peaks),
           duration,
         });
       } catch {
+        // undecodable in this browser — upload the original as-is
         update(item.id, { status: "ready" });
+        return;
       }
+      const stream = await encodeToAac(buffer);
+      update(item.id, { status: "ready", stream: stream ?? undefined });
     });
   }
 
@@ -63,6 +71,7 @@ export function useUploadQueue(playlistId: string | null, onUploaded: () => void
         title: item.title.trim() || undefined,
         waveformData: item.waveformData,
         duration: item.duration,
+        stream: item.stream,
         onProgress: (pct) => update(id, { progress: pct }),
       });
       remove(id);

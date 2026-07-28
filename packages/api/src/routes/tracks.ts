@@ -149,6 +149,49 @@ tracksRouter.get("/:id/stream", async (c) => {
   );
 });
 
+// The original upload, byte-for-byte. Gated identically to /stream: the
+// streaming rendition is lossy, so this is the only way back to the master —
+// and originalKey is referenced nowhere else outside the delete path.
+tracksRouter.get("/:id/download", async (c) => {
+  const trackId = c.req.param("id");
+  const db = getDb(c.env.DB);
+
+  const [track] = await db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+
+  if (!track) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  if (track.playlistId) {
+    if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
+      return c.json({ error: "not found" }, 404);
+    }
+  } else {
+    const userId = await requestSessionUserId(c);
+    if (!userId || userId !== track.ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
+  }
+
+  const object = await c.env.DEMOS_BUCKET.get(track.originalKey);
+  if (!object) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const filename = track.originalKey.split("/").pop() ?? "download";
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+});
+
 // Move a track into (or out of) a playlist. Body: { playlistId: string | null }
 tracksRouter.patch("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");

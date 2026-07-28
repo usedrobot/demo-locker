@@ -194,7 +194,10 @@ to exercise the whole path:
 ffmpeg -f lavfi -i "sine=frequency=440:duration=2" -ac 2 -ar 44100 /tmp/dl-test.wav
 ```
 
-(no ffmpeg? any small `.wav`, `.mp3` or `.flac` works — nothing is transcoded.)
+(no ffmpeg? any small `.wav`, `.mp3` or `.flac` works — the server never
+transcodes. The web app encodes a streaming rendition in the browser and posts
+it as an extra `stream` part; a curl upload just omits it, and the original is
+streamed directly.)
 
 ```bash
 TRACK_ID=$(curl -fsS -X POST "$BASE/tracks/upload" \

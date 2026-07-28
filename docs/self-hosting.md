@@ -72,19 +72,7 @@ Point `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `S3_BUCKET` at any S3
 
 Create a bucket named `demos` (or whatever you set `S3_BUCKET` to).
 
-### 2. audiowaveform (Optional)
-
-For waveform generation. If not installed, tracks will work without waveforms.
-
-```bash
-# macOS
-brew install audiowaveform
-
-# Ubuntu — build from source
-# https://github.com/bbc/audiowaveform
-```
-
-### 3. Environment
+### 2. Environment
 
 Copy `.env.example` and fill in your values:
 
@@ -101,7 +89,7 @@ S3_SECRET_KEY=your-secret
 S3_REGION=auto
 ```
 
-### 4. Run
+### 3. Run
 
 ```bash
 # install deps

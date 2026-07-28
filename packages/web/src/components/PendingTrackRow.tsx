@@ -18,6 +18,9 @@ export default function PendingTrackRow({
   const isEncoding = item.status === "encoding";
   const isUploading = item.status === "uploading";
   const isError = item.status === "error";
+  // No rendition: the browser couldn't decode or encode this one, so it will
+  // stream as-is. Say so quietly rather than looking identical to a success.
+  const noRendition = item.status === "ready" && !item.stream;
 
   return (
     <div
@@ -123,6 +126,19 @@ export default function PendingTrackRow({
           }}
         >
           encoding
+        </span>
+      )}
+
+      {noRendition && (
+        <span
+          title="No streaming rendition could be made in this browser — the file will stream at its original size."
+          style={{
+            color: "var(--fg-dim)",
+            fontSize: "11px",
+            position: "relative",
+          }}
+        >
+          will stream at full size
         </span>
       )}
 

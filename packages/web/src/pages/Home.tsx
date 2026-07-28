@@ -3,6 +3,7 @@ import {
   playlists as api,
   tracks as tracksApi,
   shares as sharesApi,
+  auth,
   type Playlist,
   type Track,
   type Share,
@@ -34,6 +35,13 @@ export default function Home({ onSelect, onLogout }: Props) {
   // bump to re-read the accent swatch color after a cycle
   const [, setAccentTick] = useState(0);
   const [showAccess, setShowAccess] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [pwDone, setPwDone] = useState(false);
+  const [pwBusy, setPwBusy] = useState(false);
   const [accessShares, setAccessShares] = useState<Share[]>([]);
 
   async function openAccess() {
@@ -170,6 +178,16 @@ export default function Home({ onSelect, onLogout }: Props) {
           </button>
           <button
             onClick={() => {
+              setShowPassword((v) => !v);
+              setPwError("");
+              setPwDone(false);
+            }}
+            style={{ ...linkStyle, color: showPassword ? "var(--accent)" : "var(--fg-dim)" }}
+          >
+            [password]
+          </button>
+          <button
+            onClick={() => {
               cycleAccent();
               setAccentTick((n) => n + 1);
             }}
@@ -186,6 +204,83 @@ export default function Home({ onSelect, onLogout }: Props) {
           />
         </div>
       </div>
+
+      {showPassword && (
+        <div style={{ marginBottom: "2rem" }}>
+          <div className="box-header">change password</div>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setPwError("");
+              setPwDone(false);
+              if (newPw.length < 8) {
+                setPwError("new password must be at least 8 characters");
+                return;
+              }
+              if (newPw !== confirmPw) {
+                setPwError("new passwords don't match");
+                return;
+              }
+              setPwBusy(true);
+              try {
+                await auth.changePassword(currentPw, newPw);
+                setPwDone(true);
+                setCurrentPw("");
+                setNewPw("");
+                setConfirmPw("");
+              } catch (err) {
+                setPwError(err instanceof Error ? err.message : "failed");
+              } finally {
+                setPwBusy(false);
+              }
+            }}
+            style={{
+              borderTop: "1px solid var(--border)",
+              paddingTop: "0.75rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
+              maxWidth: "22rem",
+            }}
+          >
+            <input
+              type="password"
+              autoComplete="current-password"
+              placeholder="current password"
+              style={fieldStyle}
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+            />
+            <input
+              type="password"
+              autoComplete="new-password"
+              placeholder="new password (8+ characters)"
+              style={fieldStyle}
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+            />
+            <input
+              type="password"
+              autoComplete="new-password"
+              placeholder="confirm new password"
+              style={fieldStyle}
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+            />
+            <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+              <button type="submit" disabled={pwBusy} style={linkStyle}>
+                {pwBusy ? "[saving...]" : "[save]"}
+              </button>
+              {pwError && <span style={{ color: "var(--error)" }}>{pwError}</span>}
+              {pwDone && (
+                <span style={{ color: "var(--fg-dim)" }}>
+                  saved — other devices signed out
+                </span>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
 
       {showAccess && (
         <div style={{ marginBottom: "2rem" }}>
@@ -428,6 +523,15 @@ function formatDuration(s: number | null): string {
   const sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
+
+const fieldStyle: React.CSSProperties = {
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  color: "var(--fg)",
+  fontFamily: "var(--font)",
+  fontSize: "14px",
+  padding: "0.5rem",
+};
 
 const linkStyle: React.CSSProperties = {
   background: "none",

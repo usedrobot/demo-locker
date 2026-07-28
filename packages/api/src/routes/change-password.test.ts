@@ -26,6 +26,14 @@ async function login(password: string): Promise<Response> {
   );
 }
 
+// Response.json() is typed `unknown` under this workspace's config, which the
+// root typecheck enforces even though vitest itself doesn't care.
+async function loginToken(password: string): Promise<string> {
+  const res = await login(password);
+  const body = (await res.json()) as { token: string };
+  return body.token;
+}
+
 async function changePassword(
   token: string,
   currentPassword: string,
@@ -77,7 +85,7 @@ describe("POST /auth/change-password", () => {
   });
 
   it("rejects a wrong current password even with a valid session", async () => {
-    const token = (await (await login(ORIGINAL)).json()).token;
+    const token = await loginToken(ORIGINAL);
     const res = await changePassword(token, "not-the-password", REPLACEMENT);
     expect(res.status).toBe(401);
     // and the real password still works
@@ -85,14 +93,14 @@ describe("POST /auth/change-password", () => {
   });
 
   it("rejects a new password under 8 characters", async () => {
-    const token = (await (await login(ORIGINAL)).json()).token;
+    const token = await loginToken(ORIGINAL);
     const res = await changePassword(token, ORIGINAL, "short");
     expect(res.status).toBe(400);
   });
 
   it("changes the password, kills other sessions, and keeps the caller's", async () => {
-    const callerToken = (await (await login(ORIGINAL)).json()).token;
-    const otherToken = (await (await login(ORIGINAL)).json()).token;
+    const callerToken = await loginToken(ORIGINAL);
+    const otherToken = await loginToken(ORIGINAL);
     expect(callerToken).not.toBe(otherToken);
 
     const res = await changePassword(callerToken, ORIGINAL, REPLACEMENT);

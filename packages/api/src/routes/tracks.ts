@@ -30,6 +30,7 @@ async function nextPosition(db: Db, playlistId: string): Promise<number> {
 tracksRouter.post("/upload", async (c) => {
   const formData = await c.req.formData();
   const file = formData.get("file") as File | null;
+  const streamFile = formData.get("stream") as File | null;
   const playlistId = formData.get("playlistId") as string | null;
   const customTitle = formData.get("title") as string | null;
   const waveformData = formData.get("waveformData") as string | null;
@@ -68,7 +69,17 @@ tracksRouter.post("/upload", async (c) => {
     httpMetadata: { contentType: file.type || "audio/mpeg" },
   });
 
-  // create track — no transcoding for now, serve original
+  // A pre-encoded streaming rendition, produced in the browser at upload time.
+  // Optional by design: if the browser couldn't decode or encode the file we
+  // store the original alone and stream it directly, exactly as before.
+  let streamKey = key;
+  if (streamFile) {
+    streamKey = `${key}.stream.m4a`;
+    await bucket.put(streamKey, streamFile.stream(), {
+      httpMetadata: { contentType: streamFile.type || "audio/mp4" },
+    });
+  }
+
   const title =
     (customTitle && customTitle.trim()) ||
     file.name.replace(/\.[^.]+$/, "");
@@ -80,7 +91,7 @@ tracksRouter.post("/upload", async (c) => {
       title,
       position,
       originalKey: key,
-      streamKey: key, // serve original directly until transcoding is added
+      streamKey,
       waveformData: waveformData || null,
       duration: duration && isFinite(duration) ? duration : null,
     })

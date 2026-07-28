@@ -22,7 +22,9 @@ export async function encodeToAac(
 ): Promise<Blob | null> {
   const Encoder = (globalThis as { AudioEncoder?: typeof AudioEncoder }).AudioEncoder;
   if (!Encoder) return null;
+  if (buffer.length === 0 || buffer.numberOfChannels === 0) return null;
 
+  let encoder: AudioEncoder | undefined;
   try {
     const numberOfChannels = Math.min(buffer.numberOfChannels, 2);
     const config: AudioEncoderConfig = {
@@ -43,8 +45,17 @@ export async function encodeToAac(
     });
 
     let failed = false;
-    const encoder = new Encoder({
-      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    encoder = new Encoder({
+      output: (chunk, meta) => {
+        try {
+          muxer.addAudioChunk(chunk, meta);
+        } catch {
+          // A dropped/corrupt chunk means the muxed output can no longer be
+          // trusted — fail the whole rendition rather than upload a
+          // truncated MP4.
+          failed = true;
+        }
+      },
       error: () => {
         failed = true;
       },
@@ -63,20 +74,24 @@ export async function encodeToAac(
           interleaved[i * numberOfChannels + ch] = data[offset + i];
         }
       }
-      encoder.encode(
-        new AudioData({
-          format: "f32",
-          sampleRate: buffer.sampleRate,
-          numberOfFrames: count,
-          numberOfChannels,
-          timestamp: Math.round((offset / buffer.sampleRate) * 1_000_000),
-          data: interleaved,
-        }),
-      );
+      const audioData = new AudioData({
+        format: "f32",
+        sampleRate: buffer.sampleRate,
+        numberOfFrames: count,
+        numberOfChannels,
+        timestamp: Math.round((offset / buffer.sampleRate) * 1_000_000),
+        data: interleaved,
+      });
+      try {
+        encoder.encode(audioData);
+      } finally {
+        // encode() copies the data it needs; release the underlying media
+        // memory immediately rather than waiting on GC.
+        audioData.close();
+      }
     }
 
     await encoder.flush();
-    encoder.close();
     if (failed) return null;
 
     muxer.finalize();
@@ -84,5 +99,11 @@ export async function encodeToAac(
   } catch {
     // Encoding is an optimisation. Never let it fail an upload.
     return null;
+  } finally {
+    try {
+      encoder?.close();
+    } catch {
+      // Chrome throws InvalidStateError closing an already-errored encoder.
+    }
   }
 }

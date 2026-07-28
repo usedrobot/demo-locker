@@ -78,6 +78,56 @@ auth.get("/me", requireAuth, async (c) => {
   return c.json({ user: c.get("user") });
 });
 
+auth.post("/change-password", requireAuth, async (c) => {
+  const { currentPassword, newPassword } = await c.req.json();
+
+  if (!currentPassword || !newPassword) {
+    return c.json({ error: "currentPassword and newPassword required" }, 400);
+  }
+  if (newPassword.length < 8) {
+    return c.json({ error: "password must be at least 8 characters" }, 400);
+  }
+
+  const db = getDb(c.env.DB);
+  const sessionUser = c.get("user");
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, sessionUser.id))
+    .limit(1);
+
+  // Require the current password even though the caller already holds a valid
+  // session: a borrowed or stolen token shouldn't be enough to lock the real
+  // owner out of their own locker.
+  if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) {
+    return c.json({ error: "current password is incorrect" }, 401);
+  }
+
+  await db
+    .update(users)
+    .set({ passwordHash: await hashPassword(newPassword) })
+    .where(eq(users.id, user.id));
+
+  // Revoke every other session — changing a password is how you get an
+  // intruder out, so any session opened with the old one has to die. The
+  // caller's own token survives so they aren't logged out of the tab they
+  // just did this in.
+  const currentToken = c.req.header("Authorization")?.replace("Bearer ", "") ?? "";
+  const existing = await db
+    .select({ token: sessions.token })
+    .from(sessions)
+    .where(eq(sessions.userId, user.id));
+
+  for (const s of existing) {
+    if (s.token !== currentToken) {
+      await db.delete(sessions).where(eq(sessions.token, s.token));
+    }
+  }
+
+  return c.json({ ok: true });
+});
+
 auth.post("/logout", requireAuth, async (c) => {
   const token = c.req.header("Authorization")?.replace("Bearer ", "");
   if (token) {

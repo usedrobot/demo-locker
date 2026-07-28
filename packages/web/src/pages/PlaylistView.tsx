@@ -107,8 +107,11 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: "1rem", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
-        <div style={{ minWidth: 0 }}>
+      <div className="playlist-header">
+        {/* flex:1 is load-bearing — AsciiText is a size container and cannot
+            size itself from its own content. minWidth:0 alone leaves this
+            column content-sized, which collapses it to zero. */}
+        <div style={{ flex: 1, minWidth: 0 }}>
           <AsciiText text={playlist.name} />
           {isOwner && (
             <button

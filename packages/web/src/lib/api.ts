@@ -84,6 +84,11 @@ export const auth = {
     ),
   me: () => request<{ user: { id: string; email: string } }>("/auth/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
 };
 
 // Playlists

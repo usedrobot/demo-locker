@@ -65,8 +65,20 @@ a {
    was wrong by ~20px, because ancestor padding isn't fixed — the art overflowed
    on phones and got clipped. Measured glyph width for var(--font) is 0.602em;
    0.61 leaves a little slack. --cols and --cap are set per-element below. */
+/* `container-type: inline-size` makes an element's width independent of its
+   contents. That means it CANNOT be used inside a content-sized box — as a
+   flex item with `flex: 0 1 auto`, there is nothing left to size it and it
+   collapses to zero, taking the art with it (font clamps to the 4px floor and
+   `overflow: hidden` hides the rest). It shipped that way and the logo vanished
+   everywhere except the login page, which is the one place it sits in a plain
+   block context.
+   So: this element always takes its width from an ancestor, never from its own
+   content, and every flex parent that holds one must give it a definite size
+   (`flex: 1` + `min-width: 0`). */
 .ascii-fit {
   container-type: inline-size;
+  width: 100%;
+  min-width: 0;
 }
 
 .ascii-fit > .ascii-logo {
@@ -212,6 +224,41 @@ button:active {
 }
 
 /* mobile player */
+/* Home header: logo on the left, account controls on the right. */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+/* Playlist header: ascii title on the left, artwork on the right. */
+.playlist-header {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+}
+
+/* On a narrow screen the sibling (account controls / artwork) takes enough of
+   the row that the ascii art can't fit even at its 4px floor, and clips. Stack
+   instead, so the art gets the full width. */
+@media (max-width: 560px) {
+  .page-header,
+  .playlist-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  .page-header > div:last-child {
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-end;
+  }
+}
+
 @media (max-width: 640px) {
   .player-inner {
     padding: 0.9rem 1rem 1rem;

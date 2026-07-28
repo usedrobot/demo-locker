@@ -29,15 +29,41 @@ bucket, provisioned by the wizard:
 
 ```bash
 npx demo-locker --mode instance --target cloudflare --yes \
-  --domain DEMOS_EXAMPLE_COM --email USER_EMAIL --password USER_PASSWORD
+  --domain DEMOS_EXAMPLE_COM --email USER_EMAIL --password USER_PASSWORD \
+  --worker-name NAME --d1-name NAME-db --r2-bucket NAME-demos
 ```
+
+**Name the resources.** The defaults are `demo-locker`, `demo-locker-db` and
+`demo-locker-demos`. If the account already has a Demo Locker — or anything else
+using those names — `wrangler d1 create` fails with "database already exists"
+partway through, after the Worker name is taken but before anything is deployed.
+Check first and pick distinct names:
+
+```bash
+npx wrangler d1 list
+npx wrangler r2 bucket list
+```
+
+Never delete or rename an existing resource to free up a default name. Something
+is probably using it.
 
 Needs `wrangler` installed and logged in (`wrangler login`), R2 billing enabled
 on the account (free tier still applies, but a card must be on file), and the
-domain to be a zone on that same account. Drop `--domain` for a `workers.dev`
-URL — but then also drop `--email`/`--password`, which the wizard rejects on
-that path: the URL isn't known until the deploy prints it, so there's nothing to
-sign up against. Open it afterwards and register; the first account in wins.
+domain to be a zone on that same account. The wizard writes the custom domain
+into the generated config and `wrangler deploy` provisions the DNS record and
+certificate — there is no manual DNS step. The hostname must be genuinely free
+first: if it already has a record (an old tunnel route, for instance), delete
+that record before deploying or the deploy cannot claim it.
+
+Drop `--domain` for a `workers.dev` URL — but then also drop
+`--email`/`--password`, which the wizard rejects on that path: the URL isn't
+known until the deploy prints it, so there's nothing to sign up against. Open it
+afterwards and register; the first account in wins.
+
+**A freshly deployed custom domain 500s for a few seconds** while the route and
+certificate propagate. The wizard's health poll retries for 60s and absorbs it.
+If you are checking by hand, retry for half a minute before concluding anything
+is wrong.
 
 Interview the human first: what hardware is on hand (old laptop / Pi / VPS /
 nothing)? public listening or band-and-friends? Then map their answers onto the
@@ -160,10 +186,20 @@ expect: `201` with `{"playlist":{"id":"…","name":"agent demo",...}}`.
 Multipart form: `file` (required), `playlistId` (required), `title`
 (optional — defaults to the filename minus extension).
 
+If you are verifying an install rather than uploading someone's real music, make
+a throwaway file rather than hunting for one — a two-second sine wave is enough
+to exercise the whole path:
+
+```bash
+ffmpeg -f lavfi -i "sine=frequency=440:duration=2" -ac 2 -ar 44100 /tmp/dl-test.wav
+```
+
+(no ffmpeg? any small `.wav`, `.mp3` or `.flac` works — nothing is transcoded.)
+
 ```bash
 TRACK_ID=$(curl -fsS -X POST "$BASE/tracks/upload" \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/path/to/track.wav;type=audio/wav" \
+  -F "file=@/tmp/dl-test.wav;type=audio/wav" \
   -F "playlistId=$PLAYLIST_ID" \
   -F "title=Agent Demo Track" | jq -re .track.id)
 ```

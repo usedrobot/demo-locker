@@ -70,7 +70,7 @@ a:focus-visible {
 }
 
 .ascii-fit > .ascii-logo {
-  --cols: 101;
+  --cols: 110;
   font-size: clamp(4px, calc(100cqw / (var(--cols) * 0.61)), 11px);
 }
 

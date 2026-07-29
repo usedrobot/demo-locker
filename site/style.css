@@ -4,14 +4,59 @@
    shared build — this page is one static file with no pipeline. If the app's
    accent or font changes, update it here too. */
 
+/* --accent has to be a registered property to be animatable: an unregistered
+   custom property has no type, so the browser can only flip it between
+   keyframes rather than interpolate through them. With a <color> syntax the
+   whole page cross-fades. */
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #fc0;
+}
+
 :root {
   --bg: #0a0a0a;
   --fg: #ffffff;
   --fg-dim: #ccc;
   --accent: #fc0;
-  --accent-dim: rgba(255, 204, 0, 0.08);
+  /* derived rather than animated alongside --accent, so the tint can never
+     drift out of step with the colour it is a tint of. */
+  --accent-dim: color-mix(in srgb, var(--accent) 8%, transparent);
   --border: #282828;
   --font: "Berkeley Mono", "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+
+  /* Every accented thing on the page reads var(--accent) — logo, links, the
+     [copy] buttons, the list markers, the prompt-box tint, ::selection — so
+     animating the one variable moves all of them in step. 6s per colour across
+     the seven accents the app ships, plus a wrap back to the first so the loop
+     has no visible seam. */
+  animation: accent-cycle 42s linear infinite;
+}
+
+/* Ordered around the hue wheel, NOT in the app's ACCENTS order. Registered
+   custom properties interpolate in sRGB, and a straight line in sRGB between
+   two near-opposite hues runs through grey — the app's order puts amber (32deg)
+   next to blue (207deg), and the logo spent a second of every loop a muddy
+   khaki. Sorted by hue the largest gap is 87deg (gold to green, through
+   yellow-green), so the cycle stays saturated the whole way round. Keep any new
+   accent in hue order for the same reason. */
+@keyframes accent-cycle {
+  0%      { --accent: #f80; } /*  32deg amber  */
+  14.286% { --accent: #fc0; } /*  48deg gold   */
+  28.571% { --accent: #3f6; } /* 135deg green  */
+  42.857% { --accent: #6cf; } /* 200deg cyan   */
+  57.143% { --accent: #4af; } /* 207deg blue   */
+  71.429% { --accent: #a6f; } /* 267deg purple */
+  85.714% { --accent: #f6a; } /* 333deg pink   */
+  100%    { --accent: #f80; }
+}
+
+/* A page-wide colour cycle with no off switch is exactly what this query is
+   for. Holding the initial gold leaves every accent rule working untouched. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    animation: none;
+  }
 }
 
 * {
@@ -228,10 +273,6 @@ footer {
   margin-top: 4rem;
   padding-top: 1.25rem;
   border-top: 1px solid var(--border);
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
 }
 
 .colophon {
@@ -253,18 +294,6 @@ footer {
 .icon-link:focus-visible {
   color: var(--fg);
   border-bottom: none;
-}
-
-/* same 16px accent square as the app's toolbar, same job — click it to change
-   the accent. Sized in px rather than em so it matches the app exactly. */
-.accent-swatch {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  background: var(--accent);
-  border: 1px solid var(--border);
-  padding: 0;
-  cursor: pointer;
 }
 
 @media (max-width: 640px) {

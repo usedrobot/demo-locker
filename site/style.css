@@ -87,7 +87,6 @@ a:focus-visible {
   margin-top: 1.75rem;
   font-size: 15px;
   line-height: 1.7;
-  max-width: 60ch;
 }
 
 .tagline em {
@@ -110,14 +109,99 @@ section {
   margin-bottom: 1.25rem;
 }
 
+ul.plain {
+  list-style: none;
+}
+
+ul.plain > li {
+  padding: 0.35rem 0;
+}
+
+/* the either/or under the recommendation — indented, dimmed, dashes in the
+   accent so it reads as a nested aside. */
+ul.sub {
+  list-style: none;
+  margin-top: 0.35rem;
+  color: var(--fg-dim);
+}
+
+ul.sub li {
+  padding-left: 1.5rem;
+  text-indent: -1.5rem;
+}
+
+ul.sub li::before {
+  content: "- ";
+  color: var(--accent);
+}
+
+ul.plain strong {
+  color: var(--accent);
+  font-weight: normal;
+}
+
 .cta-lead {
+  color: var(--fg-dim);
   margin-bottom: 0.9rem;
 }
 
-.cta-note {
-  margin-top: 0.9rem;
+/* the hinge between the two ways in — reads as a second lead-in to the box
+   below it, so it matches .cta-lead rather than sitting centred between them. */
+.or {
   color: var(--fg-dim);
-  max-width: 62ch;
+  margin: 1.75rem 0 0.9rem;
+}
+
+/* Screenshot strip — one row that scrolls sideways. On a phone that IS the
+   swipe; on a trackpad it's a two-finger push. scroll-snap makes it land on a
+   shot instead of halfway between two.
+   The strip is allowed to bleed to the viewport edges via negative margins so
+   the next shot is visibly cut off — the cue that there's more to swipe to. */
+.shots {
+  /* bleed out to the wrap's padding edge, then pad back in by the same amount,
+     so the first card lines up with the text while a later one is visibly cut
+     off. Expressed against the wrap's own inset rather than 50vw on purpose:
+     vw includes the classic scrollbar and % does not, so the vw version
+     overhangs the page by half a scrollbar and adds a horizontal scrollbar. */
+  margin-inline: -1.625rem;
+  overflow: hidden;
+}
+
+.shot-strip {
+  list-style: none;
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 0 1.625rem 0.5rem;
+  /* must match the inline padding. Without it, `scroll-snap-align: start`
+     snaps the first card to the scrollport edge and the browser scrolls the
+     padding away on load, so the strip starts flush left instead of lining up
+     with the text column. scroll-padding moves the snap line inward to match. */
+  scroll-padding-inline: 1.625rem;
+}
+
+.shot-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.shot {
+  flex: 0 0 min(520px, 82%);
+  scroll-snap-align: start;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+}
+
+.shot-cap {
+  margin-top: 0.6rem;
+  color: var(--fg-dim);
 }
 
 /* the copyable prompt — the main event on this page */
@@ -164,34 +248,47 @@ section {
   color: var(--fg);
 }
 
-ul.plain {
-  list-style: none;
-}
-
-ul.plain li {
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--border);
-  max-width: 68ch;
-}
-
-ul.plain li:last-child {
-  border-bottom: none;
-}
-
-ul.plain strong {
-  color: var(--accent);
-  font-weight: normal;
-}
-
 footer {
   margin-top: 4rem;
   padding-top: 1.25rem;
   border-top: 1px solid var(--border);
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.dim {
-  color: var(--fg-dim);
-  margin-top: 0.4rem;
+.colophon {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* the icon is the whole link, so it gets no underline rule — the hover cue is
+   the color flip instead. line-height:0 keeps the svg from riding above the
+   text baseline it sits next to. */
+.icon-link {
+  border-bottom: none;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+
+.icon-link:hover,
+.icon-link:focus-visible {
+  color: var(--fg);
+  border-bottom: none;
+}
+
+/* same 16px accent square as the app's toolbar, same job — click it to change
+   the accent. Sized in px rather than em so it matches the app exactly. */
+.accent-swatch {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  background: var(--accent);
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
 }
 
 @media (max-width: 640px) {
@@ -203,5 +300,13 @@ footer {
   }
   .prompt-box {
     gap: 0.75rem;
+  }
+  /* .wrap drops to a 1rem inset here, so the bleed and pad-back follow it. */
+  .shots {
+    margin-inline: -1rem;
+  }
+  .shot-strip {
+    padding-inline: 1rem;
+    scroll-padding-inline: 1rem;
   }
 }

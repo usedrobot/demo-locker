@@ -156,21 +156,12 @@ ul.plain strong {
    two were showing the same UI a second and third time, so they earned their
    removal rather than a carousel to hide them in. */
 .shot {
-  margin: 3rem auto 0;
-  max-width: 620px;
-}
-
-.shot img {
   display: block;
+  margin: 3rem auto 0;
   width: 100%;
+  max-width: 620px;
   height: auto;
   border: 1px solid var(--border);
-}
-
-.shot figcaption {
-  margin-top: 0.6rem;
-  color: var(--fg-dim);
-  text-align: center;
 }
 
 /* the copyable prompt — the main event on this page */

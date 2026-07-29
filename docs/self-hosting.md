@@ -13,7 +13,11 @@ building from source, use the standalone image and see
 ## Requirements
 
 - **Docker** + **Docker Compose** (recommended)
-- Or: Node 22+, FFmpeg, and (optionally) an S3-compatible bucket
+- Or: Node 22+ and (optionally) an S3-compatible bucket
+
+No media tooling is required on the server. Uploads are encoded to a 256 kbps
+AAC streaming rendition in the browser, at upload time; the server just stores
+what it is given (and keeps the original untouched).
 
 ## Quick Start (Docker)
 
@@ -68,34 +72,7 @@ Point `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, and `S3_BUCKET` at any S3
 
 Create a bucket named `demos` (or whatever you set `S3_BUCKET` to).
 
-### 2. FFmpeg
-
-FFmpeg must be installed and on the PATH. It's used for transcoding uploads.
-
-```bash
-# macOS
-brew install ffmpeg
-
-# Ubuntu/Debian
-apt install ffmpeg
-
-# Alpine (Docker)
-apk add ffmpeg
-```
-
-### 3. audiowaveform (Optional)
-
-For waveform generation. If not installed, tracks will work without waveforms.
-
-```bash
-# macOS
-brew install audiowaveform
-
-# Ubuntu — build from source
-# https://github.com/bbc/audiowaveform
-```
-
-### 4. Environment
+### 2. Environment
 
 Copy `.env.example` and fill in your values:
 
@@ -112,7 +89,7 @@ S3_SECRET_KEY=your-secret
 S3_REGION=auto
 ```
 
-### 5. Run
+### 3. Run
 
 ```bash
 # install deps

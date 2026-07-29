@@ -30,6 +30,7 @@ async function nextPosition(db: Db, playlistId: string): Promise<number> {
 tracksRouter.post("/upload", async (c) => {
   const formData = await c.req.formData();
   const file = formData.get("file") as File | null;
+  const streamFile = formData.get("stream") as File | null;
   const playlistId = formData.get("playlistId") as string | null;
   const customTitle = formData.get("title") as string | null;
   const waveformData = formData.get("waveformData") as string | null;
@@ -68,7 +69,17 @@ tracksRouter.post("/upload", async (c) => {
     httpMetadata: { contentType: file.type || "audio/mpeg" },
   });
 
-  // create track — no transcoding for now, serve original
+  // A pre-encoded streaming rendition, produced in the browser at upload time.
+  // Optional by design: if the browser couldn't decode or encode the file we
+  // store the original alone and stream it directly, exactly as before.
+  let streamKey = key;
+  if (streamFile) {
+    streamKey = `${key}.stream.m4a`;
+    await bucket.put(streamKey, streamFile.stream(), {
+      httpMetadata: { contentType: streamFile.type || "audio/mp4" },
+    });
+  }
+
   const title =
     (customTitle && customTitle.trim()) ||
     file.name.replace(/\.[^.]+$/, "");
@@ -80,7 +91,7 @@ tracksRouter.post("/upload", async (c) => {
       title,
       position,
       originalKey: key,
-      streamKey: key, // serve original directly until transcoding is added
+      streamKey,
       waveformData: waveformData || null,
       duration: duration && isFinite(duration) ? duration : null,
     })
@@ -136,6 +147,69 @@ tracksRouter.get("/:id/stream", async (c) => {
     track.streamKey,
     "private, max-age=3600"
   );
+});
+
+// Builds an RFC 6266-compliant Content-Disposition header for an arbitrary
+// (user-controlled) filename. `Headers`/`Response` header values must be
+// valid ByteStrings — any codepoint above 0x7E throws — so a raw filename
+// with emoji, CJK, or other non-Latin1 characters (all common in uploaded
+// track titles) would crash the response entirely. Control characters (e.g.
+// a bare newline) would either throw or, if they didn't, inject extra header
+// syntax. We therefore emit BOTH parameters: an ASCII-sanitized `filename=`
+// for old clients, and an RFC 5987 percent-encoded `filename*=UTF-8''...`
+// carrying the real name for everything else.
+export function contentDispositionHeader(filename: string): string {
+  const asciiFallback =
+    filename
+      // eslint-disable-next-line no-control-regex -- deliberately stripping C0/C1 control chars
+      .replace(/[\x00-\x1f\x7f-\uffff]/g, "")
+      .replace(/["\\]/g, "")
+      .trim() || "download";
+  const encoded = encodeURIComponent(filename);
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
+// The original upload, byte-for-byte. Gated identically to /stream: the
+// streaming rendition is lossy, so this is the only way back to the master —
+// and originalKey is referenced nowhere else outside the delete path.
+tracksRouter.get("/:id/download", async (c) => {
+  const trackId = c.req.param("id");
+  const db = getDb(c.env.DB);
+
+  const [track] = await db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+
+  if (!track) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  if (track.playlistId) {
+    if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
+      return c.json({ error: "not found" }, 404);
+    }
+  } else {
+    const userId = await requestSessionUserId(c);
+    if (!userId || userId !== track.ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
+  }
+
+  const object = await c.env.DEMOS_BUCKET.get(track.originalKey);
+  if (!object) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const filename = track.originalKey.split("/").pop() ?? "download";
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
+      "Content-Disposition": contentDispositionHeader(filename),
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
 });
 
 // Move a track into (or out of) a playlist. Body: { playlistId: string | null }

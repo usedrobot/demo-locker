@@ -5,7 +5,12 @@
     "moduleResolution": "bundler",
     "strict": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "noEmit": true
+    "noEmit": true,
+    // Without this, TS auto-includes every @types/* package hoisted to the
+    // root node_modules/@types, and mp4-muxer's @types/dom-webcodecs
+    // (a packages/web-only dependency) conflicts with lib.dom's own
+    // WebCodecs types. This package has no @types deps of its own.
+    "types": []
   },
   "include": ["src"]
 }

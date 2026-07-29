@@ -1259,7 +1259,7 @@
     "/tracks/upload": {
       "post": {
         "summary": "Upload a track",
-        "description": "Session-authenticated caller must own the target playlist. Multipart upload; stored in the demos bucket under `<playlistId>/<uuid>/<filename>`. No transcoding \u2014 the original is served directly.",
+        "description": "Multipart upload. With `playlistId` the caller must be able to edit that playlist (owner session or an \"edit\" share token); without it the track lands in the caller's library and a session is required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes.",
         "operationId": "uploadTrack",
         "security": [
           {
@@ -1281,7 +1281,12 @@
                   "playlistId": {
                     "type": "string",
                     "format": "uuid",
-                    "description": "Target playlist. Field name: playlistId."
+                    "description": "Optional target playlist (field name: playlistId). Omit it to upload straight into the caller's library, which requires a session."
+                  },
+                  "stream": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional pre-encoded streaming rendition (field name: stream), produced in the browser — 256 kbps AAC-LC in MP4 (audio/mp4). Stored at `<originalKey>.stream.m4a` and used as the track's streamKey. Omit it and streamKey falls back to originalKey."
                   },
                   "title": {
                     "type": "string",
@@ -1297,8 +1302,7 @@
                   }
                 },
                 "required": [
-                  "file",
-                  "playlistId"
+                  "file"
                 ]
               }
             }
@@ -1324,7 +1328,7 @@
             }
           },
           "400": {
-            "description": "Missing file or playlistId.",
+            "description": "Missing file.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1422,6 +1426,64 @@
           },
           "404": {
             "description": "Not found \u2014 private, nonexistent, or inaccessible (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tracks/{id}/download": {
+      "get": {
+        "summary": "Download the original upload",
+        "description": "Returns the original file byte-for-byte — the untouched master, not the lossy streaming rendition. Gated identically to /tracks/{id}/stream: a track in a playlist needs owner session or a valid share token; a library track (no playlist) is owner-only. Accepts the token via Bearer or the `?token=` query parameter, so a plain `<a download>` link works. Responds with `Content-Disposition: attachment` naming the stored filename — both an ASCII-sanitized `filename=` and an RFC 5987 percent-encoded `filename*=UTF-8''...` are emitted, since uploaded titles routinely contain non-Latin1 characters. Does not support Range requests.",
+        "operationId": "downloadTrack",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "tokenQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "description": "Session token OR a per-playlist share/invite token, for clients that cannot set an Authorization header.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The original file. Content-Type is whatever was stored at upload (falling back to application/octet-stream); Content-Disposition: attachment; Cache-Control: private, max-age=3600.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found — private, nonexistent, inaccessible (non-enumerable), or the stored object is missing.",
             "content": {
               "application/json": {
                 "schema": {

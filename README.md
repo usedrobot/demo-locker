@@ -79,7 +79,7 @@ Three commands. See [docs/self-hosting.md](docs/self-hosting.md) for the full gu
 | Backend | Hono |
 | Database | SQLite — D1 hosted, embedded file self-host |
 | Storage | Cloudflare R2 (any S3-compatible) |
-| Transcoding | FFmpeg |
+| Transcoding | WebCodecs in the browser (256k AAC), at upload time |
 | Style | Vanilla CSS — TUI in the browser |
 
 No axios. No Tailwind. No component library. Just the basics.
@@ -93,7 +93,7 @@ demo-locker/
 │   │   └── src/
 │   │       ├── routes/     # auth, playlists, tracks, comments, shares
 │   │       ├── db/         # Drizzle schema + migrations
-│   │       └── lib/        # auth, storage, transcoding
+│   │       └── lib/        # auth, storage, streaming responses
 │   └── web/          # React frontend
 │       └── src/
 │           ├── components/ # Player, TrackList, Waveform, Comments, etc.

@@ -158,6 +158,24 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
               {track.duration ? formatDuration(track.duration) : "--:--"}
             </span>
 
+            {/* Download the original — the stream is a lossy rendition */}
+            <a
+              href={tracksApi.downloadUrl(track.id)}
+              download
+              onClick={(e) => e.stopPropagation()}
+              title="Download the original file"
+              aria-label={`Download original file for ${track.title}`}
+              style={{
+                color: "var(--fg-dim)",
+                fontFamily: "var(--font)",
+                fontSize: "12px",
+                padding: "0 0.25rem",
+                textDecoration: "none",
+              }}
+            >
+              [↓]
+            </a>
+
             {/* Delete button */}
             {onDelete && (
               <button

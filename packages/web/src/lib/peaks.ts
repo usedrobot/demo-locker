@@ -8,7 +8,7 @@ export type PeaksResult = {
   duration: number;
 };
 
-export async function extractPeaks(file: File): Promise<PeaksResult> {
+export async function decodeAudioFile(file: File): Promise<AudioBuffer> {
   const arrayBuffer = await file.arrayBuffer();
 
   // Some browsers still gate AudioContext behind the webkit prefix
@@ -17,16 +17,17 @@ export async function extractPeaks(file: File): Promise<PeaksResult> {
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
 
   const ctx = new Ctx();
-  let audioBuffer: AudioBuffer;
   try {
-    audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+    return await ctx.decodeAudioData(arrayBuffer.slice(0));
   } finally {
     // close eagerly so we don't pile up contexts during multi-file uploads
     if (ctx.state !== "closed") {
       ctx.close().catch(() => {});
     }
   }
+}
 
+export function peaksFromBuffer(audioBuffer: AudioBuffer): PeaksResult {
   const channelData = audioBuffer.getChannelData(0);
   const samplesPerPeak = Math.max(1, Math.floor(channelData.length / TARGET_PEAKS));
   const peaks: number[] = [];

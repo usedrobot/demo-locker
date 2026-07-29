@@ -4,12 +4,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Demo Locker — a private locker for your rough mixes</title>
-<meta name="description" content="Share unfinished mixes with your band, get comments pinned to the waveform, and keep every file. Open source, MIT, self-hosted. Ask your AI coding assistant to set it up." />
+<meta name="description" content="A private locker for your rough mixes. Collaborate on track listings, add notes to mixes and playlists, and share public versions on your own site. All hosted by you. No streaming terms, no licensing, no bs, just tunes." />
 <meta property="og:title" content="Demo Locker" />
-<meta property="og:description" content="A private locker for your rough mixes. Your band comments on the waveform. You keep the files." />
+<meta property="og:description" content="A private locker for your rough mixes. All hosted by you. No streaming terms, no licensing, no bs, just tunes." />
 <meta property="og:type" content="website" />
 <link rel="icon" href="/favicon.svg" />
 <link rel="stylesheet" href="/style.css" />
+<script src="/accent.js"></script>
 </head>
 <body>
 <main class="wrap">
@@ -26,66 +27,114 @@
  ░░░░░░░░  ░░░░░░  ░░░░░ ░░░ ░░░░░  ░░░░░░     ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░  ░░░░░</pre>
     </div>
     <p class="tagline">
-      A private locker for your rough mixes. Drop in the demo, send your band the link,
-      and their notes land <em>on the waveform</em> at the second they mean.
-      You host it. You keep the files.
+      A private locker for your rough mixes. Privately collaborate on track listings,
+      add notes to mixes and playlists, and then feel free to share public versions of
+      songs on the frontend of your website. All hosted by you. No streaming terms,
+      no starting and stopping between files, no licensing, no bs, <em>just tunes</em>.
     </p>
   </header>
 
-  <section class="cta" aria-labelledby="cta-h">
-    <h2 id="cta-h" class="label">get one</h2>
-    <p class="cta-lead">You don't need a terminal. Paste this into Claude Code, Codex, or Cursor:</p>
+  <section class="cta">
+    <p class="cta-lead">Ask your agent:</p>
     <div class="prompt-box">
       <pre id="prompt" class="prompt">Set up Demo Locker for me — read https://raw.githubusercontent.com/usedrobot/demo-locker/main/AGENTS.md and follow it.</pre>
       <button id="copy" class="btn" type="button" data-target="prompt">[copy]</button>
     </div>
-    <p class="cta-note">It reads the project's own setup runbook and does the rest — asking you to sign in to Cloudflare when it needs to.</p>
-  </section>
 
-  <section aria-labelledby="need-h">
-    <h2 id="need-h" class="label">what you'll need</h2>
-    <ul class="plain">
-      <li><strong>A Cloudflare account.</strong> Free tier is enough.</li>
-      <li><strong>A card on file.</strong> Cloudflare requires one to switch on R2 file storage, even though the free allowance covers a band's worth of mixes.</li>
-      <li><strong>A browser, for one click.</strong> The assistant will ask you to approve its access to your Cloudflare account.</li>
-      <li><strong>About ten minutes</strong>, most of it waiting.</li>
-    </ul>
-  </section>
+    <p class="or">Or use our install wizard:</p>
 
-  <section aria-labelledby="get-h">
-    <h2 id="get-h" class="label">what you get</h2>
-    <ul class="plain">
-      <li><strong>Your masters, kept whole.</strong> Playback streams at 256k AAC so it holds up on a phone in a car — the same quality Spotify serves on the web. The original file is always one click away, untouched.</li>
-      <li><strong>Comments pinned to the waveform.</strong> "The snare at 1:42" is a marker at 1:42, not a sentence someone has to decode.</li>
-      <li><strong>Playlists you can re-order.</strong> Drag tracks around until the sequence works, then listen straight through.</li>
-      <li><strong>Private links.</strong> Send a mix to one person, revoke it later.</li>
-      <li><strong>A player you can embed anywhere.</strong> Mark a playlist public and drop it into your own site with one script tag.</li>
-    </ul>
-  </section>
-
-  <section aria-labelledby="manual-h">
-    <h2 id="manual-h" class="label">or do it yourself</h2>
-    <p>If you'd rather drive:</p>
     <div class="prompt-box">
       <pre id="npx" class="prompt">npx demo-locker</pre>
       <button id="copy-npx" class="btn" type="button" data-target="npx">[copy]</button>
     </div>
-    <p class="cta-note">
-      A wizard that asks where it should run — Cloudflare, or Docker on your own machine —
-      and where your files should live, then sets it up.
-    </p>
+  </section>
+
+  <!-- Screenshot strip. Plain horizontal overflow rather than a JS carousel:
+       touch swipe, trackpad swipe and keyboard scrolling all come free, and the
+       page keeps its no-build, no-dependency shape. -->
+  <section class="shots" aria-label="Screenshots">
+    <ul class="shot-strip">
+      <li class="shot">
+        <img
+          src="/img/comments.png"
+          alt="A track open in Demo Locker: three comments from Sam, Jules and Marco listed at 0:58, 2:10 and 3:05, each pinned to a marker on the waveform in the player below."
+          width="900"
+          height="857"
+          loading="lazy"
+        />
+        <p class="shot-cap">Notes land on the waveform, at the second they mean.</p>
+      </li>
+      <li class="shot">
+        <img
+          src="/img/playlist.png"
+          alt="A playlist in Demo Locker: three tracks with drag handles and download buttons, above sharing controls and a playlist comment box."
+          width="900"
+          height="857"
+          loading="lazy"
+        />
+        <p class="shot-cap">Drag the running order around until it works.</p>
+      </li>
+      <li class="shot">
+        <img
+          src="/img/library.png"
+          alt="The Demo Locker home screen: a list of playlists above a library of uploaded tracks, with the player docked at the bottom."
+          width="900"
+          height="857"
+          loading="lazy"
+        />
+        <p class="shot-cap">Your playlists, and every file you've put in.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="bring-h">
+    <h2 id="bring-h" class="label">what to bring with you</h2>
+    <ul class="plain">
+      <li>
+        <strong>We recommend one of the following:</strong>
+        <ul class="sub">
+          <li>A Cloudflare account with an R2 bucket, if you want it to live on the internet, or</li>
+          <li>an old machine or a Raspberry Pi with Docker on it, if you'd rather it live on your own shelf.</li>
+        </ul>
+      </li>
+      <li><strong>Your demos.</strong></li>
+      <li><strong>Some friends.</strong></li>
+    </ul>
   </section>
 
   <footer>
-    <p>
-      Open source, MIT.
-      <a href="https://github.com/usedrobot/demo-locker">github.com/usedrobot/demo-locker</a>
+    <p class="colophon">
+      <!-- lucide "github", ISC, from lucide-static 0.400.0 — pinned because the
+           brand icons were dropped from later releases. Inlined rather than
+           fetched so the page stays one directory of static files. -->
+      <a
+        class="icon-link"
+        href="https://github.com/usedrobot/demo-locker"
+        aria-label="Demo Locker on GitHub"
+        title="Demo Locker on GitHub"
+      ><svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        ><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" /><path d="M9 18c-4.51 2-5-2-7-2" /></svg></a>
+      <span>
+        Open source, MIT. Developed by
+        <a href="https://fldl.space">Florida DL Workspace</a>.
+      </span>
     </p>
-    <p class="dim">
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/AGENTS.md">setup runbook</a> ·
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">hosting guide</a> ·
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/embed.md">embeddable player</a>
-    </p>
+    <button
+      class="accent-swatch"
+      type="button"
+      title="Change accent color"
+      aria-label="Change accent color"
+    ></button>
   </footer>
 
 </main>

@@ -1,6 +1,6 @@
 {
   "name": "demo-locker",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Setup wizard for Demo Locker — self-hosted music streaming for demos, mixes, and playlists your band can comment on.",
   "license": "MIT",
   "type": "module",

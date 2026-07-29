@@ -152,44 +152,12 @@ ul.plain strong {
   margin: 1.75rem 0 0.9rem;
 }
 
-/* Screenshot strip — one row that scrolls sideways. On a phone that IS the
-   swipe; on a trackpad it's a two-finger push. scroll-snap makes it land on a
-   shot instead of halfway between two.
-   The strip is allowed to bleed to the viewport edges via negative margins so
-   the next shot is visibly cut off — the cue that there's more to swipe to. */
-.shots {
-  /* bleed out to the wrap's padding edge, then pad back in by the same amount,
-     so the first card lines up with the text while a later one is visibly cut
-     off. Expressed against the wrap's own inset rather than 50vw on purpose:
-     vw includes the classic scrollbar and % does not, so the vw version
-     overhangs the page by half a scrollbar and adds a horizontal scrollbar. */
-  margin-inline: -1.625rem;
-  overflow: hidden;
-}
-
-.shot-strip {
-  list-style: none;
-  display: flex;
-  gap: 1rem;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  padding: 0 1.625rem 0.5rem;
-  /* must match the inline padding. Without it, `scroll-snap-align: start`
-     snaps the first card to the scrollport edge and the browser scrolls the
-     padding away on load, so the strip starts flush left instead of lining up
-     with the text column. scroll-padding moves the snap line inward to match. */
-  scroll-padding-inline: 1.625rem;
-}
-
-.shot-strip::-webkit-scrollbar {
-  display: none;
-}
-
+/* One screenshot, centred. This was a swipable three-shot strip; the extra
+   two were showing the same UI a second and third time, so they earned their
+   removal rather than a carousel to hide them in. */
 .shot {
-  flex: 0 0 min(520px, 82%);
-  scroll-snap-align: start;
+  margin: 3rem auto 0;
+  max-width: 620px;
 }
 
 .shot img {
@@ -199,9 +167,10 @@ ul.plain strong {
   border: 1px solid var(--border);
 }
 
-.shot-cap {
+.shot figcaption {
   margin-top: 0.6rem;
   color: var(--fg-dim);
+  text-align: center;
 }
 
 /* the copyable prompt — the main event on this page */
@@ -300,13 +269,5 @@ footer {
   }
   .prompt-box {
     gap: 0.75rem;
-  }
-  /* .wrap drops to a 1rem inset here, so the bleed and pad-back follow it. */
-  .shots {
-    margin-inline: -1rem;
-  }
-  .shot-strip {
-    padding-inline: 1rem;
-    scroll-padding-inline: 1rem;
   }
 }

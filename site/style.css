@@ -69,9 +69,25 @@ a:focus-visible {
   min-width: 0;
 }
 
+/* --fit is the fraction of the container the art is allowed to occupy. At 1 it
+   spans edge to edge, which on a phone squeezes the glyph cells and lets the
+   logo dominate the page — the mobile query below pulls it in. The pre is
+   width:fit-content so the art centres inside the leftover space rather than
+   hugging the left edge — and that is also what keeps the 4px floor safe. The
+   floor binds at and below a 320px viewport, but a fit-content pre shrinks to
+   the art instead of the box, so the art stays inside .ascii-fit and nothing
+   clips: measured 265px of art in a 268px box at 300px, the narrowest width
+   worth supporting. */
 .ascii-fit > .ascii-logo {
   --cols: 110;
-  font-size: clamp(4px, calc(100cqw / (var(--cols) * 0.61)), 11px);
+  --fit: 1;
+  font-size: clamp(
+    4px,
+    calc(100cqw / (var(--cols) * 0.61) * var(--fit)),
+    11px
+  );
+  width: fit-content;
+  margin-inline: auto;
 }
 
 .ascii-logo {
@@ -260,5 +276,8 @@ footer {
   }
   .prompt-box {
     gap: 0.75rem;
+  }
+  .ascii-fit > .ascii-logo {
+    --fit: 0.85;
   }
 }

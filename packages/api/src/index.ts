@@ -22,6 +22,26 @@ app.use("/*", async (c, next) => {
   }
 });
 
+// Baseline hardening on every response. nosniff is the load-bearing one: the
+// bytes we serve include user-uploaded files whose declared content type came
+// from the uploader, and on the Cloudflare and standalone targets those are
+// served from the same origin as the web app. Referrer-Policy keeps the
+// `?token=` media URLs out of other sites' logs, and frame-ancestors stops the
+// app being framed for clickjacking (the embed player is a script tag on the
+// host page, not an iframe of this origin, so nothing legitimate breaks).
+app.use("/*", async (c, next) => {
+  await next();
+  if (!c.res.headers.get("X-Content-Type-Options")) {
+    c.header("X-Content-Type-Options", "nosniff");
+  }
+  if (!c.res.headers.get("Referrer-Policy")) {
+    c.header("Referrer-Policy", "no-referrer");
+  }
+  if (!c.res.headers.get("Content-Security-Policy")) {
+    c.header("Content-Security-Policy", "frame-ancestors 'none'");
+  }
+});
+
 app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });

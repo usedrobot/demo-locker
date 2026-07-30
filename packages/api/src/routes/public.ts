@@ -6,6 +6,7 @@ import { eq, and, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
+import { INERT_CONTENT_HEADERS, safeImageType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
 
 const publicRouter = new Hono<Env>();
@@ -65,9 +66,13 @@ publicRouter.get("/playlists/:id/artwork", async (c) => {
   const object = await c.env.DEMOS_BUCKET.get(playlist.artworkKey);
   if (!object) return notFound(c);
 
+  // The anonymous route, so the most exposed one: an artwork stored as
+  // text/html was served from the instance's own origin, where the web app's
+  // session token lives in localStorage.
   return new Response(object.body, {
     headers: {
-      "Content-Type": object.httpMetadata?.contentType || "image/jpeg",
+      ...INERT_CONTENT_HEADERS,
+      "Content-Type": safeImageType(object.httpMetadata?.contentType),
       "Cache-Control": "public, max-age=3600",
     },
   });

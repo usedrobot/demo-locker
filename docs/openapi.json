@@ -134,15 +134,6 @@
           "position": {
             "type": "integer"
           },
-          "originalKey": {
-            "type": "string"
-          },
-          "streamKey": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "waveformData": {
             "type": [
               "string",
@@ -158,6 +149,10 @@
           "uploadedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "hasStream": {
+            "type": "boolean",
+            "description": "Whether a streaming rendition exists yet. Replaces originalKey/streamKey, which were bucket coordinates and are no longer exposed to clients."
           }
         },
         "required": [
@@ -165,8 +160,8 @@
           "playlistId",
           "title",
           "position",
-          "originalKey",
-          "uploadedAt"
+          "uploadedAt",
+          "hasStream"
         ]
       },
       "PublicTrackSummary": {
@@ -506,8 +501,28 @@
               }
             }
           },
+          "403": {
+            "description": "Registration is closed. Signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Email already registered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See Retry-After.",
             "content": {
               "application/json": {
                 "schema": {
@@ -596,6 +611,16 @@
           },
           "401": {
             "description": "Invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See Retry-After.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1184,7 +1209,7 @@
       },
       "post": {
         "summary": "Upload playlist artwork",
-        "description": "Owner session only. Multipart upload; stored under `playlist-art/<id><ext>` (extension parsed from the uploaded filename).",
+        "description": "Artwork must be a PNG, JPEG, GIF, WebP or AVIF under 10MB. The stored content type is normalised — uploads are not permitted to choose an arbitrary type, and responses carry X-Content-Type-Options: nosniff.",
         "operationId": "uploadPlaylistArtwork",
         "security": [
           {
@@ -1263,6 +1288,16 @@
           },
           "404": {
             "description": "Not owned by the caller, or does not exist (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Artwork exceeds 10MB.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1367,6 +1402,16 @@
           },
           "404": {
             "description": "Target playlist not owned by the caller, or does not exist (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File exceeds MAX_UPLOAD_BYTES, or the instance storage quota (MAX_STORAGE_BYTES) is full.",
             "content": {
               "application/json": {
                 "schema": {

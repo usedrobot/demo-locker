@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
@@ -9,6 +9,9 @@ import {
   requestSessionUserId,
 } from "../lib/playlist-access.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
+import { publicTrack } from "../lib/public-track.js";
+import { getLimits, isLimited } from "../lib/limits.js";
+import { INERT_CONTENT_HEADERS, safeAudioType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
 
 const tracksRouter = new Hono<Env>();
@@ -44,6 +47,15 @@ tracksRouter.post("/upload", async (c) => {
 
   const db = getDb(c.env.DB);
   const bucket = c.env.DEMOS_BUCKET;
+  const limits = getLimits(c.env);
+
+  const uploadBytes = file.size + (streamFile?.size ?? 0);
+  if (file.size > limits.maxUploadBytes) {
+    return c.json(
+      { error: `file exceeds the ${limits.maxUploadBytes} byte upload limit` },
+      413
+    );
+  }
 
   let ownerId: string | null = null;
   let position = 0;
@@ -59,6 +71,24 @@ tracksRouter.post("/upload", async (c) => {
     ownerId = await requestSessionUserId(c);
     if (!ownerId) {
       return c.json({ error: "unauthorized" }, 401);
+    }
+  }
+
+  // Enforced here rather than trusted from config: MAX_STORAGE_BYTES was read
+  // from the env and surfaced in the docs for four releases without a single
+  // call site, so an operator who set it believed uploads were capped when
+  // nothing was checking. Rows uploaded before size_bytes existed count as 0 —
+  // the quota starts measuring from here rather than guessing at history.
+  if (isLimited(limits.maxStorageBytes)) {
+    const [used] = await db
+      .select({ total: sql<number>`coalesce(sum(${tracks.sizeBytes}), 0)` })
+      .from(tracks)
+      .where(eq(tracks.ownerId, ownerId));
+    if (Number(used?.total ?? 0) + uploadBytes > limits.maxStorageBytes) {
+      return c.json(
+        { error: "this instance's storage limit is full" },
+        413
+      );
     }
   }
 
@@ -94,10 +124,11 @@ tracksRouter.post("/upload", async (c) => {
       streamKey,
       waveformData: waveformData || null,
       duration: duration && isFinite(duration) ? duration : null,
+      sizeBytes: uploadBytes,
     })
     .returning();
 
-  return c.json({ track }, 201);
+  return c.json({ track: publicTrack(track) }, 201);
 });
 
 // List the user's whole track library (every upload, in or out of playlists)
@@ -108,7 +139,7 @@ tracksRouter.get("/", requireAuth, async (c) => {
     .from(tracks)
     .where(eq(tracks.ownerId, c.get("user").id))
     .orderBy(desc(tracks.uploadedAt));
-  return c.json({ tracks: rows });
+  return c.json({ tracks: rows.map(publicTrack) });
 });
 
 // Stream a track from R2 — gated by the parent playlist. <audio> can't send an
@@ -205,7 +236,8 @@ tracksRouter.get("/:id/download", async (c) => {
   const filename = track.originalKey.split("/").pop() ?? "download";
   return new Response(object.body, {
     headers: {
-      "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
+      ...INERT_CONTENT_HEADERS,
+      "Content-Type": safeAudioType(object.httpMetadata?.contentType),
       "Content-Disposition": contentDispositionHeader(filename),
       "Cache-Control": "private, max-age=3600",
     },
@@ -247,7 +279,7 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .returning();
 
-  return c.json({ track: updated });
+  return c.json({ track: publicTrack(updated) });
 });
 
 // Delete a track

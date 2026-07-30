@@ -16,7 +16,8 @@
 import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb, type Database } from "../db/index.js";
-import { playlists, sessions, shares } from "../db/schema.js";
+import { playlists, shares } from "../db/schema.js";
+import { bearerToken, findSession } from "./session.js";
 import type { Env } from "../types.js";
 
 type AccessCreds = {
@@ -54,11 +55,7 @@ export async function canAccessPlaylist(
   }
 
   // token as a session token whose user owns the playlist
-  const [session] = await db
-    .select({ userId: sessions.userId, expiresAt: sessions.expiresAt })
-    .from(sessions)
-    .where(eq(sessions.token, token))
-    .limit(1);
+  const session = await findSession(db, token);
   if (session && session.expiresAt >= new Date() && session.userId === playlist.ownerId) {
     return true;
   }
@@ -83,16 +80,12 @@ export async function requestCanEditPlaylist(
   if (!playlist) return null;
 
   const queryToken = c.req.query("token") || null;
-  const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
+  const bearer = bearerToken(c.req.header("Authorization"));
 
   for (const token of [queryToken, bearer]) {
     if (!token) continue;
 
-    const [session] = await db
-      .select({ userId: sessions.userId, expiresAt: sessions.expiresAt })
-      .from(sessions)
-      .where(eq(sessions.token, token))
-      .limit(1);
+    const session = await findSession(db, token);
     if (
       session &&
       session.expiresAt >= new Date() &&
@@ -125,15 +118,11 @@ export async function requestSessionUserId(
 ): Promise<string | null> {
   const db = getDb(c.env.DB);
   const queryToken = c.req.query("token") || null;
-  const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
+  const bearer = bearerToken(c.req.header("Authorization"));
 
   for (const token of [queryToken, bearer]) {
     if (!token) continue;
-    const [session] = await db
-      .select({ userId: sessions.userId, expiresAt: sessions.expiresAt })
-      .from(sessions)
-      .where(eq(sessions.token, token))
-      .limit(1);
+    const session = await findSession(db, token);
     if (session && session.expiresAt >= new Date()) return session.userId;
   }
   return null;
@@ -148,7 +137,7 @@ export async function requestCanAccessPlaylist(
 ): Promise<boolean> {
   const db = getDb(c.env.DB);
   const queryToken = c.req.query("token") || null;
-  const bearer = c.req.header("Authorization")?.replace("Bearer ", "") || null;
+  const bearer = bearerToken(c.req.header("Authorization"));
 
   for (const token of [queryToken, bearer]) {
     if (token && (await canAccessPlaylist(db, playlistId, { token }))) {

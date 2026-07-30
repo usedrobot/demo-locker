@@ -52,7 +52,23 @@ export const tracks = sqliteTable("tracks", {
   streamKey: text("stream_key"),
   waveformData: text("waveform_data"),
   duration: real("duration"),
+  // Original + rendition bytes. Recorded so MAX_STORAGE_BYTES can actually be
+  // enforced — it was documented and read from the env for four releases while
+  // having no call site at all. Null on rows uploaded before this column, which
+  // the accounting treats as 0 rather than guessing.
+  sizeBytes: integer("size_bytes"),
   uploadedAt: integer("uploaded_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
+
+// Fixed-window counters for the auth routes. A table rather than a Workers
+// rate-limit binding because the same code runs on Node self-hosts, where no
+// such binding exists — and unauthenticated login was previously unmetered,
+// which made both password guessing and PBKDF2 CPU burn free.
+export const rateLimits = sqliteTable("rate_limits", {
+  // "<route>:<client ip>" — see lib/rate-limit.ts
+  key: text("key").primaryKey(),
+  count: integer("count").notNull(),
+  windowStart: integer("window_start", { mode: "timestamp_ms" }).notNull(),
 });
 
 export const comments = sqliteTable("comments", {

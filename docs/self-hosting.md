@@ -89,6 +89,24 @@ S3_SECRET_KEY=your-secret
 S3_REGION=auto
 ```
 
+### Access and quota settings
+
+All optional. The defaults are the safe ones — you only need these to loosen
+something or to tighten a quota.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ALLOW_SIGNUP` | unset (closed) | **Registration closes automatically once the instance has one account.** The install wizard's first signup is what claims the locker; after that, `POST /auth/signup` returns 403. Set to `true` only if you want a shared instance where anyone can register. Collaborators normally arrive by share link and need no account at all. |
+| `MAX_UPLOAD_BYTES` | `1073741824` (1GB) | Largest single file accepted by `POST /tracks/upload`. |
+| `MAX_STORAGE_BYTES` | unset (unlimited) | Total stored bytes per account. Uploads that would cross it are rejected with 413. |
+| `MAX_PLAYLISTS` | unset (unlimited) | Playlists per account. |
+| `MAX_COLLABORATORS` | unset (unlimited) | Share links per playlist. |
+
+`/auth/login` and `/auth/signup` are rate limited per client IP (10 logins per
+15 minutes, 5 signups per hour) and answer 429 with `Retry-After` past that.
+Behind a reverse proxy, make sure it sets `X-Forwarded-For` — without it, and
+without Cloudflare's `CF-Connecting-IP`, every caller shares one bucket.
+
 ### 3. Run
 
 ```bash

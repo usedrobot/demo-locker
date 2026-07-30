@@ -191,7 +191,16 @@ export async function executePlan(
         body: JSON.stringify(signup),
       });
       if (res.ok) io.output.write(`✓ Account created for ${signup.email}\n`);
-      else io.output.write(`✗ signup failed (${res.status}) — open the app and sign up manually\n`);
+      else if (res.status === 403) {
+        // Registration closes once an instance has an owner, so this is the
+        // expected answer when the target already has an account — a redeploy
+        // or an upgrade, not a failure. Telling someone to "sign up manually"
+        // here would send them at a door that is supposed to be locked.
+        io.output.write(
+          `• This instance already has an account — signup is closed, sign in with it.\n` +
+          `  (Set ALLOW_SIGNUP=true on the deployment if you want open registration.)\n`
+        );
+      } else io.output.write(`✗ signup failed (${res.status}) — open the app and sign up manually\n`);
     } catch {
       io.output.write(`✗ signup failed (network error) — open the app and sign up manually\n`);
     }

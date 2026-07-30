@@ -113,8 +113,11 @@ export type Track = {
   playlistId: string | null;
   title: string;
   position: number;
-  originalKey: string;
-  streamKey: string | null;
+  // The API deliberately does not expose originalKey/streamKey — they are
+  // bucket coordinates, and handing them to clients gave anyone who kept a copy
+  // a durable handle on the object. `hasStream` is all the UI ever read them
+  // for: whether the browser-side encode has landed yet.
+  hasStream: boolean;
   waveformData: string | null;
   duration: number | null;
   uploadedAt: string;

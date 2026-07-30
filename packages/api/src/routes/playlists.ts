@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, asc } from "drizzle-orm";
+import { and, eq, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
@@ -7,7 +7,13 @@ import {
   requestCanAccessPlaylist,
   requestCanEditPlaylist,
 } from "../lib/playlist-access.js";
-import { getLimits, isLimited } from "../lib/limits.js";
+import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
+import { publicTrack } from "../lib/public-track.js";
+import {
+  INERT_CONTENT_HEADERS,
+  isAllowedImageType,
+  safeImageType,
+} from "../lib/media-type.js";
 import type { Env } from "../types.js";
 
 const playlistsRouter = new Hono<Env>();
@@ -77,7 +83,7 @@ playlistsRouter.get("/:id", async (c) => {
     .where(eq(tracks.playlistId, id))
     .orderBy(asc(tracks.position));
 
-  return c.json({ playlist, tracks: trackList });
+  return c.json({ playlist, tracks: trackList.map(publicTrack) });
 });
 
 playlistsRouter.patch("/:id", requireAuth, async (c) => {
@@ -98,8 +104,13 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name) updates.name = body.name;
-  if (body.artworkKey !== undefined) updates.artworkKey = body.artworkKey;
   if (typeof body.isPublic === "boolean") updates.isPublic = body.isPublic;
+  // artworkKey is deliberately NOT patchable. It is a pointer into the shared
+  // bucket, so accepting it from a client let any authenticated user aim their
+  // own artwork route at another account's object and read it — including the
+  // lossless master, and including after their share had been revoked. It is
+  // set server-side by POST /:id/artwork, which is the only writer that ever
+  // needed it.
 
   const [updated] = await db
     .update(playlists)
@@ -130,11 +141,21 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
   const file = formData.get("file") as File | null;
   if (!file) return c.json({ error: "file required" }, 400);
 
+  if (!isAllowedImageType(file.type)) {
+    return c.json(
+      { error: "artwork must be a PNG, JPEG, GIF, WebP or AVIF image" },
+      400
+    );
+  }
+  if (file.size > MAX_ARTWORK_BYTES) {
+    return c.json({ error: "artwork must be under 10MB" }, 413);
+  }
+
   const ext = file.name.match(/\.[a-zA-Z0-9]+$/)?.[0] || "";
   const key = `playlist-art/${id}${ext}`;
 
   await c.env.DEMOS_BUCKET.put(key, file.stream(), {
-    httpMetadata: { contentType: file.type || "image/jpeg" },
+    httpMetadata: { contentType: safeImageType(file.type) },
   });
 
   const [updated] = await db
@@ -170,11 +191,10 @@ playlistsRouter.get("/:id/artwork", async (c) => {
   const object = await c.env.DEMOS_BUCKET.get(playlist.artworkKey);
   if (!object) return c.json({ error: "not found" }, 404);
 
-  const headers = new Headers();
-  headers.set(
-    "Content-Type",
-    object.httpMetadata?.contentType || "image/jpeg"
-  );
+  // Sanitised on the way out as well as in, so artwork stored before the
+  // upload allowlist existed can't still be served as markup.
+  const headers = new Headers(INERT_CONTENT_HEADERS);
+  headers.set("Content-Type", safeImageType(object.httpMetadata?.contentType));
   headers.set("Cache-Control", "private, max-age=3600");
   if (object.size) headers.set("Content-Length", String(object.size));
 
@@ -214,11 +234,15 @@ playlistsRouter.patch("/:id/reorder", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
+  // Scoped to this playlist's tracks. Without the playlistId predicate the
+  // caller could pass any track ID they had ever seen and rewrite its position
+  // in someone else's playlist — edit rights on one playlist are not edit
+  // rights on every track ID in the instance.
   for (let i = 0; i < trackIds.length; i++) {
     await db
       .update(tracks)
       .set({ position: i })
-      .where(eq(tracks.id, trackIds[i]));
+      .where(and(eq(tracks.id, trackIds[i]), eq(tracks.playlistId, id)));
   }
 
   await db

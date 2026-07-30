@@ -1,6 +1,7 @@
 // Shared range-capable audio streaming used by the private and public stream routes.
 
 import type { StorageBucket } from "./storage.js";
+import { INERT_CONTENT_HEADERS, safeAudioType } from "./media-type.js";
 
 export async function buildStreamResponse(
   rangeHeader: string | undefined,
@@ -13,8 +14,11 @@ export async function buildStreamResponse(
     return Response.json({ error: "file not found" }, { status: 404 });
   }
 
-  const headers = new Headers();
-  headers.set("Content-Type", object.httpMetadata?.contentType || "audio/mpeg");
+  // Stored content types are attacker-controlled (the uploader's browser sends
+  // them), and a stream URL can be opened as a top-level navigation — so an
+  // audio allowlist plus nosniff/CSP, same as artwork.
+  const headers = new Headers(INERT_CONTENT_HEADERS);
+  headers.set("Content-Type", safeAudioType(object.httpMetadata?.contentType));
   headers.set("Accept-Ranges", "bytes");
   headers.set("Cache-Control", cacheControl);
 

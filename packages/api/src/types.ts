@@ -12,6 +12,10 @@ export type Bindings = {
   MAX_PLAYLISTS?: string;
   MAX_STORAGE_BYTES?: string;
   MAX_COLLABORATORS?: string;
+  MAX_UPLOAD_BYTES?: string;
+  // "true" reopens registration after the first account exists. Anything else
+  // (including unset) means only the bootstrap signup is permitted.
+  ALLOW_SIGNUP?: string;
   EMBED_JS?: string;
   OPENAPI_JSON?: string;
 };

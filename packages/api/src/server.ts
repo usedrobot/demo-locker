@@ -12,6 +12,7 @@ import { createSqliteDb } from "./db/sqlite.js";
 import { createS3Bucket } from "./lib/storage-s3.js";
 import { createFsBucket } from "./lib/storage-fs.js";
 import type { StorageBucket } from "./lib/storage.js";
+import { forwardedEnv } from "./lib/bindings.js";
 import app from "./index.js";
 
 async function main() {
@@ -69,9 +70,10 @@ async function main() {
   const bindings = {
     DB: "sqlite", // sentinel — setDbFactory above ignores it and returns the shared db
     DEMOS_BUCKET: bucket,
-    MAX_PLAYLISTS: process.env.MAX_PLAYLISTS,
-    MAX_STORAGE_BYTES: process.env.MAX_STORAGE_BYTES,
-    MAX_COLLABORATORS: process.env.MAX_COLLABORATORS,
+    // Spread from one shared list rather than named individually here: every
+    // config var this file forgets to copy is a setting that silently does
+    // nothing on the self-hosted path while appearing to work on Workers.
+    ...forwardedEnv(process.env),
     EMBED_JS: embedJs,
     OPENAPI_JSON: openapiJson,
   };

@@ -147,7 +147,7 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
             <span style={{ flex: 1, color: "var(--fg)" }}>{track.title}</span>
 
             {/* Status */}
-            {!track.streamKey && (
+            {!track.hasStream && (
               <span style={{ color: "var(--fg-dim)", fontSize: "11px" }}>
                 processing...
               </span>

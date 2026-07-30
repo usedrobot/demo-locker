@@ -2,14 +2,27 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { users, sessions } from "../db/schema.js";
-import { hashPassword, verifyPassword, generateToken } from "../lib/auth.js";
-import { requireAuth } from "../lib/session.js";
+import {
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  needsRehash,
+} from "../lib/auth.js";
+import {
+  requireAuth,
+  bearerToken,
+  createSession,
+  deleteSession,
+  findSession,
+} from "../lib/session.js";
 import { isValidAccent } from "../lib/accent.js";
+import { signupAllowed } from "../lib/signup.js";
+import { rateLimit, LOGIN_RULE, SIGNUP_RULE } from "../lib/rate-limit.js";
 import type { Env } from "../types.js";
 
 const auth = new Hono<Env>();
 
-auth.post("/signup", async (c) => {
+auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   const { email, password } = await c.req.json();
 
   if (!email || !password) {
@@ -20,6 +33,14 @@ auth.post("/signup", async (c) => {
   }
 
   const db = getDb(c.env.DB);
+
+  // Registration closes automatically once the instance has an owner. A Demo
+  // Locker is one person's locker — collaborators arrive by share link, not by
+  // signing up — but every deployment used to accept registrations from the
+  // open internet forever, with no flag to turn it off.
+  if (!(await signupAllowed(db, c.env))) {
+    return c.json({ error: "registration is closed on this instance" }, 403);
+  }
 
   const [existing] = await db
     .select({ id: users.id })
@@ -40,12 +61,12 @@ auth.post("/signup", async (c) => {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  await db.insert(sessions).values({ userId: user.id, token, expiresAt });
+  await createSession(db, user.id, token, expiresAt);
 
   return c.json({ user, token }, 201);
 });
 
-auth.post("/login", async (c) => {
+auth.post("/login", rateLimit("login", LOGIN_RULE), async (c) => {
   const { email, password } = await c.req.json();
 
   if (!email || !password) {
@@ -64,10 +85,20 @@ auth.post("/login", async (c) => {
     return c.json({ error: "invalid credentials" }, 401);
   }
 
+  // Upgrade the stored hash in place when it predates the current PBKDF2 cost.
+  // This is the only moment the plaintext password is available, so it is the
+  // only place the migration can happen without a forced reset.
+  if (needsRehash(user.passwordHash)) {
+    await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(password) })
+      .where(eq(users.id, user.id));
+  }
+
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  await db.insert(sessions).values({ userId: user.id, token, expiresAt });
+  await createSession(db, user.id, token, expiresAt);
 
   return c.json({
     user: { id: user.id, email: user.email, accent: user.accent },
@@ -129,15 +160,18 @@ auth.post("/change-password", requireAuth, async (c) => {
   // intruder out, so any session opened with the old one has to die. The
   // caller's own token survives so they aren't logged out of the tab they
   // just did this in.
-  const currentToken = c.req.header("Authorization")?.replace("Bearer ", "") ?? "";
+  // Compare by row id, not by token: tokens are stored hashed now, so the
+  // caller's raw header no longer equals anything in the table.
+  const currentToken = bearerToken(c.req.header("Authorization"));
+  const current = currentToken ? await findSession(db, currentToken) : null;
   const existing = await db
-    .select({ token: sessions.token })
+    .select({ id: sessions.id })
     .from(sessions)
     .where(eq(sessions.userId, user.id));
 
   for (const s of existing) {
-    if (s.token !== currentToken) {
-      await db.delete(sessions).where(eq(sessions.token, s.token));
+    if (s.id !== current?.id) {
+      await db.delete(sessions).where(eq(sessions.id, s.id));
     }
   }
 
@@ -145,10 +179,9 @@ auth.post("/change-password", requireAuth, async (c) => {
 });
 
 auth.post("/logout", requireAuth, async (c) => {
-  const token = c.req.header("Authorization")?.replace("Bearer ", "");
+  const token = bearerToken(c.req.header("Authorization"));
   if (token) {
-    const db = getDb(c.env.DB);
-    await db.delete(sessions).where(eq(sessions.token, token));
+    await deleteSession(getDb(c.env.DB), token);
   }
   return c.json({ ok: true });
 });

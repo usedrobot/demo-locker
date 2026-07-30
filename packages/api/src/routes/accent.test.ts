@@ -37,7 +37,9 @@ async function setAccent(accent: unknown, authToken = token): Promise<Response> 
 beforeAll(async () => {
   db = createSqliteDb();
   setDbFactory(() => db);
-  env = { DB: "sqlite", DEMOS_BUCKET: {} };
+  // This file models a two-account instance (an owner and a second signup), so
+  // it has to opt out of the default first-account-only signup gate.
+  env = { DB: "sqlite", DEMOS_BUCKET: {}, ALLOW_SIGNUP: "true" };
 
   const signup = await app.request(
     "/auth/signup",

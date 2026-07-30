@@ -52,7 +52,7 @@ function playIndex(index: number) {
   if (index < 0 || index >= playlist.length) return;
   currentIndex = index;
   const track = playlist[index];
-  if (!track.streamKey) return;
+  if (!track.hasStream) return;
 
   audio.src = tracksApi.streamUrl(track.id);
   audio.play();

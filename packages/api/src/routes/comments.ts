@@ -1,8 +1,13 @@
 import { Hono } from "hono";
 import { eq, and, isNull, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { comments, tracks, playlists, sessions, users } from "../db/schema.js";
+import { comments, tracks, playlists, users } from "../db/schema.js";
 import { generateToken } from "../lib/auth.js";
+import { bearerToken, findSession } from "../lib/session.js";
+import {
+  MAX_COMMENT_BODY_CHARS,
+  MAX_COMMENT_AUTHOR_CHARS,
+} from "../lib/limits.js";
 import {
   requestCanAccessPlaylist,
   requestSessionUserId,
@@ -13,14 +18,10 @@ const commentsRouter = new Hono<Env>();
 
 // Resolve the bearer-authed user (if any). Returns null for anonymous.
 async function resolveAuthedUser(c: any) {
-  const token = c.req.header("Authorization")?.replace("Bearer ", "");
+  const token = bearerToken(c.req.header("Authorization"));
   if (!token) return null;
   const db = getDb(c.env.DB);
-  const [session] = await db
-    .select()
-    .from(sessions)
-    .where(eq(sessions.token, token))
-    .limit(1);
+  const session = await findSession(db, token);
   if (!session || session.expiresAt < new Date()) return null;
   const [user] = await db
     .select({ id: users.id, email: users.email })
@@ -45,6 +46,23 @@ commentsRouter.post("/", async (c) => {
   }
   if (!trackId && !playlistId) {
     return c.json({ error: "trackId or playlistId required" }, 400);
+  }
+  // Anyone holding a listen link can post, so the write path needs a ceiling —
+  // there was none, in a table that is not otherwise rate limited.
+  if (typeof body !== "string" || typeof authorName !== "string") {
+    return c.json({ error: "authorName and body must be strings" }, 400);
+  }
+  if (body.length > MAX_COMMENT_BODY_CHARS) {
+    return c.json(
+      { error: `comment must be under ${MAX_COMMENT_BODY_CHARS} characters` },
+      400
+    );
+  }
+  if (authorName.length > MAX_COMMENT_AUTHOR_CHARS) {
+    return c.json(
+      { error: `name must be under ${MAX_COMMENT_AUTHOR_CHARS} characters` },
+      400
+    );
   }
 
   const db = getDb(c.env.DB);

@@ -157,6 +157,40 @@ describe("storage keys stay server-side", () => {
   });
 });
 
+describe("the invite route is held to the same contract as the owner's", () => {
+  // Regression for 0.2.9. The 0.2.8 sweep applied publicTrack to /playlists/:id
+  // and the /tracks routes and missed /shares/invite/:token — the one route
+  // listeners actually load. That shipped two bugs at once: the storage keys
+  // stayed exposed on the listener path, and the player refused to start any
+  // track because `hasStream` was undefined. Owners never saw it; every share
+  // link was silently broken.
+  it("returns hasStream and no storage keys to an anonymous invite listener", async () => {
+    const shareRes = await app.request(
+      "/shares",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${victimToken}` },
+        body: JSON.stringify({ playlistId: victimPlaylist, permission: "listen" }),
+      },
+      env,
+    );
+    const inviteToken = (await json(shareRes)).share.token;
+
+    // No Authorization header at all — this is what a share-link listener sends.
+    const res = await app.request(`/shares/invite/${inviteToken}`, {}, env);
+    expect(res.status).toBe(200);
+    const body = await json(res);
+
+    expect(body.tracks.length).toBeGreaterThan(0);
+    for (const t of body.tracks) {
+      expect(t.originalKey).toBeUndefined();
+      expect(t.streamKey).toBeUndefined();
+      // Playback is gated on this client-side; undefined means a dead player.
+      expect(t.hasStream).toBe(true);
+    }
+  });
+});
+
 describe("reorder cannot reach tracks in another playlist", () => {
   it("leaves a foreign track's position untouched", async () => {
     const [before] = await db.select().from(tracks).where(eq(tracks.id, victimTrack));

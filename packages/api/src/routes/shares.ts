@@ -4,6 +4,7 @@ import { getDb } from "../db/index.js";
 import { shares, playlists, tracks, users } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { getLimits, isLimited } from "../lib/limits.js";
+import { publicTrack } from "../lib/public-track.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
@@ -210,7 +211,12 @@ sharesRouter.get("/invite/:token", async (c) => {
   return c.json({
     permission: share.permission,
     playlist,
-    tracks: trackList,
+    // publicTrack here too. Missing it broke this route twice over: listeners
+    // got no `hasStream`, so the player refused to start any track on a share
+    // link, and the raw rows still carried originalKey/streamKey — the exact
+    // leak the 0.2.8 review closed everywhere except the one route that
+    // listeners, not owners, actually use.
+    tracks: trackList.map(publicTrack),
     accent: owner?.accent ?? null,
   });
 });

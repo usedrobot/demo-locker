@@ -71,6 +71,11 @@ docker compose up
 
 Three commands. See [docs/self-hosting.md](docs/self-hosting.md) for the full guide.
 
+The first account you create claims the locker, and registration closes behind
+it — collaborators arrive by share link and need no account of their own. Access
+settings, storage quotas and the reporting process are in
+[docs/self-hosting.md](docs/self-hosting.md) and [SECURITY.md](SECURITY.md).
+
 ## Stack
 
 | Layer | Choice |

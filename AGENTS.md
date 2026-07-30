@@ -58,7 +58,11 @@ that record before deploying or the deploy cannot claim it.
 Drop `--domain` for a `workers.dev` URL — but then also drop
 `--email`/`--password`, which the wizard rejects on that path: the URL isn't
 known until the deploy prints it, so there's nothing to sign up against. Open it
-afterwards and register; the first account in wins.
+afterwards and register; the first account in wins — literally, since 0.2.8:
+registration closes as soon as an instance has one account, and later signups
+get `403 {"error":"registration is closed on this instance"}`. Set
+`ALLOW_SIGNUP=true` on the deployment if you actually want open registration
+(you usually don't — collaborators arrive by share link and need no account).
 
 **A freshly deployed custom domain 500s for a few seconds** while the route and
 certificate propagate. The wizard's health poll retries for 60s and absorbs it.
@@ -167,8 +171,23 @@ TOKEN=$(curl -fsS -X POST "$BASE/auth/signup" \
   -d '{"email":"agent@example.com","password":"agentpass123"}' | jq -re .token)
 ```
 
-expect: `201` with `{"user":{"id":"…","email":"…"},"token":"…"}`. `$TOKEN`
-now holds the bearer token for every step below.
+expect: `201` with `{"user":{"id":"…","email":"…","accent":null},"token":"…"}`.
+`$TOKEN` now holds the bearer token for every step below.
+
+**A `403` here means the instance already has an owner**, not that something is
+broken — registration closes after the first account. That is the expected
+answer when you are verifying an existing deployment rather than a fresh one;
+log in instead:
+
+```bash
+TOKEN=$(curl -fsS -X POST "$BASE/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"…","password":"…"}' | jq -re .token)
+```
+
+`/auth/signup` and `/auth/login` are rate limited per client IP (5 signups per
+hour, 10 logins per 15 minutes). A `429` carries `Retry-After` — wait it out
+rather than retrying in a loop.
 
 ### 2. Create a playlist
 
@@ -209,6 +228,16 @@ TRACK_ID=$(curl -fsS -X POST "$BASE/tracks/upload" \
 
 expect: `201` with `{"track":{"id":"…","playlistId":"…","title":"…",...}}`.
 `$TRACK_ID` feeds the public-metadata check below.
+
+Track responses carry `hasStream` (a boolean: whether a streaming rendition
+exists yet). They deliberately do **not** carry `originalKey`/`streamKey` —
+those are bucket coordinates and were removed in 0.2.8, because handing them to
+clients gave anyone who kept a copy a durable handle on the stored object.
+
+Uploads are capped at `MAX_UPLOAD_BYTES` (1GB default) and, if the operator set
+one, a per-account `MAX_STORAGE_BYTES` quota; either returns `413`. Playlist
+artwork must be a PNG, JPEG, GIF, WebP or AVIF under 10MB — other types are
+rejected with `400`, SVG included, because it executes script on navigation.
 
 ### 4. Make the playlist public
 

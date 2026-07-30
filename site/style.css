@@ -11,14 +11,14 @@
 @property --accent {
   syntax: "<color>";
   inherits: true;
-  initial-value: #fc0;
+  initial-value: #3f6;
 }
 
 :root {
   --bg: #0a0a0a;
   --fg: #ffffff;
   --fg-dim: #ccc;
-  --accent: #fc0;
+  --accent: #3f6;
   /* derived rather than animated alongside --accent, so the tint can never
      drift out of step with the colour it is a tint of. */
   --accent-dim: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -39,20 +39,26 @@
    next to blue (207deg), and the logo spent a second of every loop a muddy
    khaki. Sorted by hue the largest gap is 87deg (gold to green, through
    yellow-green), so the cycle stays saturated the whole way round. Keep any new
-   accent in hue order for the same reason. */
+   accent in hue order for the same reason.
+
+   The wheel is entered at green (DL's pick, 2026-07-30) rather than at the
+   lowest hue: the list is rotated, not re-sorted, so every adjacent pair — and
+   therefore every interpolation — is the one hue order already vetted. The
+   brochure resting on green while the app still defaults to gold is deliberate;
+   don't "resync" them. */
 @keyframes accent-cycle {
-  0%      { --accent: #f80; } /*  32deg amber  */
-  14.286% { --accent: #fc0; } /*  48deg gold   */
-  28.571% { --accent: #3f6; } /* 135deg green  */
-  42.857% { --accent: #6cf; } /* 200deg cyan   */
-  57.143% { --accent: #4af; } /* 207deg blue   */
-  71.429% { --accent: #a6f; } /* 267deg purple */
-  85.714% { --accent: #f6a; } /* 333deg pink   */
-  100%    { --accent: #f80; }
+  0%      { --accent: #3f6; } /* 135deg green  */
+  14.286% { --accent: #6cf; } /* 200deg cyan   */
+  28.571% { --accent: #4af; } /* 207deg blue   */
+  42.857% { --accent: #a6f; } /* 267deg purple */
+  57.143% { --accent: #f6a; } /* 333deg pink   */
+  71.429% { --accent: #f80; } /*  32deg amber  */
+  85.714% { --accent: #fc0; } /*  48deg gold   */
+  100%    { --accent: #3f6; }
 }
 
 /* A page-wide colour cycle with no off switch is exactly what this query is
-   for. Holding the initial gold leaves every accent rule working untouched. */
+   for. Holding the initial green leaves every accent rule working untouched. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     animation: none;

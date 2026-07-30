@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { auth, setToken } from "../lib/api";
+import { adoptAccent } from "../lib/theme";
 import Logo from "../components/Logo";
 
 type Props = {
@@ -17,6 +18,7 @@ export default function Login({ onAuth }: Props) {
     try {
       const result = await auth.login(email, password);
       setToken(result.token);
+      adoptAccent(result.user.accent);
       onAuth();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");

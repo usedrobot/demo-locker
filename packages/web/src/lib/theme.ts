@@ -50,3 +50,22 @@ export function initAccent() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) applyAccent(stored);
 }
+
+// The owner's accent is stored on their account, so it can arrive after first
+// paint (from /auth/me) or belong to someone else entirely (a share link, where
+// the listener sees the owner's colour). localStorage stays the fast path for
+// the owner's own browser; the server is the source of truth.
+export function adoptAccent(hex: string | null | undefined) {
+  if (!hex || !ACCENTS.includes(hex)) return;
+  localStorage.setItem(STORAGE_KEY, hex);
+  applyAccent(hex);
+}
+
+// Show someone else's accent for the life of a view without adopting it as this
+// browser's setting. Returns a restore function for unmount — otherwise a
+// listener who also owns a locker keeps whatever colour the last invite used.
+export function previewAccent(hex: string | null | undefined): () => void {
+  const previous = getAccent();
+  if (hex && ACCENTS.includes(hex)) applyAccent(hex);
+  return () => applyAccent(previous);
+}

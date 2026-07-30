@@ -21,7 +21,7 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
   }
 
   const [user] = await db
-    .select({ id: users.id, email: users.email })
+    .select({ id: users.id, email: users.email, accent: users.accent })
     .from(users)
     .where(eq(users.id, session.userId))
     .limit(1);

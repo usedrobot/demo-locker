@@ -3,6 +3,7 @@ import type { StorageBucket } from "./lib/storage.js";
 export type User = {
   id: string;
   email: string;
+  accent: string | null;
 };
 
 export type Bindings = {

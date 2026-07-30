@@ -7,6 +7,7 @@ import {
   type Track,
 } from "../lib/api";
 import { player } from "../lib/audio";
+import { previewAccent } from "../lib/theme";
 import TrackList from "../components/TrackList";
 import Comments from "../components/Comments";
 function PoweredBy() {
@@ -37,18 +38,25 @@ export default function Invite({ token }: Props) {
     // Carry the invite/share token on every subsequent request and media URL
     // (stream/artwork/comments) so the now-gated legacy endpoints authorize it.
     setShareToken(token);
+    // Set by the response below; restoring on unmount keeps a listener who also
+    // owns a locker from inheriting whatever colour the last invite used.
+    let restoreAccent: (() => void) | null = null;
     sharesApi
       .resolveInvite(token)
       .then((r) => {
         setPlaylist(r.playlist);
         setTracks(r.tracks);
         setPermission(r.permission);
+        restoreAccent = previewAccent(r.accent);
         player.setPlaylist(r.tracks);
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "invalid invite");
       });
-    return () => setShareToken(null);
+    return () => {
+      setShareToken(null);
+      restoreAccent?.();
+    };
   }, [token]);
 
   useEffect(() => player.subscribe(setPlayerState), []);
@@ -105,8 +113,12 @@ export default function Invite({ token }: Props) {
         <PoweredBy />
       </div>
 
-      <div style={{ marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
-        <div style={{ minWidth: 0 }}>
+      {/* .playlist-header, not a bespoke flex row: AsciiText is a size container
+          and cannot size itself from its own content, so its column needs a
+          definite width (flex:1) — minWidth:0 alone leaves it content-sized and
+          the art clips. The shared class also stacks this under 560px. */}
+      <div className="playlist-header">
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="box-header">
             shared playlist · {permission === "edit" ? "listen + edit" : "listen"}
           </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getToken, auth } from "./lib/api";
+import { adoptAccent } from "./lib/theme";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
 import PlaylistView from "./pages/PlaylistView";
@@ -29,8 +30,13 @@ function App() {
     let cancelled = false;
     auth
       .me()
-      .then(() => {
-        if (!cancelled) setView({ page: "home" });
+      .then((r) => {
+        if (cancelled) return;
+        // A second browser (or a cleared cache) has no local accent — take the
+        // one stored on the account so the owner's locker looks the same
+        // everywhere they sign in.
+        adoptAccent(r.user.accent);
+        setView({ page: "home" });
       })
       .catch(() => {
         if (!cancelled) setView({ page: "login" });

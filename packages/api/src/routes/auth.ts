@@ -4,6 +4,7 @@ import { getDb } from "../db/index.js";
 import { users, sessions } from "../db/schema.js";
 import { hashPassword, verifyPassword, generateToken } from "../lib/auth.js";
 import { requireAuth } from "../lib/session.js";
+import { isValidAccent } from "../lib/accent.js";
 import type { Env } from "../types.js";
 
 const auth = new Hono<Env>();
@@ -34,7 +35,7 @@ auth.post("/signup", async (c) => {
   const [user] = await db
     .insert(users)
     .values({ email, passwordHash })
-    .returning({ id: users.id, email: users.email });
+    .returning({ id: users.id, email: users.email, accent: users.accent });
 
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -69,13 +70,28 @@ auth.post("/login", async (c) => {
   await db.insert(sessions).values({ userId: user.id, token, expiresAt });
 
   return c.json({
-    user: { id: user.id, email: user.email },
+    user: { id: user.id, email: user.email, accent: user.accent },
     token,
   });
 });
 
 auth.get("/me", requireAuth, async (c) => {
   return c.json({ user: c.get("user") });
+});
+
+// The accent is an account setting, not a browser setting: it is what listeners
+// on a share link see, so it has to outlive the owner's localStorage.
+auth.post("/accent", requireAuth, async (c) => {
+  const { accent } = await c.req.json();
+
+  if (!isValidAccent(accent)) {
+    return c.json({ error: "unsupported accent" }, 400);
+  }
+
+  const db = getDb(c.env.DB);
+  await db.update(users).set({ accent }).where(eq(users.id, c.get("user").id));
+
+  return c.json({ accent });
 });
 
 auth.post("/change-password", requireAuth, async (c) => {

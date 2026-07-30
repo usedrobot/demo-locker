@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { shares, playlists, tracks } from "../db/schema.js";
+import { shares, playlists, tracks, users } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
@@ -199,10 +199,19 @@ sharesRouter.get("/invite/:token", async (c) => {
     .where(eq(tracks.playlistId, share.playlistId))
     .orderBy(tracks.position);
 
+  // Listeners get the owner's accent, so a shared locker looks the way its
+  // owner set it up rather than defaulting to gold on every stranger's browser.
+  const [owner] = await db
+    .select({ accent: users.accent })
+    .from(users)
+    .where(eq(users.id, playlist.ownerId))
+    .limit(1);
+
   return c.json({
     permission: share.permission,
     playlist,
     tracks: trackList,
+    accent: owner?.accent ?? null,
   });
 });
 

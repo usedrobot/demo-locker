@@ -73,16 +73,22 @@ async function request<T>(
 // Auth
 export const auth = {
   signup: (email: string, password: string) =>
-    request<{ user: { id: string; email: string }; token: string }>(
+    request<{ user: { id: string; email: string; accent: string | null }; token: string }>(
       "/auth/signup",
       { method: "POST", body: JSON.stringify({ email, password }) }
     ),
   login: (email: string, password: string) =>
-    request<{ user: { id: string; email: string }; token: string }>(
+    request<{ user: { id: string; email: string; accent: string | null }; token: string }>(
       "/auth/login",
       { method: "POST", body: JSON.stringify({ email, password }) }
     ),
-  me: () => request<{ user: { id: string; email: string } }>("/auth/me"),
+  me: () =>
+    request<{ user: { id: string; email: string; accent: string | null } }>("/auth/me"),
+  setAccent: (accent: string) =>
+    request<{ accent: string }>("/auth/accent", {
+      method: "POST",
+      body: JSON.stringify({ accent }),
+    }),
   logout: () => request("/auth/logout", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ ok: true }>("/auth/change-password", {
@@ -310,7 +316,10 @@ export const shares = {
   revoke: (id: string) =>
     request(`/shares/${id}`, { method: "DELETE" }),
   resolveInvite: (token: string) =>
-    request<{ permission: string; playlist: Playlist; tracks: Track[] }>(
-      `/shares/invite/${token}`
-    ),
+    request<{
+      permission: string;
+      playlist: Playlist;
+      tracks: Track[];
+      accent: string | null;
+    }>(`/shares/invite/${token}`),
 };

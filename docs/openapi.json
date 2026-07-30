@@ -3,7 +3,7 @@
   "info": {
     "title": "Demo Locker API",
     "version": "1.0.0",
-    "description": "API for Demo Locker, a private-by-default demo/playlist sharing service. Most routes require a Bearer session token; media elements (<audio>/<img>) that cannot send an Authorization header instead accept the same token via a `?token=` query parameter (session token OR a per-playlist share/invite token \u2014 both are treated identically). Gated legacy routes never distinguish 'exists but private' from 'does not exist': any access failure returns a generic `{\"error\":\"not found\"}` 404 so private playlist/track/comment IDs cannot be enumerated by probing.",
+    "description": "API for Demo Locker, a private-by-default demo/playlist sharing service. Most routes require a Bearer session token; media elements (<audio>/<img>) that cannot send an Authorization header instead accept the same token via a `?token=` query parameter (session token OR a per-playlist share/invite token — both are treated identically). Gated legacy routes never distinguish 'exists but private' from 'does not exist': any access failure returns a generic `{\"error\":\"not found\"}` 404 so private playlist/track/comment IDs cannot be enumerated by probing.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -51,11 +51,29 @@
           "email": {
             "type": "string",
             "format": "email"
+          },
+          "accent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "#fc0",
+              "#f80",
+              "#4af",
+              "#3f6",
+              "#f6a",
+              "#a6f",
+              "#6cf",
+              null
+            ],
+            "description": "Owner accent colour, one of the shipped palette. Null when never set — clients fall back to #fc0."
           }
         },
         "required": [
           "id",
-          "email"
+          "email",
+          "accent"
         ]
       },
       "Playlist": {
@@ -153,7 +171,7 @@
       },
       "PublicTrackSummary": {
         "type": "object",
-        "description": "Reduced track shape returned by GET /public/v1/playlists/:id \u2014 no storage keys.",
+        "description": "Reduced track shape returned by GET /public/v1/playlists/:id — no storage keys.",
         "properties": {
           "id": {
             "type": "string",
@@ -355,7 +373,7 @@
     "/embed.js": {
       "get": {
         "summary": "Embeddable player bundle",
-        "description": "Serves the built player JS bundle. On the Cloudflare Workers deployment this Hono route never actually executes \u2014 Workers assets are served ahead of the Worker by Cloudflare's assets-first routing, so a built /embed.js asset in the deploy answers the request first. This handler only serves the bundle on Node/standalone (self-hosted) deployments, where it 404s if the player has not been built.",
+        "description": "Serves the built player JS bundle. On the Cloudflare Workers deployment this Hono route never actually executes — Workers assets are served ahead of the Worker by Cloudflare's assets-first routing, so a built /embed.js asset in the deploy answers the request first. This handler only serves the bundle on Node/standalone (self-hosted) deployments, where it 404s if the player has not been built.",
         "operationId": "getEmbedJs",
         "responses": {
           "200": {
@@ -385,7 +403,7 @@
     "/openapi.json": {
       "get": {
         "summary": "This OpenAPI description",
-        "description": "Serves this OpenAPI 3.1 document. On the Cloudflare Workers deployment this Hono route never actually executes \u2014 Workers assets are served ahead of the Worker by Cloudflare's assets-first routing, so a built /openapi.json asset in the deploy answers the request first. This handler only serves the document on Node/standalone (self-hosted) deployments, where it 404s if docs/openapi.json is not present.",
+        "description": "Serves this OpenAPI 3.1 document. On the Cloudflare Workers deployment this Hono route never actually executes — Workers assets are served ahead of the Worker by Cloudflare's assets-first routing, so a built /openapi.json asset in the deploy answers the request first. This handler only serves the document on Node/standalone (self-hosted) deployments, where it 404s if docs/openapi.json is not present.",
         "operationId": "getOpenapiJson",
         "responses": {
           "200": {
@@ -854,7 +872,7 @@
             }
           },
           "404": {
-            "description": "Not found \u2014 returned for private, nonexistent, or inaccessible playlists alike (non-enumerable).",
+            "description": "Not found — returned for private, nonexistent, or inaccessible playlists alike (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1153,7 +1171,7 @@
             }
           },
           "404": {
-            "description": "Not found \u2014 private, nonexistent, or no artwork set (non-enumerable).",
+            "description": "Not found — private, nonexistent, or no artwork set (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1425,7 +1443,7 @@
             }
           },
           "404": {
-            "description": "Not found \u2014 private, nonexistent, or inaccessible (non-enumerable).",
+            "description": "Not found — private, nonexistent, or inaccessible (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1801,7 +1819,7 @@
     "/comments/{id}/resolve": {
       "patch": {
         "summary": "Toggle a comment's resolved state",
-        "description": "Bearer session required and must own the comment's playlist. Unlike the other comment routes this is NOT accessible via share token or `?token=` \u2014 it returns 401 if unauthenticated and 403 (not 404) if authenticated but not the owner, since the comment's existence is already implied by the caller having its id.",
+        "description": "Bearer session required and must own the comment's playlist. Unlike the other comment routes this is NOT accessible via share token or `?token=` — it returns 401 if unauthenticated and 403 (not 404) if authenticated but not the owner, since the comment's existence is already implied by the caller having its id.",
         "operationId": "resolveComment",
         "security": [
           {
@@ -2217,12 +2235,30 @@
                       "items": {
                         "$ref": "#/components/schemas/Track"
                       }
+                    },
+                    "accent": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "#fc0",
+                        "#f80",
+                        "#4af",
+                        "#3f6",
+                        "#f6a",
+                        "#a6f",
+                        "#6cf",
+                        null
+                      ],
+                      "description": "The playlist owner's accent colour, so a shared locker keeps its colours for listeners. Null when the owner never set one."
                     }
                   },
                   "required": [
                     "permission",
                     "playlist",
-                    "tracks"
+                    "tracks",
+                    "accent"
                   ]
                 }
               }
@@ -2431,6 +2467,94 @@
           }
         },
         "security": []
+      }
+    },
+    "/auth/accent": {
+      "post": {
+        "summary": "Set the account accent colour",
+        "description": "Account-level, not per-browser: this is the colour listeners see on a share link. Values outside the shipped palette are rejected — the value is written into a CSS custom property client-side.",
+        "operationId": "setAccent",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accent": {
+                    "type": "string",
+                    "enum": [
+                      "#fc0",
+                      "#f80",
+                      "#4af",
+                      "#3f6",
+                      "#f6a",
+                      "#a6f",
+                      "#6cf"
+                    ]
+                  }
+                },
+                "required": [
+                  "accent"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accent stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accent": {
+                      "type": "string",
+                      "enum": [
+                        "#fc0",
+                        "#f80",
+                        "#4af",
+                        "#3f6",
+                        "#f6a",
+                        "#a6f",
+                        "#6cf"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "accent"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Accent outside the supported palette.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

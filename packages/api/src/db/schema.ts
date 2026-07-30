@@ -7,6 +7,11 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey().$defaultFn(generateId),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  // Owner's accent colour, one of ACCENTS in lib/accent.ts. Nullable = never
+  // set, so the client falls back to the default. It lives on the user rather
+  // than the browser because listeners on a share link should see the owner's
+  // colour, and it travels with the invite response.
+  accent: text("accent"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
 

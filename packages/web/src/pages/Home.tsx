@@ -188,8 +188,12 @@ export default function Home({ onSelect, onLogout }: Props) {
           </button>
           <button
             onClick={() => {
-              cycleAccent();
+              const next = cycleAccent();
               setAccentTick((n) => n + 1);
+              // Persist to the account — this is what share-link listeners see.
+              // The local switch already happened, so a failed write costs the
+              // sync, not the interaction.
+              auth.setAccent(next).catch(() => {});
             }}
             title="Change accent color"
             aria-label="Change accent color"

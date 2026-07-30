@@ -12,10 +12,28 @@ function formatTime(s: number): string {
 }
 
 const SPECTRUM_BARS = 16;
+const SPECTRUM_BARS_NARROW = 8;
+
+// The meter is fixed-width monospace, so at 16 bars it eats a phone's whole
+// transport row and the track title gets ellipsed down to one letter. Half the
+// bars still reads as a meter and leaves the title something to show.
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(
+    () => typeof matchMedia === "function" && matchMedia("(max-width: 640px)").matches
+  );
+  useEffect(() => {
+    const mq = matchMedia("(max-width: 640px)");
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
+}
 
 // Live TUI spectrum — block characters driven by a Web Audio analyser.
 function Spectrum({ playing }: { playing: boolean }) {
-  const [frame, setFrame] = useState("▁".repeat(SPECTRUM_BARS));
+  const bars = useNarrow() ? SPECTRUM_BARS_NARROW : SPECTRUM_BARS;
+  const [frame, setFrame] = useState("▁".repeat(bars));
 
   useEffect(() => {
     if (!playing) return;
@@ -24,13 +42,13 @@ function Spectrum({ playing }: { playing: boolean }) {
     const tick = (t: number) => {
       if (t - last > 66) {
         last = t;
-        setFrame(spectrumFrame(SPECTRUM_BARS));
+        setFrame(spectrumFrame(bars));
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, bars]);
 
   return (
     <span
@@ -45,19 +63,30 @@ function Spectrum({ playing }: { playing: boolean }) {
         userSelect: "none",
       }}
     >
-      {playing ? frame : "▁".repeat(SPECTRUM_BARS)}
+      {playing ? frame : "▁".repeat(bars)}
     </span>
   );
 }
 
 const WAVEFORM_HEIGHT = 88;
 const MARKER_SIZE = 26;
+const MINIMIZED_KEY = "playerMinimized";
 
 export default function Player() {
   const [state, setState] = useState(player.getState());
   const [trackComments, setTrackComments] = useState<Comment[]>([]);
   const [hoverScrub, setHoverScrub] = useState<{ x: number; time: number } | null>(null);
+  const [minimized, setMinimized] = useState(
+    () => localStorage.getItem(MINIMIZED_KEY) === "1"
+  );
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  function toggleMinimized() {
+    setMinimized((v) => {
+      localStorage.setItem(MINIMIZED_KEY, v ? "0" : "1");
+      return !v;
+    });
+  }
 
   useEffect(() => player.subscribe(setState), []);
 
@@ -155,7 +184,10 @@ export default function Player() {
         ctx.fillRect(x, top + cIdx * cellH, Math.max(colW - 1, 1), cellH - 1);
       }
     }
-  }, [waveformData, progress]);
+    // `minimized` is a dep because the canvas unmounts while collapsed — on
+    // restore it is a fresh, blank element that needs drawing again, and a
+    // paused track produces no progress change to trigger that on its own.
+  }, [waveformData, progress, minimized]);
 
   function handleScrub(e: React.MouseEvent<HTMLDivElement>) {
     if (!duration) return;
@@ -213,20 +245,22 @@ export default function Player() {
       >
         ─ now playing ─
       </span>
-      <div className="player-inner">
+      <div className={`player-inner${minimized ? " player-inner-min" : ""}`}>
         {/* Artwork thumb */}
-        <div className="player-artwork">
-          {artworkSrc && (
-            <img
-              src={artworkSrc}
-              alt=""
-              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-          )}
-        </div>
+        {!minimized && (
+          <div className="player-artwork">
+            {artworkSrc && (
+              <img
+                src={artworkSrc}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            )}
+          </div>
+        )}
 
         {/* Controls + waveform column */}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -256,8 +290,18 @@ export default function Player() {
             <span className="player-time">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
+            <button
+              onClick={toggleMinimized}
+              className="player-key"
+              title={minimized ? "Expand player" : "Minimize player"}
+              aria-label={minimized ? "Expand player" : "Minimize player"}
+              aria-expanded={!minimized}
+            >
+              {minimized ? "[▴]" : "[▾]"}
+            </button>
           </div>
 
+          {!minimized && (
           <div
             className="player-waveform-wrap"
             style={{ position: "relative", width: "100%", height: WAVEFORM_HEIGHT }}
@@ -386,6 +430,7 @@ export default function Player() {
                 );
               })}
           </div>
+          )}
         </div>
       </div>
     </div>

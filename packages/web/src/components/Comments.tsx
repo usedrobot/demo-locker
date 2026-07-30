@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from "react";
 import { comments as api, type Comment } from "../lib/api";
 import { avatarColor } from "../lib/avatar";
 
@@ -218,7 +218,7 @@ export default function Comments({
             required
             style={{ ...inputStyle, flex: 1 }}
           />
-          <button type="submit" style={btnStyle}>
+          <button type="submit" className="tui-btn">
             [send]
           </button>
         </div>
@@ -281,14 +281,8 @@ function CommentThread({
   const canDelete = isOwner || !!ownDeleteTokens[comment.id];
 
   return (
-    <div
-      style={{
-        padding: "0.5rem 0",
-        borderBottom: "1px solid var(--border)",
-        opacity: resolved ? 0.5 : 1,
-      }}
-    >
-      <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+    <div className="comment" style={{ opacity: resolved ? 0.5 : 1 }}>
+      <div className="comment-meta">
         <span
           aria-hidden
           style={{
@@ -342,70 +336,106 @@ function CommentThread({
             {formatTime(comment.timestampSec)}
           </button>
         )}
-        <span style={{ color: "var(--fg)", fontSize: "12px" }}>
-          {comment.authorName}
-        </span>
-        <span
-          style={{
-            flex: 1,
-            textDecoration: resolved ? "line-through" : "none",
-          }}
-        >
-          {comment.body}
-        </span>
-        {isOwner && (
+        <span className="comment-author">{comment.authorName}</span>
+        <span className="comment-actions">
+          {isOwner && (
+            <button
+              onClick={() => onResolve(comment)}
+              style={{
+                ...linkBtn,
+                color: resolved ? "var(--fg-dim)" : "#6c6",
+                fontSize: "12px",
+              }}
+              title={resolved ? "Mark as open" : "Mark as resolved"}
+            >
+              {resolved ? (
+                "[reopen]"
+              ) : (
+                <>
+                  [✓<span className="hide-narrow"> resolve</span>]
+                </>
+              )}
+            </button>
+          )}
           <button
-            onClick={() => onResolve(comment)}
-            style={{
-              ...linkBtn,
-              color: resolved ? "var(--fg-dim)" : "#6c6",
-              fontSize: "12px",
-            }}
-            title={resolved ? "Mark as open" : "Mark as resolved"}
-          >
-            {resolved ? "[reopen]" : "[✓ resolve]"}
-          </button>
-        )}
-        <button
-          onClick={() => onReply(comment.id)}
-          style={{ ...linkBtn, color: "var(--fg-dim)", fontSize: "12px" }}
-        >
-          [reply]
-        </button>
-        {canDelete && (
-          <button
-            onClick={() => onDelete(comment)}
+            onClick={() => onReply(comment.id)}
             style={{ ...linkBtn, color: "var(--fg-dim)", fontSize: "12px" }}
-            title="Delete comment"
+            title="Reply"
           >
-            [x]
+            [reply]
           </button>
-        )}
+          {canDelete && (
+            <button
+              onClick={() => onDelete(comment)}
+              style={{ ...linkBtn, color: "var(--fg-dim)", fontSize: "12px" }}
+              title="Delete comment"
+            >
+              [x]
+            </button>
+          )}
+        </span>
       </div>
 
+      <CommentBody body={comment.body} resolved={resolved} />
+
       {comment.replies && comment.replies.length > 0 && (
-        <div style={{ marginLeft: "2rem", marginTop: "0.25rem" }}>
+        <div className="comment-replies">
           {comment.replies.map((reply) => (
-            <div
-              key={reply.id}
-              style={{
-                display: "flex",
-                gap: "0.75rem",
-                alignItems: "baseline",
-                padding: "0.25rem 0",
-                color: "var(--fg-dim)",
-              }}
-            >
-              <span style={{ fontSize: "12px" }}>└</span>
-              <span style={{ color: "var(--accent)", fontSize: "12px" }}>
-                {reply.authorName}
-              </span>
-              <span>{reply.body}</span>
+            <div key={reply.id} className="comment-reply">
+              <div className="comment-reply-meta">
+                <span>└</span>
+                <span style={{ color: "var(--accent)" }}>{reply.authorName}</span>
+              </div>
+              <CommentBody body={reply.body} resolved={false} />
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// Long comment bodies collapse to three lines with a [more] toggle. The toggle
+// only appears when the text actually overflows, so short comments look
+// untouched. Measured rather than guessed from length — the clamp depends on
+// the rendered width, which changes with the viewport.
+function CommentBody({ body, resolved }: { body: string; resolved: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  useLayoutEffect(() => {
+    // Only measurable while clamped — expanded, scrollHeight equals clientHeight
+    // and the flag would flip back off, taking the [less] button with it.
+    if (expanded) return;
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [body, expanded]);
+
+  return (
+    <>
+      <div
+        ref={ref}
+        className={`comment-body${expanded ? "" : " is-clamped"}`}
+        style={{ textDecoration: resolved ? "line-through" : "none" }}
+      >
+        {body}
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          className="comment-more"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "[less]" : "[more]"}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -416,16 +446,6 @@ const inputStyle: React.CSSProperties = {
   fontFamily: "var(--font)",
   fontSize: "13px",
   padding: "0.4rem 0.5rem",
-};
-
-const btnStyle: React.CSSProperties = {
-  background: "none",
-  border: "1px solid var(--border)",
-  color: "var(--accent)",
-  fontFamily: "var(--font)",
-  fontSize: "13px",
-  padding: "0.4rem 0.75rem",
-  cursor: "pointer",
 };
 
 const linkBtn: React.CSSProperties = {

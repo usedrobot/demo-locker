@@ -86,7 +86,7 @@ a {
 }
 
 .ascii-logo {
-  --cols: 101; /* logo-art.ts ART is 101 columns wide */
+  --cols: 110; /* logo-art.ts ART is 110 columns wide */
   --cap: 11px;
   color: var(--accent);
   font-family: var(--font);
@@ -144,6 +144,126 @@ button:active {
   opacity: 0.6;
 }
 
+/* bracketed action buttons — [+ share link], [+ add tracks], [send].
+   These sit in flex rows beside flexible siblings, so without nowrap + flex:none
+   the bracket label wraps mid-word and every button ends up a different height. */
+.tui-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* Sharing action row: buttons first, hint text allowed to drop to its own line
+   rather than squeezing the buttons. */
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.share-hint {
+  color: var(--fg-dim);
+  font-size: 11px;
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+/* comments
+   Meta (avatar / timestamp / author / actions) sits on its own line and the body
+   gets the full width below it. Body and actions used to share one flex row, so
+   a long comment wrapped into a tall narrow column with the action buttons
+   floating somewhere beside it — unreadable on a phone. */
+.comment {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.comment-author {
+  color: var(--fg);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+}
+.comment-body {
+  margin-top: 0.25rem;
+  /* line up under the author, past the avatar */
+  margin-left: calc(22px + 0.6rem);
+  overflow-wrap: anywhere;
+}
+/* Long bodies collapse to three lines with a [more] toggle rather than pushing
+   every other comment off the screen. */
+.comment-body.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.comment-more {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 0.15rem;
+  margin-left: calc(22px + 0.6rem);
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+}
+.comment-replies {
+  margin-left: calc(22px + 0.6rem);
+  margin-top: 0.25rem;
+}
+.comment-reply {
+  padding: 0.25rem 0;
+  color: var(--fg-dim);
+}
+.comment-reply-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 12px;
+}
+.comment-reply .comment-body,
+.comment-reply .comment-more {
+  margin-left: 1rem;
+}
+
+@media (max-width: 560px) {
+  /* drop secondary words from action labels so the meta row stays one line */
+  .hide-narrow {
+    display: none;
+  }
+  .comment-body,
+  .comment-more,
+  .comment-replies {
+    margin-left: 0;
+  }
+  .comment-reply .comment-body,
+  .comment-reply .comment-more {
+    margin-left: 0.9rem;
+  }
+}
+
 /* player transport keys — bare CLI-style bracket buttons */
 .player-key {
   background: transparent;
@@ -180,6 +300,14 @@ button:active {
   display: flex;
   align-items: center;
   gap: 1.25rem;
+}
+/* Minimized: artwork and waveform are gone, so the bar is just the transport
+   row — trim the padding that was there to give the waveform breathing room. */
+.player-inner-min {
+  padding: 0.5rem 1.5rem 0.6rem;
+}
+.player-inner-min .player-controls-row {
+  margin-bottom: 0;
 }
 .player-artwork {
   width: 96px;
@@ -263,6 +391,9 @@ button:active {
   .player-inner {
     padding: 0.9rem 1rem 1rem;
     gap: 0.75rem;
+  }
+  .player-inner-min {
+    padding: 0.45rem 1rem 0.55rem;
   }
   .player-artwork {
     width: 56px;

@@ -95,12 +95,12 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem", alignItems: "center" }}>
-        <button onClick={handleCreate} style={btnStyle}>
+      <div className="share-actions">
+        <button onClick={handleCreate} className="tui-btn">
           [+ share link]
         </button>
         {extraAction}
-        <span style={{ color: "var(--fg-dim)", fontSize: "11px" }}>
+        <span className="share-hint">
           links start listen-only — grant edit from the access panel on the main page
         </span>
       </div>
@@ -121,14 +121,4 @@ const linkBtn: React.CSSProperties = {
   fontSize: "12px",
   cursor: "pointer",
   padding: 0,
-};
-
-const btnStyle: React.CSSProperties = {
-  background: "none",
-  border: "1px solid var(--border)",
-  color: "var(--accent)",
-  fontFamily: "var(--font)",
-  fontSize: "13px",
-  padding: "0.4rem 0.75rem",
-  cursor: "pointer",
 };

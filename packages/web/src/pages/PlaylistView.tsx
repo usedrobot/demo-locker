@@ -207,15 +207,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
             isOwner ? (
               <button
                 onClick={() => (showAddTracks ? setShowAddTracks(false) : openAddTracks())}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--border)",
-                  color: "var(--accent)",
-                  fontFamily: "var(--font)",
-                  fontSize: "13px",
-                  padding: "0.4rem 0.75rem",
-                  cursor: "pointer",
-                }}
+                className="tui-btn"
               >
                 [+ add tracks]
               </button>

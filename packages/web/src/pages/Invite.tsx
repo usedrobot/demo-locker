@@ -12,7 +12,7 @@ import Comments from "../components/Comments";
 function PoweredBy() {
   return (
     <div style={{ color: "var(--fg-dim)", fontSize: "11px", letterSpacing: "0.08em" }}>
-      ♪ powered by demo locker
+      ♪ powered by Demo Locker
     </div>
   );
 }

@@ -13,3 +13,6 @@ dump.sql
 # which lands real password hashes and session tokens in here. Same hazard as
 # dump.sql above, different path.
 .wrangler/
+
+# Superpowers brainstorming mockups (local design scratch, not build output)
+.superpowers/

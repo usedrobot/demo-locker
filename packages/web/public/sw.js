@@ -1,5 +1,12 @@
 // v4 evicts the v3 caches, which could be holding API responses — see below.
-const CACHE_NAME = "demo-locker-v4";
+//
+// v5 evicts v4 to ship the new logo mark. favicon.svg, manifest.json and the
+// icon-*.png files are all cache-first below with no revalidation, so a visitor
+// who loaded the site before the redesign would keep serving the old artwork
+// out of their own cache indefinitely — the deploy would look like it silently
+// failed for exactly the people who use the app most. Any future change to a
+// CACHE_FIRST asset that keeps its filename needs this bumped too.
+const CACHE_NAME = "demo-locker-v5";
 const SHELL_ASSETS = ["/", "/index.html"];
 
 // Only build output is safe to serve cache-first, and this is an allowlist

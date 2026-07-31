@@ -38,12 +38,14 @@ Geometry, for anyone regenerating it: 32×32 viewBox. Shackle centered at (16, 1
 
 ### Companion for 16px
 
-Four 2.6-unit bars render at roughly 1.3 device pixels in a 16px favicon and blur into a stripe. The companion keeps the identical silhouette, shackle, and body but carries three 3.6-unit bars — heights 6 / 12 / 8, preserving the full mark's low–tall–mid contour. It is used **only** at favicon size; anywhere with room gets the full mark.
+Four 2.6-unit bars render at roughly 1.3 device pixels in a 16px favicon and blur into a stripe. The companion keeps the identical silhouette, shackle, and body but carries three 4.4-unit bars — heights 5 / 9 / 6.5, left edges at x = 6.4 / 13.8 / 21.2, preserving the full mark's low–tall–mid contour. It is used **only** at favicon size; anywhere with room gets the full mark.
 
 ```svg
 <path d="M8.8 14V10a7.2 7.2 0 0 1 14.4 0v4h-3.4v-4a3.8 3.8 0 0 0-7.6 0v4z"/>
-<path fill-rule="evenodd" d="M6.4 13.5h19.2a2.4 2.4 0 0 1 2.4 2.4v11.7a2.4 2.4 0 0 1-2.4 2.4H6.4a2.4 2.4 0 0 1-2.4-2.4V15.9a2.4 2.4 0 0 1 2.4-2.4ZM7.6 22.95v-2.4a1.8 1.8 0 0 1 3.6 0v2.4a1.8 1.8 0 0 1-3.6 0ZM14.2 25.95v-8.4a1.8 1.8 0 0 1 3.6 0v8.4a1.8 1.8 0 0 1-3.6 0ZM20.8 23.95v-4.4a1.8 1.8 0 0 1 3.6 0v4.4a1.8 1.8 0 0 1-3.6 0Z"/>
+<path fill-rule="evenodd" d="M6.4 13.5h19.2a2.4 2.4 0 0 1 2.4 2.4v11.7a2.4 2.4 0 0 1-2.4 2.4H6.4a2.4 2.4 0 0 1-2.4-2.4V15.9a2.4 2.4 0 0 1 2.4-2.4ZM6.4 22.05v-0.6a2.2 2.2 0 0 1 4.4 0v0.6a2.2 2.2 0 0 1-4.4 0ZM13.8 24.05v-4.6a2.2 2.2 0 0 1 4.4 0v4.6a2.2 2.2 0 0 1-4.4 0ZM21.2 22.8v-2.1a2.2 2.2 0 0 1 4.4 0v2.1a2.2 2.2 0 0 1-4.4 0Z"/>
 ```
+
+**Bar heights are capped by the body, not by the contour.** A first pass used heights 6 / 12 / 8, which at 16px left under one device pixel of lock body above and below the tallest bar — the waveform stopped reading as *inside* the lock and became a slot cutting through it. The 9-unit cap keeps 3.75 units (~1.5px at 16) of body margin top and bottom. Any future adjustment to the companion must preserve that margin; it is the constraint that makes the mark legible at favicon size.
 
 ### Plate
 

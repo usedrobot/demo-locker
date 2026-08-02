@@ -46,6 +46,22 @@
       <pre id="npx" class="prompt">npx demo-locker</pre>
       <button id="copy-npx" class="btn" type="button" data-target="npx">[copy]</button>
     </div>
+
+    <p class="or">Or just run the container yourself:</p>
+
+    <div class="prompt-box">
+      <pre id="docker" class="prompt">docker run -d -v demolocker:/data -p 3001:3001 ghcr.io/usedrobot/demo-locker:latest</pre>
+      <button id="copy-docker" class="btn" type="button" data-target="docker">[copy]</button>
+    </div>
+
+    <p class="fineprint">
+      Multi-arch image, runs on a Pi. Everything lives in one volume: embedded
+      SQLite, your audio on local disk, no external services required. Point it
+      at S3 or R2 instead if you'd rather. See
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/self-hosting.md">self-hosting</a>,
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">host your music</a>
+      and <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/upgrading.md">upgrading</a>.
+    </p>
   </section>
 
   <img

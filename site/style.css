@@ -212,11 +212,20 @@ ul.plain strong {
   margin-bottom: 0.9rem;
 }
 
-/* the hinge between the two ways in — reads as a second lead-in to the box
-   below it, so it matches .cta-lead rather than sitting centred between them. */
+/* the hinge between the ways in — reads as another lead-in to the box below
+   it, so it matches .cta-lead rather than sitting centred between them. */
 .or {
   color: var(--fg-dim);
   margin: 1.75rem 0 0.9rem;
+}
+
+/* trailing note under the last CTA. Smaller and dimmer than .or so it reads
+   as a footnote to the docker box, not as a fourth way in. */
+.fineprint {
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 0.9rem;
 }
 
 /* One screenshot, centred. This was a swipable three-shot strip; the extra

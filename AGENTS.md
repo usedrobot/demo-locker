@@ -295,3 +295,16 @@ docker run --rm -v demolocker:/data -v $(pwd):/backup alpine tar czf /backup/dem
 expect: `demolocker-backup.tar.gz` appears in the current directory. See
 [docs/host-your-music.md](docs/host-your-music.md#backing-up) for the
 restore command and off-machine backup advice.
+
+## Upgrading an existing install
+
+This runbook **creates** a locker. If one already exists and the human wants
+it moved to a newer version, use
+[docs/upgrading.md](docs/upgrading.md) instead — it has the per-path commands
+and the two rules that are easy to get wrong:
+
+- On Cloudflare, apply D1 migrations **before** `wrangler deploy`. The ORM
+  selects every column explicitly, so a Worker running ahead of its migration
+  breaks every read of any table that gained a column.
+- Never add `-v` to `docker rm` / `docker compose down`, and never
+  `docker volume rm`. That deletes the database and the audio.

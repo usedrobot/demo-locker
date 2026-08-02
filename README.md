@@ -76,6 +76,9 @@ it — collaborators arrive by share link and need no account of their own. Acce
 settings, storage quotas and the reporting process are in
 [docs/self-hosting.md](docs/self-hosting.md) and [SECURITY.md](SECURITY.md).
 
+Moving an existing locker to a newer version — for every install path, including
+Cloudflare — is [docs/upgrading.md](docs/upgrading.md).
+
 ## Stack
 
 | Layer | Choice |

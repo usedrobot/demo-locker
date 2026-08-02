@@ -199,6 +199,13 @@ your files close to listeners so your server doesn't serve every request
 directly) in front of it, or a hosted Demo Locker plan we manage for you
 (coming).
 
+## Keeping it up to date
+
+New versions ship regularly. Updating keeps your tracks, playlists and
+comments — the data lives in a volume that the update doesn't touch. The
+commands for each way of running it are in [Upgrading](upgrading.md). Back up
+first anyway; it's the next section.
+
 ## Backing up
 
 Everything that matters lives in the `/data` volume — your tracks and

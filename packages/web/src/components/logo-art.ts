@@ -6,3 +6,27 @@ export const ART = ` ██████████                             
  ░███    ███ ░███░░░   ░███ ░███ ░███ ░███ ░███    ░███      █░███ ░███░███  ███ ░███░░███ ░███░░░   ░███
  ██████████  ░░██████  █████░███ █████░░██████     ███████████░░██████ ░░██████  ████ █████░░██████  █████
 ░░░░░░░░░░    ░░░░░░  ░░░░░ ░░░ ░░░░░  ░░░░░░     ░░░░░░░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░  ░░░░░`;
+
+// Narrow-screen wordmark: the same DOS Rebel font, stacked onto two lines.
+// One line is 110 columns, which on a 412px phone solves to ~5.4px type — a 3.2px
+// glyph cell. Block-drawing characters have to tile exactly, and at a fractional
+// advance they land on different subpixel boundaries and the letterforms come
+// apart (e, k and r first, they carry the most half-blocks). Stacking halves the
+// column count to 60, which doubles the type to ~9.8px and makes it tile cleanly.
+// Shrinking further makes it worse, not better.
+export const ART_STACKED = ` ██████████
+░░███░░░░███
+ ░███   ░░███  ██████  █████████████    ██████
+ ░███    ░███ ███░░███░░███░░███░░███  ███░░███
+ ░███    ░███░███████  ░███ ░███ ░███ ░███ ░███
+ ░███    ███ ░███░░░   ░███ ░███ ░███ ░███ ░███
+ ██████████  ░░██████  █████░███ █████░░██████
+░░░░░░░░░░    ░░░░░░  ░░░░░ ░░░ ░░░░░  ░░░░░░
+ █████                         █████
+░░███                         ░░███
+ ░███         ██████   ██████  ░███ █████  ██████  ████████
+ ░███        ███░░███ ███░░███ ░███░░███  ███░░███░░███░░███
+ ░███       ░███ ░███░███ ░░░  ░██████░  ░███████  ░███ ░░░
+ ░███      █░███ ░███░███  ███ ░███░░███ ░███░░░   ░███
+ ███████████░░██████ ░░██████  ████ █████░░██████  █████
+░░░░░░░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░  ░░░░░`;

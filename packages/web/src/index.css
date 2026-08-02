@@ -79,10 +79,11 @@ a {
   container-type: inline-size;
   width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .ascii-fit > .ascii-logo {
-  font-size: clamp(4px, calc(100cqw / (var(--cols) * 0.61)), var(--cap));
+  font-size: clamp(var(--floor, 4px), calc(100cqw / (var(--cols) * 0.61)), var(--cap));
 }
 
 .ascii-logo {
@@ -96,13 +97,67 @@ a {
   user-select: none;
 }
 
+/* Two wordmarks ship; the breakpoint picks one. The one-line mark is 110
+   columns, which on a 412px phone solves to ~5.4px type — a 3.2px glyph cell.
+   DOS Rebel builds every letter from block characters that must tile exactly,
+   and at a fractional advance each one lands on a different subpixel boundary,
+   so the letterforms come apart. Stacking halves the columns to 60 and roughly
+   doubles the type, which is the whole fix — sizing it DOWN makes it worse. */
+.logo-stacked {
+  --cols: 60; /* logo-art.ts ART_STACKED */
+  /* Lower cap than the one-line mark: stacking doubles the row count from 8 to
+     16, so the same type size would make the wordmark ~210px tall and swallow
+     the top of a phone screen. 8px lands it at ~154px and the glyph advance is
+     still 4.8px, well clear of where the blocks stop tiling. */
+  --cap: 8px;
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .logo-wide {
+    display: none;
+  }
+  .logo-stacked {
+    display: block;
+  }
+}
+
 /* ascii page titles (playlist names) — --cols is set inline per title, since it
-   depends on the rendered figlet width. Scrolls rather than clips if a title is
-   long enough to bottom out at the 4px floor. */
+   depends on the rendered figlet width.
+
+   A long title used to shrink until it fit, bottoming out at a 4px floor where
+   the block glyphs stop tiling and the name turns to mush — the same failure as
+   the one-line logo on a phone. So the floor is 7px, which the letterforms
+   survive, and a title that no longer fits drifts instead of shrinking.
+
+   The travel is `100cqw - 100%`: the container width minus the title's own
+   content width, i.e. exactly how much is hidden. `min(0px, ...)` makes that
+   zero for a title that already fits, so short names sit perfectly still and
+   only the ones that actually overflow move. No JS, no measurement, and it
+   re-solves on rotate. */
 .ascii-title {
   --cap: 8px;
+  --floor: 7px;
   color: var(--accent);
-  overflow-x: auto;
+  width: max-content;
+  animation: ascii-drift 14s ease-in-out infinite alternate;
+}
+
+@keyframes ascii-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(min(0px, calc(100cqw - 100%)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ascii-title {
+    animation: none;
+    overflow-x: auto;
+    width: auto;
+  }
 }
 
 /* TUI box */

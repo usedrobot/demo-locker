@@ -209,6 +209,9 @@ export async function executePlan(
     }
   }
 
+  // afterHealthySteps live inside this block on purpose: with no health check
+  // there is no "proven" to wait for, so there is nothing that would make the
+  // destructive cleanup safe to run. Every plan that sets them sets healthUrl.
   if (plan.healthUrl) {
     io.output.write(`→ waiting for ${plan.healthUrl}\n`);
     if (!(await waitHealthy(plan.healthUrl, runner))) {

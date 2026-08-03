@@ -197,14 +197,30 @@ function runnerWith(responses: Record<string, string>): Runner {
 }
 
 describe("resolveInstance", () => {
-  it("uses explicit flags without probing at all", async () => {
-    const runner = runnerWith({});
+  it("resolves the D1 id by name when given explicit flags, without full discovery probing", async () => {
+    const runner = runnerWith({
+      "npx wrangler d1 list": D1_JSON,
+    });
     const res = await resolveInstance(
-      { target: "cloudflare", workerName: "w", d1Name: "d", r2Bucket: "r", domain: "h" },
+      { target: "cloudflare", workerName: "w", d1Name: "demo-locker-dlisok-db", r2Bucket: "r", domain: "h" },
       runner,
     );
     expect(res.ok).toBe(true);
-    expect(runner.execCapture).not.toHaveBeenCalled();
+    if (res.ok) expect(res.instance).toMatchObject({ d1Id: "ca6096da-2ca9-4dfa-ba22-5f154cc0a322" });
+    // Only the D1 lookup ran — not docker probing or the deployments/bucket checks.
+    expect(runner.execCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails clearly when the named D1 database cannot be found on this account", async () => {
+    const runner = runnerWith({
+      "npx wrangler d1 list": D1_JSON,
+    });
+    const res = await resolveInstance(
+      { target: "cloudflare", workerName: "w", d1Name: "does-not-exist-db", r2Bucket: "r", domain: "h" },
+      runner,
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/does-not-exist-db/);
   });
 
   it("finds a single docker instance", async () => {

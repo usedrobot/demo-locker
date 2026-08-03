@@ -29,6 +29,9 @@ export const ASSETS_DIR = "demo-locker";
  */
 const PACKAGED_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
+/** Alias for upgrade.ts, which stages the same packaged deployable. */
+export const PACKAGED_ASSETS_FOR_UPGRADE = PACKAGED_ASSETS;
+
 // Every mounted API prefix needs BOTH the bare path and the wildcard.
 // `/playlists/*` does not match bare `/playlists` — verified against a real
 // Worker: with only the wildcard, `/playlists/x` reaches the Worker but
@@ -52,7 +55,12 @@ const API_PATHS = [
   "/public/v1/*",
 ];
 
-function wranglerConfig(cf: NonNullable<Answers["cloudflare"]>): string {
+export function wranglerConfig(cf: {
+  workerName: string;
+  d1Name: string;
+  r2Bucket: string;
+  domain: string | null;
+}): string {
   const config: Record<string, unknown> = {
     name: cf.workerName,
     main: "worker.js",

@@ -202,14 +202,32 @@ function applyOverrides(inst: DiscoveredInstance, opts: ResolveOptions): Discove
  */
 export async function resolveInstance(opts: ResolveOptions, runner: Runner): Promise<ResolveResult> {
   if (opts.target === "cloudflare" && opts.workerName) {
+    const workerName = opts.workerName;
+    const d1Name = opts.d1Name ?? `${workerName}-db`;
+    // The explicit-flag path skips discovery, but the D1 id itself is never
+    // supplied on the command line — it has to be looked up by name.
+    // cloudflareUpgrade substitutes this into wrangler.jsonc's database_id, so
+    // an unresolved id here (falling back to "") would ship a Worker pointed
+    // at no database at all.
+    const list = await runner.execCapture("npx", ["wrangler", "d1", "list", "--json"]);
+    const match = list.code === 0 ? parseD1List(list.stdout).find((d) => d.name === d1Name) : undefined;
+    if (!match) {
+      return {
+        ok: false,
+        candidates: [],
+        reason:
+          `No D1 database named "${d1Name}" was found on this account. ` +
+          `Pass --d1-name to match the database wrangler actually created, or check \`npx wrangler d1 list\`.`,
+      };
+    }
     return {
       ok: true,
       instance: {
         target: "cloudflare",
-        workerName: opts.workerName,
-        d1Name: opts.d1Name ?? `${opts.workerName}-db`,
-        d1Id: "",
-        r2Bucket: opts.r2Bucket ?? `${opts.workerName}-demos`,
+        workerName,
+        d1Name,
+        d1Id: match.id,
+        r2Bucket: opts.r2Bucket ?? `${workerName}-demos`,
         domain: opts.domain ?? null,
       },
     };

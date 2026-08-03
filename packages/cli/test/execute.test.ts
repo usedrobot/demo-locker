@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { executePlan } from "../src/execute.js";
+import { executePlan, defaultRunner } from "../src/execute.js";
 import type { Runner } from "../src/execute.js";
 import type { DeployPlan } from "../src/plan.js";
 import { fakeIO } from "./helpers.js";
@@ -21,6 +21,8 @@ function fakeRunner(overrides: Partial<Runner> = {}): Runner & { calls: string[]
     }),
     fetchFn: vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
     sleep: async () => {},
+    mkdtemp: vi.fn(async (prefix: string) => `/tmp/${prefix}fake`),
+    rmDir: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -244,6 +246,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
 
     const code = await executePlan(
@@ -289,6 +293,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
 
     const code = await executePlan(
@@ -316,6 +322,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
     const code = await executePlan(
       {
@@ -341,6 +349,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
 
     const code = await executePlan(
@@ -356,5 +366,17 @@ describe("run-capture", () => {
 
     expect(code).toBe(1);
     expect(read()).toContain("something unexpected");
+  });
+});
+
+describe("Runner temp directories", () => {
+  it("defaultRunner creates a real directory and removes it", async () => {
+    const { io } = fakeIO();
+    const r = defaultRunner(io);
+    const dir = await r.mkdtemp("demo-locker-test-");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(dir)).toBe(true);
+    await r.rmDir(dir);
+    expect(existsSync(dir)).toBe(false);
   });
 });

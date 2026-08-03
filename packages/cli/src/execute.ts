@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { cp, writeFile as fsWriteFile } from "node:fs/promises";
+import { cp, writeFile as fsWriteFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { IO } from "./main.js";
 import type { DeployPlan } from "./plan.js";
@@ -11,6 +13,8 @@ export interface Runner {
   copyDir(from: string, to: string): Promise<void>;
   fetchFn: typeof fetch;
   sleep(ms: number): Promise<void>;
+  mkdtemp(prefix: string): Promise<string>;
+  rmDir(path: string): Promise<void>;
 }
 
 export function defaultRunner(_io: IO): Runner {
@@ -45,6 +49,8 @@ export function defaultRunner(_io: IO): Runner {
     copyDir: (from, to) => cp(from, to, { recursive: true }),
     fetchFn: fetch,
     sleep: (ms) => delay(ms),
+    mkdtemp: (prefix) => mkdtemp(join(tmpdir(), prefix)),
+    rmDir: (path) => rm(path, { recursive: true, force: true }),
   };
 }
 

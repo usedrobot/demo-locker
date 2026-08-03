@@ -64,12 +64,6 @@ const STYLES = `
   max-width: 100%;
 }
 * { box-sizing: border-box; }
-.frame-label {
-  position: absolute; top: -0.7em; left: 12px;
-  background: var(--dl-bg); padding: 0 0.6em;
-  color: var(--dl-muted); font-size: 10px;
-  text-transform: uppercase; letter-spacing: 0.18em; user-select: none;
-}
 .header { display: flex; gap: var(--dl-padding); padding: var(--dl-padding); border-bottom: 1px solid var(--dl-border); align-items: center; }
 .artwork { width: 64px; height: 64px; object-fit: cover; border: 1px solid var(--dl-border); flex: none; }
 .artwork.empty { display: flex; align-items: center; justify-content: center; color: var(--dl-muted); }
@@ -378,7 +372,6 @@ export class DemoLockerPlayer extends HTMLElement {
 
     this.shadow.innerHTML = `
       <style>${STYLES}</style>
-      <span class="frame-label" part="frame-label">─ demo locker ─</span>
       <div class="header" part="header">
         <div class="artwork-slot"></div>
         <div class="title" part="title"></div>

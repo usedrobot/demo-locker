@@ -66,6 +66,16 @@ export function wranglerConfig(cf: {
   // known to live at a custom domain (see upgrade.ts): belt-and-suspenders
   // alongside `routes` so a config bug or a future wrangler default change
   // can't silently turn on a second, public front door.
+  //
+  // `false` writes `preview_urls: false` too, and that is not optional.
+  // wrangler 4.80.0 `getSubdomainValues` defaults workers_dev from the routes
+  // block but defaults preview_urls to `undefined`; `subdomainDeploy` then
+  // POSTs `previews_enabled: undefined`, which JSON.stringify omits, so the
+  // account keeps whatever Preview URLs setting it already had. Turning off
+  // workers.dev without saying anything about preview_urls therefore leaves a
+  // per-version *.workers.dev URL live. wrangler warns about exactly this
+  // combination — but not under isNonInteractiveOrCI(), which is how the CLI
+  // runs it. Writing both keys is the only way to actually close both doors.
   workersDev?: boolean;
 }): string {
   const config: Record<string, unknown> = {
@@ -93,6 +103,7 @@ export function wranglerConfig(cf: {
   }
   if (cf.workersDev === false) {
     config.workers_dev = false;
+    config.preview_urls = false;
   }
   return JSON.stringify(config, null, 2) + "\n";
 }

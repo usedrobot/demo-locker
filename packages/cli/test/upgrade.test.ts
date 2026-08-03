@@ -42,12 +42,22 @@ describe("buildUpgradePlan cloudflare", () => {
   // for why discovery can't yet distinguish "no custom domain" from "domain
   // unknown", which is why buildUpgradePlan refuses outright below rather than
   // ever emitting a routes-less upgrade config.
-  it("writes workers_dev: false into the upgrade config", () => {
+  //
+  // `preview_urls` must go with it. In wrangler 4.80.0, getSubdomainValues()
+  // computes `workers_dev = config.workers_dev ?? (routes.length === 0)` but
+  // `preview_urls = config.preview_urls ?? undefined`, and subdomainDeploy()
+  // then POSTs `previews_enabled: undefined` — which JSON.stringify DROPS, so
+  // the server keeps whatever Preview URLs setting the Worker already had.
+  // Disabling workers.dev therefore does NOT disable Preview URLs, and
+  // wrangler's own warning about that combination is skipped under
+  // isNonInteractiveOrCI() — exactly how this CLI drives it. Both keys, always.
+  it("writes workers_dev: false AND preview_urls: false into the upgrade config", () => {
     const write = buildUpgradePlan(cf, "/tmp/stage").steps.find(
       (s): s is Extract<Step, { kind: "write" }> => s.kind === "write",
     )!;
     const config = JSON.parse(write.contents.replace("__DATABASE_ID__", cf.d1Id));
     expect(config.workers_dev).toBe(false);
+    expect(config.preview_urls).toBe(false);
   });
 
   // The whole point of resolving the id (rather than reusing the empty-id

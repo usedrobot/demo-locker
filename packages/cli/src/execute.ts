@@ -8,7 +8,17 @@ import type { DeployPlan } from "./plan.js";
 
 export interface Runner {
   exec(cmd: string, args: string[]): Promise<number>;
-  execCapture(cmd: string, args: string[]): Promise<{ code: number; stdout: string }>;
+  /**
+   * `quiet` suppresses the live echo to this process's stdout. Only for
+   * lookups whose output is machinery, not information — e.g. probing whether
+   * an image tag exists, where `docker manifest inspect` would otherwise dump
+   * a page of JSON into the middle of an upgrade.
+   */
+  execCapture(
+    cmd: string,
+    args: string[],
+    opts?: { quiet?: boolean },
+  ): Promise<{ code: number; stdout: string }>;
   writeFile(path: string, contents: string): Promise<void>;
   copyDir(from: string, to: string): Promise<void>;
   fetchFn: typeof fetch;
@@ -29,14 +39,14 @@ export function defaultRunner(_io: IO): Runner {
         );
         child.on("close", (code) => resolve(code ?? 1));
       }),
-    execCapture: (cmd, args) =>
+    execCapture: (cmd, args, opts) =>
       new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, { stdio: ["inherit", "pipe", "inherit"] });
+        const child = spawn(cmd, args, { stdio: ["inherit", "pipe", opts?.quiet ? "ignore" : "inherit"] });
         let stdout = "";
         child.stdout.on("data", (chunk) => {
           const text = chunk.toString();
           stdout += text;
-          process.stdout.write(text);
+          if (!opts?.quiet) process.stdout.write(text);
         });
         child.on("error", (err) =>
           reject(
@@ -91,7 +101,11 @@ function failureHint(cmd: string, args: string[]): string | null {
   if (cmd === "docker" && args[0] === "run") {
     const nameIdx = args.indexOf("--name");
     const name = nameIdx !== -1 ? args[nameIdx + 1] : "<name>";
-    return `a container named like your volume may already exist — try: docker rm -f ${name}`;
+    return (
+      `a container named "${name}" may already exist — try: docker rm -f ${name}\n` +
+      `        if this was an upgrade, the previous container is still here as "${name}-preupgrade" — ` +
+      `put it back with: docker rename ${name}-preupgrade ${name} && docker start ${name}`
+    );
   }
   if (cmd !== "wrangler") return null;
   if (args[0] === "whoami") {
@@ -121,6 +135,22 @@ export async function executePlan(
       continue;
     }
     io.output.write(`→ ${step.title}\n`);
+    if (step.kind === "run-assert") {
+      const { code, stdout } = await runner.execCapture(step.cmd, step.args);
+      if (code !== 0) {
+        io.output.write(`✗ step failed (${step.cmd} exited ${code}): ${step.title}\n`);
+        const hint = failureHint(step.cmd, step.args);
+        if (hint) io.output.write(`  hint: ${hint}\n`);
+        return 1;
+      }
+      // Fails closed: output that doesn't match stops the plan. The point of
+      // this step kind is that a zero exit code is not proof the work happened.
+      if (!new RegExp(step.pattern).test(stdout)) {
+        io.output.write(`✗ ${step.failure}\n`);
+        return 1;
+      }
+      continue;
+    }
     if (step.kind === "run-capture") {
       const { code, stdout } = await runner.execCapture(step.cmd, step.args);
       if (code !== 0) {
@@ -184,9 +214,38 @@ export async function executePlan(
     if (!(await waitHealthy(plan.healthUrl, runner))) {
       io.output.write(`✗ server never became healthy at ${plan.healthUrl}\n`);
       if (plan.appUrl?.includes("localhost")) io.output.write(`  check: docker logs\n`);
+      // The whole reason afterHealthySteps exists is that its work is
+      // destructive and only safe once the new deployment is proven. Say what
+      // was left behind so it can be used to roll back, not hunted for.
+      if (plan.afterHealthySteps?.length) {
+        io.output.write(
+          `  the previous version was left in place and NOT removed — these cleanup steps were skipped:\n`,
+        );
+        for (const s of plan.afterHealthySteps) io.output.write(`    ${s.kind === "note" ? s.text : s.title}\n`);
+      }
       return 1;
     }
     io.output.write(`✓ healthy\n`);
+
+    for (const step of plan.afterHealthySteps ?? []) {
+      if (step.kind === "note") {
+        io.output.write(`${step.text}\n`);
+        continue;
+      }
+      if (step.kind !== "run") {
+        // Nothing else is needed here yet, and quietly skipping a step would
+        // be worse than saying so.
+        io.output.write(`✗ internal error: unsupported post-health step kind "${step.kind}"\n`);
+        return 1;
+      }
+      io.output.write(`→ ${step.title}\n`);
+      const code = await runner.exec(step.cmd, step.args);
+      if (code !== 0) {
+        // The upgrade itself succeeded — the instance is up and serving. Only
+        // cleanup failed, so report it without failing the run.
+        io.output.write(`• could not finish: ${step.title} (${step.cmd} exited ${code}) — clean it up by hand\n`);
+      }
+    }
   }
 
   if (signup && plan.appUrl) {

@@ -1,12 +1,55 @@
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Answers } from "./questions.js";
 
-export const IMAGE = "ghcr.io/usedrobot/demo-locker:latest";
+/** The published image, without a tag. */
+export const IMAGE_REPO = "ghcr.io/usedrobot/demo-locker";
+
+/** A fresh install always takes the newest release. */
+export const IMAGE = `${IMAGE_REPO}:latest`;
+
+/**
+ * This CLI's own version — read exactly the way `--version` reads it, so the
+ * two can never disagree.
+ */
+export function cliVersion(): string {
+  const require = createRequire(import.meta.url);
+  return (require("../package.json") as { version: string }).version;
+}
+
+/**
+ * The image tag an upgrade should move to. The spec's promise is that "the
+ * version you upgrade to is the CLI version you run", so `npx
+ * demo-locker@0.2.9 --upgrade` must install 0.2.9, not latest. main.ts checks
+ * the tag exists before using it and falls back to IMAGE otherwise.
+ */
+export function versionedImage(version: string = cliVersion()): string {
+  return `${IMAGE_REPO}:${version}`;
+}
 
 export type Step =
   | { kind: "run"; title: string; cmd: string; args: string[] }
   | { kind: "run-capture"; title: string; cmd: string; args: string[]; capture: string }
+  /**
+   * Run a read-only command and gate everything after it on what it PRINTS,
+   * not just on its exit code. Needed because some tools report "I did
+   * nothing" with a zero exit — `wrangler d1 migrations apply` exits 0 when
+   * the user answers "n" to its confirm prompt, which would otherwise let the
+   * deploy step run against an unmigrated database.
+   *
+   * Fails closed: if stdout does not match `pattern`, the plan stops.
+   */
+  | {
+      kind: "run-assert";
+      title: string;
+      cmd: string;
+      args: string[];
+      /** Regular-expression source stdout must match for the plan to continue. */
+      pattern: string;
+      /** Shown when it does not match. Explain what is wrong and what to do. */
+      failure: string;
+    }
   | { kind: "write"; title: string; path: string; contents: string }
   | { kind: "copy"; title: string; from: string; to: string }
   | { kind: "note"; text: string };
@@ -15,6 +58,12 @@ export interface DeployPlan {
   steps: Step[];
   healthUrl: string | null;
   appUrl: string | null;
+  /**
+   * Steps that run only once healthUrl answers — cleanup that must not happen
+   * while the new deployment might still need rolling back. The docker upgrade
+   * uses this to remove the renamed pre-upgrade container.
+   */
+  afterHealthySteps?: Step[];
 }
 
 /** Directory the deployable is unpacked into, relative to the user's cwd. */
@@ -224,14 +273,16 @@ function redactEnvArg(arg: string): string {
 }
 
 export function renderPlan(p: DeployPlan): string {
-  const lines = p.steps.map((s) => {
-    if (s.kind === "run" || s.kind === "run-capture") {
+  const render = (s: Step) => {
+    if (s.kind === "run" || s.kind === "run-capture" || s.kind === "run-assert") {
       return `$ ${s.cmd} ${s.args.map(redactEnvArg).join(" ")}`;
     }
     if (s.kind === "write") return `write ${s.path}`;
     if (s.kind === "copy") return `copy ${s.from} → ${s.to}`;
     return `# ${s.text}`;
-  });
+  };
+  const lines = p.steps.map(render);
   if (p.healthUrl) lines.push(`then wait for ${p.healthUrl}`);
+  lines.push(...(p.afterHealthySteps ?? []).map(render));
   return lines.join("\n") + "\n";
 }

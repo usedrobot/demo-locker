@@ -178,6 +178,14 @@ section {
   margin-bottom: 1.25rem;
 }
 
+/* Lead line under "hear one". Matches the tagline's measure rather than the
+   list styles, since it is prose and not an item. */
+.hear-lead {
+  color: var(--fg-dim);
+  line-height: 1.7;
+  margin-bottom: 0.75rem;
+}
+
 ul.plain {
   list-style: none;
 }

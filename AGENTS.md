@@ -299,9 +299,29 @@ restore command and off-machine backup advice.
 ## Upgrading an existing install
 
 This runbook **creates** a locker. If one already exists and the human wants
-it moved to a newer version, use
-[docs/upgrading.md](docs/upgrading.md) instead — it has the per-path commands
-and the two rules that are easy to get wrong:
+it moved to a newer version:
+
+```bash
+npx demo-locker@latest --upgrade --yes
+```
+
+expect: exit 0, and `curl -fsS <instance>/health` returns `{"status":"ok",...}`.
+
+On Cloudflare, add `--domain your.domain.com` — no read-only wrangler command
+can report a Worker's custom domain, so without it discovery can't learn
+which one the instance uses, and the command refuses rather than risk
+deploying a second copy at a public `*.workers.dev` URL. Docker instances need
+no extra flag; container discovery is complete on its own.
+
+Discovery refuses to guess: if more than one instance is found, this exits
+non-zero and lists them rather than picking one. Disambiguate with `--target`
+or `--worker-name`. Use `--dry-run` first to see the plan. `--yes` skips the
+confirmation prompt — fine here since this is a scripted/agent runbook, but a
+human running it by hand should leave it off and confirm interactively; see
+[docs/upgrading.md](docs/upgrading.md) for the human-facing version and the
+manual per-path fallback.
+
+Two rules that are easy to get wrong, whichever path you take:
 
 - On Cloudflare, apply D1 migrations **before** `wrangler deploy`. The ORM
   selects every column explicitly, so a Worker running ahead of its migration

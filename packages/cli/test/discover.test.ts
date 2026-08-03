@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseD1List, workerNameFromD1 } from "../src/discover.js";
 
 const D1_JSON = JSON.stringify([
@@ -94,5 +97,83 @@ describe("parseDockerInspect", () => {
 
   it("returns null on unparseable output", () => {
     expect(parseDockerInspect("nope", "x")).toBeNull();
+  });
+
+  it("reads the port mapped to 3001/tcp even when it is not the first binding", () => {
+    // Object.values order is not guaranteed — if 3001/tcp isn't first,
+    // the old code would pick the wrong port. This container publishes
+    // both 8000 and 8080, with 8000 first in the JSON and 8080 as the
+    // 3001/tcp mapping.
+    const multiPort = JSON.stringify([
+      {
+        Id: "abc123def456",
+        Name: "/demolocker",
+        Config: { Image: "i", Env: [] },
+        Mounts: [{ Type: "volume", Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: {
+          Ports: {
+            "8000/tcp": [{ HostIp: "0.0.0.0", HostPort: "9000" }],
+            "3001/tcp": [{ HostIp: "0.0.0.0", HostPort: "8080" }],
+          },
+        },
+      },
+    ]);
+    expect(parseDockerInspect(multiPort, "abc123def456")).toEqual({
+      target: "docker",
+      containerId: "abc123def456",
+      containerName: "demolocker",
+      volume: "demolocker",
+      port: 8080,
+      env: [],
+    });
+  });
+});
+
+describe("env var alignment with bindings.ts", () => {
+  it("every FORWARDED_ENV_VARS entry is matched by APP_ENV_EXACT_NAMES", () => {
+    const __dirname = resolve(fileURLToPath(import.meta.url), "..");
+    const bindingsPath = resolve(
+      __dirname,
+      "../../api/src/lib/bindings.ts"
+    );
+    const bindingsContent = readFileSync(bindingsPath, "utf-8");
+
+    // Extract FORWARDED_ENV_VARS array from bindings.ts
+    const match = bindingsContent.match(/export const FORWARDED_ENV_VARS = \[([\s\S]*?)\]/);
+    expect(match, "Could not find FORWARDED_ENV_VARS in bindings.ts").toBeTruthy();
+
+    const forwardedVars = (match![1] ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("//"))
+      .map((line) => line.replace(/["',]/g, "").trim())
+      .filter((line) => line && line !== "as const");
+
+    // Check that all FORWARDED_ENV_VARS are in APP_ENV_EXACT_NAMES
+    // (we can't import APP_ENV_EXACT_NAMES directly without creating a runtime
+    // dependency, so we re-check the discover.ts file)
+    const discoverPath = resolve(__dirname, "../src/discover.ts");
+    const discoverContent = readFileSync(discoverPath, "utf-8");
+    const exactNamesMatch = discoverContent.match(
+      /const APP_ENV_EXACT_NAMES = \[([\s\S]*?)\]/
+    );
+    expect(
+      exactNamesMatch,
+      "Could not find APP_ENV_EXACT_NAMES in discover.ts"
+    ).toBeTruthy();
+
+    const appEnvExactNames = (exactNamesMatch![1] ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("//"))
+      .map((line) => line.replace(/["',]/g, "").trim())
+      .filter((line) => line);
+
+    for (const varName of forwardedVars) {
+      expect(
+        appEnvExactNames,
+        `FORWARDED_ENV_VARS entry "${varName}" not found in APP_ENV_EXACT_NAMES`
+      ).toContain(varName);
+    }
   });
 });

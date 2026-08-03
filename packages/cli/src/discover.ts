@@ -54,14 +54,26 @@ export interface DockerCandidate {
 }
 
 /**
- * Environment the APP owns. Everything else in Config.Env belongs to the image
- * (PATH, NODE_VERSION, …) and re-passing it to `docker run` would override the
- * new image's own values.
+ * Exact environment variable names the app owns. These are compared by exact name.
+ * See packages/api/src/lib/bindings.ts — FORWARDED_ENV_VARS is the source of truth
+ * for config that survives an upgrade. DATA_DIR and PORT are self-hosted-specific.
  */
-const APP_ENV_PREFIXES = [
-  "DATA_DIR", "PORT", "ALLOW_SIGNUP", "MAX_UPLOAD_BYTES", "MAX_STORAGE_BYTES",
-  "MAX_PLAYLISTS", "MAX_COLLABORATORS", "S3_",
+const APP_ENV_EXACT_NAMES = [
+  "DATA_DIR",
+  "PORT",
+  "ALLOW_SIGNUP",
+  "MAX_UPLOAD_BYTES",
+  "MAX_STORAGE_BYTES",
+  "MAX_PLAYLISTS",
+  "MAX_COLLABORATORS",
 ];
+
+/**
+ * Environment variable prefixes the app owns. These are matched by startsWith.
+ * Everything else in Config.Env belongs to the image (PATH, NODE_VERSION, …)
+ * and re-passing it to `docker run` would override the new image's own values.
+ */
+const APP_ENV_PREFIXES = ["S3_"];
 
 /**
  * Read back everything needed to recreate the container faithfully. An instance
@@ -91,7 +103,8 @@ export function parseDockerInspect(stdout: string, containerId: string): DockerC
   if (!dataMount?.Name) return null;
 
   const bindings = row.NetworkSettings?.Ports ?? {};
-  const hostPort = Object.values(bindings).flatMap((b) => b ?? [])[0]?.HostPort;
+  const appPortBinding = bindings["3001/tcp"];
+  const hostPort = appPortBinding?.[0]?.HostPort;
   const port = Number(hostPort);
 
   return {
@@ -100,6 +113,10 @@ export function parseDockerInspect(stdout: string, containerId: string): DockerC
     containerName: (row.Name ?? "").replace(/^\//, ""),
     volume: dataMount.Name,
     port: Number.isInteger(port) && port > 0 ? port : 3001,
-    env: (row.Config?.Env ?? []).filter((e) => APP_ENV_PREFIXES.some((p) => e.startsWith(p))),
+    env: (row.Config?.Env ?? []).filter(
+      (e) =>
+        APP_ENV_EXACT_NAMES.some((name) => e.startsWith(name + "=")) ||
+        APP_ENV_PREFIXES.some((p) => e.startsWith(p))
+    ),
   };
 }

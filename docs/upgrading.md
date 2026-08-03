@@ -37,8 +37,23 @@ Two minutes, and it makes every step below reversible.
 npx demo-locker@latest --upgrade
 ```
 
-Recreates the container against the same volume, carrying over its port and
-environment. The manual equivalent is below.
+Recreates the container against the same volume, carrying over its port,
+publish address (a `127.0.0.1`-only binding stays loopback-only) and
+environment. The old container isn't deleted up front — it's renamed to
+`<name>-preupgrade` and removed only once the new one answers `/health`. If
+the new one never comes up, the CLI says so and leaves the old one in place:
+
+```bash
+docker rename demolocker-preupgrade demolocker && docker start demolocker
+```
+
+If your container is attached to a user-defined docker network, the CLI
+refuses rather than recreating it on the default bridge, where anything that
+reaches it by container name would lose it. Upgrade that one by hand with the
+manual steps below, keeping your original `--network` (and any other flags
+`docker inspect` shows).
+
+The manual equivalent is below.
 
 Pull the new image and recreate the container against the **same volume**:
 
@@ -78,7 +93,9 @@ it, or `--target cloudflare` / `--worker-name <name>` if you run more than
 one instance (discovery refuses to guess between them).
 
 The version you get is the version of the CLI you run: `@latest` upgrades to
-latest, `@0.2.9` downgrades to 0.2.9.
+latest, `@0.2.9` downgrades to 0.2.9. That applies to the docker target too —
+it pulls `ghcr.io/usedrobot/demo-locker:<cli version>`. If no image carries
+that tag (a CLI-only patch release, say), it says so and uses `:latest`.
 
 <details>
 <summary>Doing it by hand</summary>

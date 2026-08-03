@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/main.js";
-import { fakeIO } from "./helpers.js";
+import { fakeIO, waitForOutput } from "./helpers.js";
 
 describe("main", () => {
   it("--help prints usage and exits 0", async () => {
@@ -173,5 +173,81 @@ describe("main end-to-end (non-interactive)", () => {
     expect(code).toBe(0);
     expect(exec).not.toHaveBeenCalled();
     expect(read()).toContain("dry-run");
+  });
+});
+
+describe("--upgrade", () => {
+  function upgradeRunner(responses: Record<string, string>) {
+    const calls: string[] = [];
+    return {
+      calls,
+      exec: vi.fn(async (cmd: string, args: string[]) => {
+        calls.push(`${cmd} ${args.join(" ")}`);
+        return 0;
+      }),
+      execCapture: vi.fn(async (cmd: string, args: string[]) => {
+        const key = `${cmd} ${args.join(" ")}`;
+        const hit = Object.keys(responses).find((k) => key.startsWith(k));
+        return hit ? { code: 0, stdout: responses[hit] } : { code: 1, stdout: "" };
+      }),
+      writeFile: vi.fn(async () => {}),
+      copyDir: vi.fn(async () => {}),
+      mkdtemp: vi.fn(async () => "/tmp/stage"),
+      rmDir: vi.fn(async () => {}),
+      fetchFn: vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
+      sleep: async () => {},
+    };
+  }
+
+  it("exits 0 and explains when nothing is found", async () => {
+    const { io, read } = fakeIO();
+    const code = await main(["--upgrade", "--yes"], io, { runner: upgradeRunner({}) });
+    expect(code).toBe(1);
+    expect(read()).toContain("No Demo Locker instance found");
+  });
+
+  it("--dry-run prints the plan and runs nothing", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": JSON.stringify([{
+        Id: "abc123", Name: "/demolocker",
+        Config: { Image: "ghcr.io/usedrobot/demo-locker:latest", Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      }]),
+    });
+    const code = await main(["--upgrade", "--dry-run"], io, { runner });
+    expect(code).toBe(0);
+    expect(read()).toContain("docker");
+    expect(runner.exec).not.toHaveBeenCalled();
+  });
+
+  it("cancels without running anything when the confirm is declined", async () => {
+    const { io, read, write } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": JSON.stringify([{
+        Id: "abc123", Name: "/demolocker",
+        Config: { Image: "ghcr.io/usedrobot/demo-locker:latest", Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      }]),
+    });
+    const run = main(["--upgrade"], io, { runner });
+    await waitForOutput(read, "Upgrade this instance?");
+    write("n\n");
+    expect(await run).toBe(0);
+    expect(read()).toMatch(/cancelled/i);
+    expect(runner.exec).not.toHaveBeenCalled();
+  });
+
+  it("--target existing is a clean no-op", async () => {
+    const { io, read } = fakeIO();
+    const code = await main(["--upgrade", "--target", "existing", "--yes"], io, {
+      runner: upgradeRunner({}),
+    });
+    expect(code).toBe(0);
+    expect(read()).toMatch(/nothing to upgrade/i);
   });
 });

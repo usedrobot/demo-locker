@@ -4,6 +4,9 @@ import { buildPlan, renderPlan } from "./plan.js";
 import { executePlan, defaultRunner } from "./execute.js";
 import type { Runner } from "./execute.js";
 import { setupPlayer } from "./embed.js";
+import { resolveInstance } from "./discover.js";
+import { buildUpgradePlan } from "./upgrade.js";
+import { ask } from "./prompts.js";
 
 export interface IO {
   input: NodeJS.ReadableStream;
@@ -60,6 +63,10 @@ export async function main(
     return 1;
   }
 
+  if (flags.upgrade) {
+    return runUpgrade(flags, io, runner);
+  }
+
   let answers;
   try {
     answers = await collectAnswers(flags, io, detectContext(cwd));
@@ -108,4 +115,70 @@ export async function main(
     return setupPlayer(instanceUrl, cwd, io, runner);
   }
   return 0;
+}
+
+async function runUpgrade(
+  flags: Awaited<ReturnType<typeof parseFlags>>,
+  io: IO,
+  runner: Runner,
+): Promise<number> {
+  if (flags.target === "existing") {
+    io.output.write(
+      "--target existing points at an instance someone else runs — nothing to upgrade here.\n",
+    );
+    return 0;
+  }
+
+  const resolved = await resolveInstance(
+    {
+      target: flags.target,
+      workerName: flags.workerName,
+      d1Name: flags.d1Name,
+      r2Bucket: flags.r2Bucket,
+      domain: flags.domain,
+    },
+    runner,
+  );
+
+  if (!resolved.ok) {
+    io.output.write(`${resolved.reason}\n`);
+    for (const c of resolved.candidates) io.output.write(`  - ${c}\n`);
+    return 1;
+  }
+
+  const inst = resolved.instance;
+  const label =
+    inst.target === "docker"
+      ? `docker container "${inst.containerName}" (volume ${inst.volume})`
+      : `cloudflare worker "${inst.workerName}"`;
+  io.output.write(`Found: ${label}\n`);
+
+  const stagingDir = await runner.mkdtemp("demo-locker-upgrade-");
+  try {
+    let plan;
+    try {
+      plan = buildUpgradePlan(inst, stagingDir);
+    } catch (err) {
+      io.output.write(`${err instanceof Error ? err.message : err}\n`);
+      return 1;
+    }
+    if (flags.dryRun) {
+      io.output.write(renderPlan(plan));
+      return 0;
+    }
+    // Confirm before writing to something that already exists and holds data.
+    // Prompting here rather than inside executePlan keeps the executor free of
+    // interaction — it is used by the install path too.
+    if (!flags.yes) {
+      io.output.write(renderPlan(plan));
+      const answer = await ask(io, "Upgrade this instance? (y/N)", "N");
+      if (!/^y(es)?$/i.test(answer)) {
+        io.output.write("Cancelled — nothing was changed.\n");
+        return 0;
+      }
+    }
+    return await executePlan(plan, null, io, runner);
+  } finally {
+    await runner.rmDir(stagingDir);
+  }
 }

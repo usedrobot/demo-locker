@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildUpgradePlan } from "../src/upgrade.js";
 import type { DiscoveredInstance } from "../src/discover.js";
-import type { Step } from "../src/plan.js";
+import { cliVersion, versionedImage } from "../src/plan.js";
+import type { DeployPlan, Step } from "../src/plan.js";
 
 const cf: DiscoveredInstance = {
   target: "cloudflare", workerName: "demo-locker-dlisok", d1Name: "demo-locker-dlisok-db",
@@ -9,11 +10,14 @@ const cf: DiscoveredInstance = {
 };
 const dk: DiscoveredInstance = {
   target: "docker", containerId: "abc123", containerName: "demolocker",
-  volume: "demolocker", port: 8080, env: ["ALLOW_SIGNUP=true"],
+  volume: "demolocker", port: 8080, hostIp: null, networkMode: null,
+  env: ["ALLOW_SIGNUP=true"],
 };
 
-const runs = (steps: Step[]) =>
-  steps.filter((s): s is Extract<Step, { kind: "run" }> => s.kind === "run");
+const runs = (p: Step[] | DeployPlan) =>
+  (Array.isArray(p) ? p : p.steps).filter(
+    (s): s is Extract<Step, { kind: "run" }> => s.kind === "run",
+  );
 
 describe("buildUpgradePlan cloudflare", () => {
   it("applies migrations BEFORE deploying", () => {
@@ -23,6 +27,23 @@ describe("buildUpgradePlan cloudflare", () => {
     expect(apply).toBeGreaterThanOrEqual(0);
     expect(deploy).toBeGreaterThanOrEqual(0);
     expect(apply).toBeLessThan(deploy);
+  });
+
+  // `migrations apply` exits 0 when its confirm prompt is declined, so the
+  // plan re-checks and gates the deploy on that check's real output.
+  it("verifies migrations are actually applied between apply and deploy", () => {
+    const steps = buildUpgradePlan(cf, "/tmp/stage").steps;
+    const kinds = steps.map((s) => (s.kind === "note" ? "note" : `${s.kind}:${"args" in s ? s.args.join(" ") : ""}`));
+    const apply = kinds.findIndex((k) => k.includes("migrations apply"));
+    const verify = steps.findIndex((s) => s.kind === "run-assert");
+    const deploy = kinds.findIndex((k) => k.startsWith("run:wrangler deploy"));
+    expect(apply).toBeGreaterThanOrEqual(0);
+    expect(verify).toBeGreaterThan(apply);
+    expect(deploy).toBeGreaterThan(verify);
+    const check = steps[verify] as Extract<Step, { kind: "run-assert" }>;
+    expect(check.args.join(" ")).toContain("migrations list");
+    expect(check.args).toContain("--remote");
+    expect("No migrations to apply!").toMatch(new RegExp(check.pattern));
   });
 
   it("writes a wrangler config naming the discovered resources", () => {
@@ -130,6 +151,83 @@ describe("buildUpgradePlan docker", () => {
   it("has no migration step — the image migrates on boot", () => {
     const args = runs(buildUpgradePlan(dk, "/tmp/stage").steps).map((s) => s.args.join(" "));
     expect(args.some((a) => a.includes("migrations"))).toBe(false);
+  });
+
+  // Republishing a loopback-bound container on 0.0.0.0 would put a private
+  // locker on the LAN while the upgrade reports success.
+  it("preserves a loopback-only publish address", () => {
+    const bound = { ...dk, hostIp: "127.0.0.1" } as DiscoveredInstance;
+    const run = runs(buildUpgradePlan(bound, "/tmp/stage")).find((s) => s.args[0] === "run")!;
+    expect(run.args).toContain("127.0.0.1:8080:3001");
+    expect(run.args).not.toContain("8080:3001");
+  });
+
+  it("omits the host ip when the container was published on every interface", () => {
+    const run = runs(buildUpgradePlan(dk, "/tmp/stage")).find((s) => s.args[0] === "run")!;
+    expect(run.args).toContain("8080:3001");
+  });
+
+  // stop → rm → run has no way back: if `run` fails, the old container is gone.
+  // Renaming keeps it recoverable until the new one is proven healthy.
+  it("renames the old container instead of removing it before starting the new one", () => {
+    const plan = buildUpgradePlan(dk, "/tmp/stage");
+    const args = runs(plan).map((s) => s.args.join(" "));
+    const rename = args.findIndex((a) => a.startsWith("rename"));
+    const run = args.findIndex((a) => a.startsWith("run"));
+    expect(rename).toBeGreaterThanOrEqual(0);
+    expect(args[rename]).toContain("demolocker-preupgrade");
+    expect(rename).toBeLessThan(run);
+    expect(args.some((a) => a.startsWith("rm"))).toBe(false);
+  });
+
+  it("removes the renamed old container only after the health check passes", () => {
+    const plan = buildUpgradePlan(dk, "/tmp/stage");
+    const after = (plan.afterHealthySteps ?? []).filter(
+      (s): s is Extract<Step, { kind: "run" }> => s.kind === "run",
+    );
+    expect(after.map((s) => s.args.join(" "))).toContain("rm demolocker-preupgrade");
+    for (const s of after) expect(s.args).not.toContain("-v");
+  });
+
+  it("never passes -v to any removal, before or after health", () => {
+    const plan = buildUpgradePlan(dk, "/tmp/stage");
+    for (const s of [...plan.steps, ...(plan.afterHealthySteps ?? [])]) {
+      if (s.kind === "run") expect(s.args).not.toContain("-v:");
+      if (s.kind === "run" && (s.args[0] === "rm" || s.args[0] === "volume")) {
+        expect(s.args).not.toContain("-v");
+        expect(s.args.join(" ")).not.toContain("volume rm");
+      }
+    }
+  });
+
+  // Recreating a container attached to a user-defined network onto the default
+  // bridge makes it unreachable by every peer that resolves it by name.
+  it("refuses when the container is on a custom network", () => {
+    const networked = { ...dk, networkMode: "studio-net" } as DiscoveredInstance;
+    expect(() => buildUpgradePlan(networked, "/tmp/stage")).toThrow(/studio-net/);
+    expect(() => buildUpgradePlan(networked, "/tmp/stage")).toThrow(/by hand|manually/i);
+  });
+
+  it("refuses to build a plan for a container with no name", () => {
+    const unnamed = { ...dk, containerName: "" } as DiscoveredInstance;
+    expect(() => buildUpgradePlan(unnamed, "/tmp/stage")).toThrow(/name/i);
+  });
+
+  // The spec: "the version you upgrade to is the CLI version you run".
+  it("pulls and runs an image tagged with the CLI's own version", () => {
+    const plan = buildUpgradePlan(dk, "/tmp/stage");
+    const args = runs(plan).map((s) => s.args.join(" "));
+    expect(args.some((a) => a === `pull ${versionedImage()}`)).toBe(true);
+    expect(runs(plan).find((s) => s.args[0] === "run")!.args).toContain(versionedImage());
+    expect(versionedImage()).toContain(cliVersion());
+    expect(versionedImage()).not.toContain(":latest");
+  });
+
+  // main.ts resolves the tag against the registry first and passes :latest here
+  // when the versioned tag does not exist.
+  it("honours an explicitly supplied image", () => {
+    const plan = buildUpgradePlan(dk, "/tmp/stage", { image: "ghcr.io/usedrobot/demo-locker:latest" });
+    expect(runs(plan).map((s) => s.args.join(" "))).toContain("pull ghcr.io/usedrobot/demo-locker:latest");
   });
 
   it("creates nothing beyond the running container — no new volume, no forced removal", () => {

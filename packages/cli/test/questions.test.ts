@@ -366,6 +366,10 @@ describe("--upgrade flag", () => {
       ["--upgrade", "--storage", "local"],
       ["--upgrade", "--port", "3001"],
       ["--upgrade", "--volume", "demolocker"],
+      // Silently ignored before: an upgrade neither points at a new URL nor
+      // creates the first account.
+      ["--upgrade", "--url", "https://demos.example.com"],
+      ["--upgrade", "--email", "dl@fldl.space"],
     ]) {
       expect(() => parseFlags(bad), bad.join(" ")).toThrow(/--upgrade/);
     }

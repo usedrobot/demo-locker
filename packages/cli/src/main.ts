@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { parseFlags, detectContext, collectAnswers } from "./questions.js";
-import { buildPlan, renderPlan } from "./plan.js";
+import { IMAGE, buildPlan, cliVersion, renderPlan, versionedImage } from "./plan.js";
 import { executePlan, defaultRunner } from "./execute.js";
 import type { Runner } from "./execute.js";
 import { setupPlayer } from "./embed.js";
@@ -117,6 +117,34 @@ export async function main(
   return 0;
 }
 
+/**
+ * The image tag a docker upgrade should move to.
+ *
+ * `npx demo-locker@0.2.9 --upgrade` must install 0.2.9 — pinning :latest here
+ * would make the version flag a lie and turn an intended downgrade into an
+ * upgrade. Not every CLI version necessarily has a matching image tag though
+ * (a CLI-only patch release, a local build), so the tag is checked against the
+ * registry first and :latest is used — out loud — when it is missing.
+ */
+async function resolveUpgradeImage(io: IO, runner: Runner): Promise<string> {
+  const wanted = versionedImage();
+  try {
+    // Read-only, and quiet: the manifest itself is noise.
+    const { code } = await runner.execCapture("docker", ["manifest", "inspect", wanted], {
+      quiet: true,
+    });
+    if (code === 0) return wanted;
+  } catch {
+    // No docker to ask with. The pull step reports that far better than a
+    // tag-resolution helper can.
+  }
+  io.output.write(
+    `• no image tagged "${cliVersion()}" is published (or the registry could not be reached) — ` +
+      `upgrading to ${IMAGE} instead.\n`,
+  );
+  return IMAGE;
+}
+
 async function runUpgrade(
   flags: Awaited<ReturnType<typeof parseFlags>>,
   io: IO,
@@ -153,11 +181,15 @@ async function runUpgrade(
       : `cloudflare worker "${inst.workerName}"`;
   io.output.write(`Found: ${label}\n`);
 
+  // "The version you upgrade to is the CLI version you run" — so a docker
+  // upgrade takes the image tagged with this CLI's version, not :latest.
+  const image = inst.target === "docker" ? await resolveUpgradeImage(io, runner) : undefined;
+
   const stagingDir = await runner.mkdtemp("demo-locker-upgrade-");
   try {
     let plan;
     try {
-      plan = buildUpgradePlan(inst, stagingDir);
+      plan = buildUpgradePlan(inst, stagingDir, { image });
     } catch (err) {
       io.output.write(`${err instanceof Error ? err.message : err}\n`);
       return 1;

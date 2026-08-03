@@ -152,7 +152,7 @@ export function parseFlags(argv: string[]): Flags {
   // them is already fixed by the running instance, so accepting them would
   // silently imply we can change something we cannot.
   if (v.upgrade) {
-    const installOnly = ["mode", "storage", "port", "volume"] as const;
+    const installOnly = ["mode", "storage", "port", "volume", "url", "email"] as const;
     const offenders = installOnly.filter((k) => v[k] !== undefined);
     if (offenders.length > 0) {
       throw new Error(

@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/main.js";
+import { IMAGE_REPO, versionedImage } from "../src/plan.js";
 import { fakeIO, waitForOutput } from "./helpers.js";
 
 describe("main", () => {
@@ -199,7 +200,7 @@ describe("--upgrade", () => {
     };
   }
 
-  it("exits 0 and explains when nothing is found", async () => {
+  it("exits 1 and explains when nothing is found", async () => {
     const { io, read } = fakeIO();
     const code = await main(["--upgrade", "--yes"], io, { runner: upgradeRunner({}) });
     expect(code).toBe(1);
@@ -240,6 +241,77 @@ describe("--upgrade", () => {
     expect(await run).toBe(0);
     expect(read()).toMatch(/cancelled/i);
     expect(runner.exec).not.toHaveBeenCalled();
+  });
+
+  const DOCKER_INSPECT = JSON.stringify([{
+    Id: "abc123", Name: "/demolocker",
+    Config: { Image: "ghcr.io/usedrobot/demo-locker:latest", Env: [] },
+    HostConfig: { NetworkMode: "bridge" },
+    Mounts: [{ Name: "demolocker", Destination: "/data" }],
+    NetworkSettings: { Ports: { "3001/tcp": [{ HostIp: "127.0.0.1", HostPort: "3001" }] } },
+  }]);
+
+  // The spec: "the version you upgrade to is the CLI version you run".
+  it("upgrades docker to the image tagged with the CLI's own version", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": DOCKER_INSPECT,
+      "docker manifest inspect": "{}",
+    });
+    expect(await main(["--upgrade", "--dry-run"], io, { runner })).toBe(0);
+    expect(read()).toContain(versionedImage());
+    expect(read()).not.toContain(`${IMAGE_REPO}:latest`);
+  });
+
+  it("falls back to :latest, out loud, when no image carries this version's tag", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": DOCKER_INSPECT,
+      // no "docker manifest inspect" response → exits nonzero, tag not found
+    });
+    expect(await main(["--upgrade", "--dry-run"], io, { runner })).toBe(0);
+    expect(read()).toContain(`${IMAGE_REPO}:latest`);
+    expect(read()).toMatch(/no image tagged/);
+  });
+
+  // The upgrade must not republish a loopback-bound locker onto the LAN.
+  it("keeps a loopback publish address in the plan it prints", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": DOCKER_INSPECT,
+      "docker manifest inspect": "{}",
+    });
+    expect(await main(["--upgrade", "--dry-run"], io, { runner })).toBe(0);
+    expect(read()).toContain("-p 127.0.0.1:3001:3001");
+  });
+
+  // A missing docker binary makes defaultRunner.execCapture REJECT. That must
+  // not take down a cloudflare upgrade, which is most upgrade users.
+  it("survives a machine with no docker installed", async () => {
+    const { io, read } = fakeIO();
+    const base = upgradeRunner({
+      "npx wrangler d1 list": JSON.stringify([
+        { uuid: "0ea573b2-861c-482c-a9c7-de5335d29fa0", name: "demo-locker-db" },
+      ]),
+      "npx wrangler deployments list": "ok",
+      "npx wrangler r2 bucket list": "demo-locker-demos",
+    });
+    const runner = {
+      ...base,
+      execCapture: vi.fn(async (cmd: string, args: string[]) => {
+        if (cmd === "docker") throw new Error(`could not run "docker" (spawn ENOENT)`);
+        return base.execCapture(cmd, args);
+      }),
+    };
+    const code = await main(
+      ["--upgrade", "--dry-run", "--domain", "demos.example.com"], io, { runner },
+    );
+    expect(code).toBe(0);
+    expect(read()).not.toContain("could not run");
+    expect(read()).toContain("wrangler deploy");
   });
 
   it("--target existing is a clean no-op", async () => {

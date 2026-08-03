@@ -9,6 +9,32 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <link rel="manifest" href="/manifest.json" />
     <title>Demo Locker</title>
+
+    <!-- Link preview for share/invite links. Deliberately generic: these tags
+         are static, so a private invite link previews as "Demo Locker" and the
+         mark, never the playlist name. Anything per-playlist would have to be
+         rendered server-side, and would leak the name of a private playlist
+         into every chat app, link scanner and proxy the URL passes through.
+
+         The image path is root-relative on purpose. Every install lives on its
+         own domain, so an absolute URL here would point every self-hoster's
+         previews at whoever built it. Crawlers resolve it against the page. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Demo Locker" />
+    <meta property="og:title" content="Demo Locker" />
+    <meta
+      property="og:description"
+      content="A private locker for rough mixes. Listen through the playlist and leave notes on the waveform."
+    />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Demo Locker" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="description"
+      content="A private locker for rough mixes. Listen through the playlist and leave notes on the waveform."
+    />
   </head>
   <body>
     <div id="root"></div>

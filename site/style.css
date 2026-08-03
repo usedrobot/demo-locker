@@ -27,10 +27,12 @@
 
   /* Every accented thing on the page reads var(--accent) — logo, links, the
      [copy] buttons, the list markers, the prompt-box tint, ::selection — so
-     animating the one variable moves all of them in step. 6s per colour across
+     animating the one variable moves all of them in step. 4s per colour across
      the seven accents the app ships, plus a wrap back to the first so the loop
-     has no visible seam. */
-  animation: accent-cycle 42s linear infinite;
+     has no visible seam. Was 6s (42s total); DL asked for faster 2026-08-03.
+     The keyframe stops are percentages, so this one number is the only knob —
+     changing it keeps every colour's share of the loop equal. */
+  animation: accent-cycle 28s linear infinite;
 }
 
 /* Ordered around the hue wheel, NOT in the app's ACCENTS order. Registered

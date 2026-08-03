@@ -80,8 +80,29 @@ button:hover { color: var(--dl-accent); }
 .toggle { color: var(--dl-accent); }
 .toggle:hover { color: var(--dl-fg); }
 .state { user-select: none; }
-.now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.spectrum { color: var(--dl-accent); white-space: pre; letter-spacing: 1px; line-height: 1; user-select: none; }
+/* The title box. flex-basis 0 (not auto) is load-bearing twice over: it makes
+   the width come from the flex distribution rather than the text, which is
+   what lets container-type be used safely here, and it stops a long title
+   from pushing the row wide. min-width keeps a readable amount of title even
+   when everything else wants the space — before this, .now resolved to 0px at
+   any container under ~420px and the title vanished completely. */
+.now { flex: 1 1 0; min-width: 8ch; overflow: hidden; container-type: inline-size; }
+/* Travel is the container width minus the text's own width — exactly what is
+   hidden, and 0 for a title that already fits, so short names never move. */
+.now-text { display: inline-block; white-space: nowrap; animation: dl-drift 12s ease-in-out infinite alternate; }
+@keyframes dl-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(min(0px, calc(100cqw - 100%))); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .now-text { animation: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+}
+/* Must be allowed to clip. It is 12 fixed monospace characters, so its
+   min-content width is the whole thing; without min-width:0 it refuses to
+   shrink and takes 106px out of the row no matter how narrow the host is.
+   The LED waveform directly below carries the same signal, so losing bars
+   here costs nothing. */
+.spectrum { color: var(--dl-accent); white-space: pre; letter-spacing: 1px; line-height: 1; user-select: none; min-width: 0; overflow: hidden; }
 .time { color: var(--dl-muted); font-size: 0.9em; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .wave { display: block; width: 100%; height: 40px; cursor: pointer; }
 .wave-wrap { padding: 6px var(--dl-padding); border-bottom: 1px solid var(--dl-border); }
@@ -367,7 +388,7 @@ export class DemoLockerPlayer extends HTMLElement {
         <button class="toggle" part="button">${playing ? "[❚❚]" : "[▶]"}</button>
         <button class="nextb" part="button">[⏭]</button>
         <span class="state" part="state" style="color: var(${playing ? "--dl-accent" : "--dl-muted"})">${playing ? "●" : "■"}</span>
-        <span class="now" part="now"></span>
+        <span class="now" part="now"><span class="now-text" part="now-text"></span></span>
         <span class="spectrum" part="spectrum">${FLAT_SPECTRUM}</span>
         <span class="time" part="time">--:-- / --:--</span>
       </div>
@@ -395,7 +416,7 @@ export class DemoLockerPlayer extends HTMLElement {
     }
 
     this.shadow.querySelector(".title")!.textContent = this.data.name;
-    this.shadow.querySelector(".now")!.textContent = nowTitle ? `♫ ${nowTitle}` : "";
+    this.shadow.querySelector(".now-text")!.textContent = nowTitle ? `♫ ${nowTitle}` : "";
 
     const list = this.shadow.querySelector(".tracks")!;
     this.data.tracks.forEach((t, i) => {

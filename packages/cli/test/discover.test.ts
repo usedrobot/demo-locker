@@ -43,3 +43,56 @@ describe("workerNameFromD1", () => {
     expect(workerNameFromD1("unrelated-thing")).toBeNull();
   });
 });
+
+import { parseDockerInspect } from "../src/discover.js";
+
+const INSPECT_JSON = JSON.stringify([
+  {
+    Id: "abc123def456",
+    Name: "/demolocker",
+    Config: {
+      Image: "ghcr.io/usedrobot/demo-locker:latest",
+      Env: [
+        "PATH=/usr/local/bin",
+        "NODE_VERSION=22.11.0",
+        "DATA_DIR=/data",
+        "ALLOW_SIGNUP=true",
+        "S3_BUCKET=demos",
+      ],
+    },
+    Mounts: [{ Type: "volume", Name: "demolocker", Destination: "/data" }],
+    NetworkSettings: { Ports: { "3001/tcp": [{ HostIp: "0.0.0.0", HostPort: "8080" }] } },
+  },
+]);
+
+describe("parseDockerInspect", () => {
+  it("reads the /data volume, published port and app env", () => {
+    expect(parseDockerInspect(INSPECT_JSON, "abc123def456")).toEqual({
+      target: "docker",
+      containerId: "abc123def456",
+      containerName: "demolocker",
+      volume: "demolocker",
+      port: 8080,
+      env: ["DATA_DIR=/data", "ALLOW_SIGNUP=true", "S3_BUCKET=demos"],
+    });
+  });
+
+  // Carrying PATH or NODE_VERSION into `docker run` would override the image's
+  // own values and can break the container outright.
+  it("drops env the image sets for itself", () => {
+    const env = parseDockerInspect(INSPECT_JSON, "abc123def456")!.env;
+    expect(env).not.toContain("PATH=/usr/local/bin");
+    expect(env.some((e) => e.startsWith("NODE_VERSION"))).toBe(false);
+  });
+
+  it("returns null when there is no /data volume to reuse", () => {
+    const noVolume = JSON.stringify([
+      { Id: "x", Name: "/x", Config: { Image: "i", Env: [] }, Mounts: [], NetworkSettings: { Ports: {} } },
+    ]);
+    expect(parseDockerInspect(noVolume, "x")).toBeNull();
+  });
+
+  it("returns null on unparseable output", () => {
+    expect(parseDockerInspect("nope", "x")).toBeNull();
+  });
+});

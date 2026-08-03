@@ -43,3 +43,63 @@ export function parseD1List(stdout: string): Array<{ name: string; id: string }>
 export function workerNameFromD1(d1Name: string): string | null {
   return d1Name.endsWith("-db") ? d1Name.slice(0, -"-db".length) : null;
 }
+
+export interface DockerCandidate {
+  target: "docker";
+  containerId: string;
+  containerName: string;
+  volume: string;
+  port: number;
+  env: string[];
+}
+
+/**
+ * Environment the APP owns. Everything else in Config.Env belongs to the image
+ * (PATH, NODE_VERSION, …) and re-passing it to `docker run` would override the
+ * new image's own values.
+ */
+const APP_ENV_PREFIXES = [
+  "DATA_DIR", "PORT", "ALLOW_SIGNUP", "MAX_UPLOAD_BYTES", "MAX_STORAGE_BYTES",
+  "MAX_PLAYLISTS", "MAX_COLLABORATORS", "S3_",
+];
+
+/**
+ * Read back everything needed to recreate the container faithfully. An instance
+ * on a non-default port, or with S3 credentials or ALLOW_SIGNUP set, must come
+ * back up with exactly those — so they are read, never reconstructed from
+ * defaults. Returns null if there is no /data volume, because without one there
+ * is no instance to preserve and recreating would produce an empty locker.
+ */
+export function parseDockerInspect(stdout: string, containerId: string): DockerCandidate | null {
+  const start = stdout.indexOf("[");
+  if (start === -1) return null;
+  let row: {
+    Name?: string;
+    Config?: { Env?: string[] };
+    Mounts?: Array<{ Name?: string; Destination?: string }>;
+    NetworkSettings?: { Ports?: Record<string, Array<{ HostPort?: string }> | null> };
+  };
+  try {
+    const parsed = JSON.parse(stdout.slice(start));
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    row = parsed[0];
+  } catch {
+    return null;
+  }
+
+  const dataMount = (row.Mounts ?? []).find((m) => m.Destination === "/data");
+  if (!dataMount?.Name) return null;
+
+  const bindings = row.NetworkSettings?.Ports ?? {};
+  const hostPort = Object.values(bindings).flatMap((b) => b ?? [])[0]?.HostPort;
+  const port = Number(hostPort);
+
+  return {
+    target: "docker",
+    containerId,
+    containerName: (row.Name ?? "").replace(/^\//, ""),
+    volume: dataMount.Name,
+    port: Number.isInteger(port) && port > 0 ? port : 3001,
+    env: (row.Config?.Env ?? []).filter((e) => APP_ENV_PREFIXES.some((p) => e.startsWith(p))),
+  };
+}

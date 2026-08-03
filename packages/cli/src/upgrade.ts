@@ -15,7 +15,7 @@ function cloudflareUpgrade(
   cf: Extract<DiscoveredInstance, { target: "cloudflare" }>,
   stagingDir: string,
 ): DeployPlan {
-  // Both guards below must run before a single step is built: cloudflareUpgrade
+  // All three guards below must run before a single step is built: cloudflareUpgrade
   // substitutes these values straight into wrangler.jsonc, and by the time
   // `migrations apply` has run against the live D1, it is too late to back out.
   if (!cf.d1Id) {
@@ -30,12 +30,29 @@ function cloudflareUpgrade(
         `--r2-bucket) could be found on this account. Fix the bucket first, or pass --r2-bucket <name>.`,
     );
   }
+  // Discovery can't yet learn a Worker's custom domain (no read-only wrangler
+  // command reports it — see task-7-report.md). Without a known domain this
+  // function cannot emit a `routes` block, and Cloudflare's default for a
+  // routes-less config is to enable workers.dev for the deploy — silently
+  // giving what may be a private instance a second, public URL. Refusing and
+  // naming the fix is safer than an upgrade that "succeeds" by exposing it.
+  if (!cf.domain) {
+    throw new Error(
+      `cannot upgrade "${cf.workerName}": no custom domain is known for this instance. Deploying without ` +
+        `one would omit its routes, and Cloudflare enables workers.dev by default for a routes-less config — ` +
+        `that would publish this instance at a second, public *.workers.dev URL alongside its real domain. ` +
+        `Pass --domain <host> naming the instance's actual custom domain and re-run the upgrade.`,
+    );
+  }
 
   const config = wranglerConfig({
     workerName: cf.workerName,
     d1Name: cf.d1Name,
     r2Bucket: cf.r2Bucket,
     domain: cf.domain,
+    // Belt-and-suspenders alongside `routes` above — see the comment on
+    // wranglerConfig's workersDev param.
+    workersDev: false,
   }).replace("__DATABASE_ID__", cf.d1Id);
 
   const configPath = join(stagingDir, "wrangler.jsonc");
@@ -65,24 +82,10 @@ function cloudflareUpgrade(
     },
   ];
 
-  const appUrl = cf.domain ? `https://${cf.domain}` : null;
-  if (!cf.domain) {
-    // probeCloudflare never discovers a domain — this is the common path, not
-    // an edge case. Deploying with no routes/custom-domain block in the config
-    // is confirmed inert against wrangler's remote state (see task-6-report.md
-    // for the source dive into triggersDeploy/publishCustomDomains: with an
-    // empty routes list neither the zone-routes PUT nor the custom-domains PUT
-    // is ever called, so an existing custom domain is left untouched). But we
-    // have no way to health-check a domain we were never told, so the upgrade
-    // must not be allowed to look like it verified anything it didn't.
-    steps.push({
-      kind: "note",
-      text:
-        "No domain was discovered for this instance, so no post-deploy health check will run. " +
-        "Pass --domain <host> to verify the new version is actually serving before trusting this upgrade.",
-    });
-  }
-  return { steps, healthUrl: appUrl ? `${appUrl}/health` : null, appUrl };
+  // cf.domain is guaranteed truthy here — the guard above refuses to build a
+  // plan otherwise — so the health check always has a URL to poll.
+  const appUrl = `https://${cf.domain}`;
+  return { steps, healthUrl: `${appUrl}/health`, appUrl };
 }
 
 function dockerUpgrade(dk: Extract<DiscoveredInstance, { target: "docker" }>): DeployPlan {

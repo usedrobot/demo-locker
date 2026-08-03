@@ -60,6 +60,13 @@ export function wranglerConfig(cf: {
   d1Name: string;
   r2Bucket: string;
   domain: string | null;
+  // Explicit opt-out only. Left undefined, Cloudflare's own default applies
+  // (workers.dev enabled whenever there is no routes block) — correct for a
+  // fresh install with no custom domain. Pass `false` when the instance is
+  // known to live at a custom domain (see upgrade.ts): belt-and-suspenders
+  // alongside `routes` so a config bug or a future wrangler default change
+  // can't silently turn on a second, public front door.
+  workersDev?: boolean;
 }): string {
   const config: Record<string, unknown> = {
     name: cf.workerName,
@@ -83,6 +90,9 @@ export function wranglerConfig(cf: {
   };
   if (cf.domain) {
     config.routes = [{ pattern: cf.domain, custom_domain: true }];
+  }
+  if (cf.workersDev === false) {
+    config.workers_dev = false;
   }
   return JSON.stringify(config, null, 2) + "\n";
 }

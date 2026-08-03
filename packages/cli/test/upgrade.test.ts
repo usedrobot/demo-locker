@@ -34,6 +34,22 @@ describe("buildUpgradePlan cloudflare", () => {
     expect(write.contents).toContain("demolocker.dlisok.com");
   });
 
+  // Cloudflare enables workers.dev by default for any deploy config with no
+  // routes block. This instance already has routes (asserted above), but
+  // `workers_dev: false` is written explicitly too — belt-and-suspenders so a
+  // config bug or a wrangler default change can't silently turn on a second,
+  // public front door for what may be a private instance. See task-7-report.md
+  // for why discovery can't yet distinguish "no custom domain" from "domain
+  // unknown", which is why buildUpgradePlan refuses outright below rather than
+  // ever emitting a routes-less upgrade config.
+  it("writes workers_dev: false into the upgrade config", () => {
+    const write = buildUpgradePlan(cf, "/tmp/stage").steps.find(
+      (s): s is Extract<Step, { kind: "write" }> => s.kind === "write",
+    )!;
+    const config = JSON.parse(write.contents.replace("__DATABASE_ID__", cf.d1Id));
+    expect(config.workers_dev).toBe(false);
+  });
+
   // The whole point of resolving the id (rather than reusing the empty-id
   // short-circuit) is that it actually ends up in the deployed config. A
   // Worker bound to the literal string "__DATABASE_ID__" is a silent no-op
@@ -66,15 +82,15 @@ describe("buildUpgradePlan cloudflare", () => {
   });
 
   // probeCloudflare never discovers a domain (it always sets domain: null), so
-  // this is the common path, not an edge case. Deploying a routes-less config
-  // over a Worker that already has a custom-domain route must not silently
-  // report success without ever having checked the new version is live.
-  it("surfaces that no health check will run when the domain is unknown", () => {
+  // this is the common path, not an edge case. A routes-less upgrade config
+  // gets workers.dev enabled by Cloudflare's own default — silently exposing
+  // what may be a private instance at a second, public URL. Refusing outright
+  // is the fix (see task-7-report.md): an upgrade that stops and asks beats
+  // one that "succeeds" by publishing something it was never told to expose.
+  it("refuses to build a plan when the domain is unknown, naming --domain as the fix", () => {
     const noDomain = { ...cf, domain: null };
-    const plan = buildUpgradePlan(noDomain, "/tmp/stage");
-    expect(plan.healthUrl).toBeNull();
-    const notes = plan.steps.filter((s): s is Extract<Step, { kind: "note" }> => s.kind === "note");
-    expect(notes.some((n) => /health/i.test(n.text) && /--domain/.test(n.text))).toBe(true);
+    expect(() => buildUpgradePlan(noDomain, "/tmp/stage")).toThrow(/--domain/);
+    expect(() => buildUpgradePlan(noDomain, "/tmp/stage")).toThrow(/workers\.dev/);
   });
 });
 

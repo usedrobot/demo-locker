@@ -59,6 +59,12 @@ export interface DockerCandidate {
    */
   hostIp: string | null;
   /**
+   * The image reference the container was created from, verbatim — tag,
+   * digest or bare repo. Identification matches on the repo part only: a
+   * container upgraded to `<repo>:0.2.11` must stay discoverable next time.
+   */
+  image: string;
+  /**
    * A user-defined network the container is attached to, or null for the
    * default bridge. Recreating a network-attached container onto the default
    * bridge makes it unreachable by the peers that resolve it by name, so
@@ -103,26 +109,49 @@ const APP_ENV_PREFIXES = ["S3_"];
  * defaults. Returns null if there is no /data volume, because without one there
  * is no instance to preserve and recreating would produce an empty locker.
  */
-export function parseDockerInspect(stdout: string, containerId: string): DockerCandidate | null {
-  const start = stdout.indexOf("[");
-  if (start === -1) return null;
-  let row: {
-    Name?: string;
-    Config?: { Env?: string[] };
-    HostConfig?: { NetworkMode?: string };
-    Mounts?: Array<{ Name?: string; Destination?: string }>;
-    NetworkSettings?: {
-      Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
-    };
+interface InspectRow {
+  Id?: string;
+  Name?: string;
+  Config?: { Image?: string; Env?: string[] };
+  HostConfig?: { NetworkMode?: string };
+  Mounts?: Array<{ Name?: string; Destination?: string }>;
+  NetworkSettings?: {
+    Ports?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null>;
   };
+}
+
+function parseRows(stdout: string): InspectRow[] {
+  const start = stdout.indexOf("[");
+  if (start === -1) return [];
   try {
     const parsed = JSON.parse(stdout.slice(start));
-    if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    row = parsed[0];
+    return Array.isArray(parsed) ? (parsed as InspectRow[]) : [];
   } catch {
-    return null;
+    return [];
   }
+}
 
+/**
+ * Every candidate `docker inspect` reported, in one go. `docker inspect a b c`
+ * answers with one array, so the whole machine costs a single spawn.
+ */
+export function parseDockerInspectAll(stdout: string): DockerCandidate[] {
+  const out: DockerCandidate[] = [];
+  for (const row of parseRows(stdout)) {
+    // Without an id there is nothing to stop, rename or remove.
+    if (!row.Id) continue;
+    const c = candidateFromRow(row, row.Id);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+export function parseDockerInspect(stdout: string, containerId: string): DockerCandidate | null {
+  const row = parseRows(stdout)[0];
+  return row ? candidateFromRow(row, containerId) : null;
+}
+
+function candidateFromRow(row: InspectRow, containerId: string): DockerCandidate | null {
   const dataMount = (row.Mounts ?? []).find((m) => m.Destination === "/data");
   if (!dataMount?.Name) return null;
 
@@ -146,6 +175,7 @@ export function parseDockerInspect(stdout: string, containerId: string): DockerC
     volume: dataMount.Name,
     port: Number.isInteger(port) && port > 0 ? port : 3001,
     hostIp: WILDCARD_HOST_IPS.has(hostIp) ? null : hostIp,
+    image: row.Config?.Image ?? "",
     networkMode: DEFAULT_NETWORK_MODES.has(networkMode) ? null : networkMode,
     env: (row.Config?.Env ?? []).filter(
       (e) =>
@@ -189,20 +219,47 @@ async function probeCapture(
   }
 }
 
+/**
+ * Is this the Demo Locker image, whatever it is tagged or pinned as?
+ *
+ * Matching on the repo alone is the whole point. `<repo>-staging:latest` is a
+ * different image and must not match, so the repo has to be followed by a tag
+ * separator, a digest separator, or nothing at all.
+ */
+export function isDemoLockerImage(image: string): boolean {
+  return (
+    image === IMAGE_REPO ||
+    image.startsWith(`${IMAGE_REPO}:`) ||
+    image.startsWith(`${IMAGE_REPO}@`)
+  );
+}
+
+/**
+ * Find containers running this image, by INSPECTING them — never by
+ * `--filter ancestor=`.
+ *
+ * The ancestor filter resolves a tagless reference to `<repo>:latest` and then
+ * matches on the resolved image ID, not on the name. Since an upgrade installs
+ * `<repo>:<cli version>` and does not move the local `latest` tag, an
+ * ancestor-filtered probe stops seeing an instance as soon as it has been
+ * upgraded once — and sees nothing at all on a machine that has no local
+ * `latest`. Reading `Config.Image` and comparing the repo is tag-agnostic and
+ * survives any future tag scheme.
+ *
+ * The cost is inspecting every container on the machine, which is one extra
+ * `docker inspect` argument list rather than one extra spawn — `docker inspect
+ * a b c` answers with a single array.
+ */
 export async function probeDocker(runner: Runner): Promise<DockerCandidate[]> {
   const { code, stdout } = await probeCapture(runner, "docker", [
-    "ps", "-a", "--filter", `ancestor=${IMAGE_REPO}`, "--format", "{{.ID}}",
+    "ps", "-a", "--format", "{{.ID}}",
   ]);
   if (code !== 0) return [];
   const ids = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-  const found: DockerCandidate[] = [];
-  for (const id of ids) {
-    const res = await probeCapture(runner, "docker", ["inspect", id]);
-    if (res.code !== 0) continue;
-    const c = parseDockerInspect(res.stdout, id);
-    if (c) found.push(c);
-  }
-  return found;
+  if (ids.length === 0) return [];
+  const res = await probeCapture(runner, "docker", ["inspect", ...ids]);
+  if (res.code !== 0) return [];
+  return parseDockerInspectAll(res.stdout).filter((c) => isDemoLockerImage(c.image));
 }
 
 export async function probeCloudflare(runner: Runner): Promise<CloudflareCandidate[]> {

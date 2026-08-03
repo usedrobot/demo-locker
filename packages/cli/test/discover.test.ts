@@ -79,6 +79,7 @@ describe("parseDockerInspect", () => {
       port: 8080,
       hostIp: null,
       networkMode: null,
+      image: "ghcr.io/usedrobot/demo-locker:latest",
       env: ["DATA_DIR=/data", "ALLOW_SIGNUP=true", "S3_BUCKET=demos"],
     });
   });
@@ -199,6 +200,7 @@ describe("parseDockerInspect", () => {
       port: 8080,
       hostIp: null,
       networkMode: null,
+      image: "i",
       env: [],
     });
   });
@@ -305,6 +307,80 @@ describe("resolveInstance", () => {
     const res = await resolveInstance({}, runner);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.instance).toMatchObject({ target: "docker", volume: "demolocker" });
+  });
+
+  // Identification must not depend on the container's image TAG. `docker ps
+  // --filter ancestor=<repo>` resolves the tagless reference to <repo>:latest
+  // and then matches by resolved image ID — so a container started from
+  // <repo>:0.2.11 (which is what an upgrade now installs) stops matching once
+  // the local `latest` tag points somewhere else, or is absent entirely. That
+  // would make --upgrade work exactly once per instance.
+  it("discovers a container running a version-tagged image, not just :latest", async () => {
+    const versioned = JSON.stringify([
+      {
+        Id: "abc123def456",
+        Name: "/demolocker",
+        Config: { Image: "ghcr.io/usedrobot/demo-locker:0.2.11", Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      },
+    ]);
+    const runner = runnerWith({ "docker ps": "abc123def456\n", "docker inspect": versioned });
+    const res = await resolveInstance({}, runner);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.instance).toMatchObject({ target: "docker", containerName: "demolocker" });
+  });
+
+  it("does not list containers by ancestor tag", async () => {
+    const runner = runnerWith({ "docker ps": "abc123def456\n", "docker inspect": INSPECT_JSON });
+    await resolveInstance({}, runner);
+    const psCall = (runner.execCapture as unknown as { mock: { calls: [string, string[]][] } })
+      .mock.calls.find(([cmd, args]) => cmd === "docker" && args[0] === "ps")!;
+    expect(psCall[1].join(" ")).not.toContain("ancestor");
+  });
+
+  // Everything on the machine gets inspected now, so the repo check is the
+  // only thing keeping unrelated containers out.
+  it("ignores containers from a different image entirely", async () => {
+    const other = JSON.stringify([
+      {
+        Id: "zzz", Name: "/postgres", Config: { Image: "postgres:16", Env: [] },
+        Mounts: [{ Name: "pgdata", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      },
+    ]);
+    const runner = runnerWith({ "docker ps": "zzz\n", "docker inspect": other });
+    const res = await resolveInstance({ target: "docker" }, runner);
+    expect(res.ok).toBe(false);
+  });
+
+  // A repo whose name merely starts with ours is a different image.
+  it("does not match a look-alike repo name", async () => {
+    const lookalike = JSON.stringify([
+      {
+        Id: "zzz", Name: "/other", Config: { Image: "ghcr.io/usedrobot/demo-locker-staging:latest", Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      },
+    ]);
+    const runner = runnerWith({ "docker ps": "zzz\n", "docker inspect": lookalike });
+    const res = await resolveInstance({ target: "docker" }, runner);
+    expect(res.ok).toBe(false);
+  });
+
+  // An image pinned by digest is still our image.
+  it("matches an image pinned by digest", async () => {
+    const digest = JSON.stringify([
+      {
+        Id: "abc", Name: "/demolocker",
+        Config: { Image: "ghcr.io/usedrobot/demo-locker@sha256:" + "a".repeat(64), Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      },
+    ]);
+    const runner = runnerWith({ "docker ps": "abc\n", "docker inspect": digest });
+    const res = await resolveInstance({ target: "docker" }, runner);
+    expect(res.ok).toBe(true);
   });
 
   it("errors, listing candidates, when docker and cloudflare both match", async () => {

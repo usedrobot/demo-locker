@@ -174,6 +174,15 @@ function dockerUpgrade(
     steps,
     healthUrl: `${appUrl}/health`,
     appUrl,
+    // The new container is running and holding both the name and the port by
+    // the time this is printed, so it has to go before the old one can be
+    // renamed back — `docker rename` would fail on the name conflict, and
+    // `docker start` on the port. `rm -f` here is the FAILED NEW container,
+    // never the volume: no -v, ever.
+    rollbackHint:
+      `docker rm -f ${dk.containerName} && ` +
+      `docker rename ${preupgrade} ${dk.containerName} && ` +
+      `docker start ${dk.containerName}`,
     // Only once the new container is serving. NEVER -v: that would delete the
     // volume holding every uploaded master.
     afterHealthySteps: [

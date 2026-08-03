@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildUpgradePlan } from "../src/upgrade.js";
-import type { DiscoveredInstance } from "../src/discover.js";
+import type { DiscoveredInstance, DockerCandidate } from "../src/discover.js";
 import { cliVersion, versionedImage } from "../src/plan.js";
 import type { DeployPlan, Step } from "../src/plan.js";
 
@@ -8,9 +8,13 @@ const cf: DiscoveredInstance = {
   target: "cloudflare", workerName: "demo-locker-dlisok", d1Name: "demo-locker-dlisok-db",
   d1Id: "ca6096da", r2Bucket: "demo-locker-dlisok-demos", domain: "demolocker.dlisok.com",
 };
-const dk: DiscoveredInstance = {
+// Typed as the narrow DockerCandidate, not DiscoveredInstance: these tests
+// read docker-only fields, and the narrow type also makes the compiler point
+// at this fixture whenever the candidate shape changes.
+const dk: DockerCandidate = {
   target: "docker", containerId: "abc123", containerName: "demolocker",
   volume: "demolocker", port: 8080, hostIp: null, networkMode: null,
+  image: "ghcr.io/usedrobot/demo-locker:0.2.10",
   env: ["ALLOW_SIGNUP=true"],
 };
 
@@ -156,7 +160,7 @@ describe("buildUpgradePlan docker", () => {
   // Republishing a loopback-bound container on 0.0.0.0 would put a private
   // locker on the LAN while the upgrade reports success.
   it("preserves a loopback-only publish address", () => {
-    const bound = { ...dk, hostIp: "127.0.0.1" } as DiscoveredInstance;
+    const bound: DockerCandidate = { ...dk, hostIp: "127.0.0.1" };
     const run = runs(buildUpgradePlan(bound, "/tmp/stage")).find((s) => s.args[0] === "run")!;
     expect(run.args).toContain("127.0.0.1:8080:3001");
     expect(run.args).not.toContain("8080:3001");
@@ -189,6 +193,19 @@ describe("buildUpgradePlan docker", () => {
     for (const s of after) expect(s.args).not.toContain("-v");
   });
 
+  // The failed NEW container still holds the name and the port, so a bare
+  // rename would fail on a name conflict and the start would fail on the port.
+  it("carries a rollback command that removes the failed container first", () => {
+    const hint = buildUpgradePlan(dk, "/tmp/stage").rollbackHint!;
+    expect(hint).toContain("docker rm -f demolocker");
+    expect(hint).toContain("docker rename demolocker-preupgrade demolocker");
+    expect(hint).toContain("docker start demolocker");
+    expect(hint.indexOf("rm -f demolocker")).toBeLessThan(hint.indexOf("rename demolocker-preupgrade"));
+    expect(hint.indexOf("rename demolocker-preupgrade")).toBeLessThan(hint.indexOf("start demolocker"));
+    // Never anywhere near the volume.
+    expect(hint).not.toMatch(/-v\b|volume rm/);
+  });
+
   it("never passes -v to any removal, before or after health", () => {
     const plan = buildUpgradePlan(dk, "/tmp/stage");
     for (const s of [...plan.steps, ...(plan.afterHealthySteps ?? [])]) {
@@ -203,13 +220,13 @@ describe("buildUpgradePlan docker", () => {
   // Recreating a container attached to a user-defined network onto the default
   // bridge makes it unreachable by every peer that resolves it by name.
   it("refuses when the container is on a custom network", () => {
-    const networked = { ...dk, networkMode: "studio-net" } as DiscoveredInstance;
+    const networked: DockerCandidate = { ...dk, networkMode: "studio-net" };
     expect(() => buildUpgradePlan(networked, "/tmp/stage")).toThrow(/studio-net/);
     expect(() => buildUpgradePlan(networked, "/tmp/stage")).toThrow(/by hand|manually/i);
   });
 
   it("refuses to build a plan for a container with no name", () => {
-    const unnamed = { ...dk, containerName: "" } as DiscoveredInstance;
+    const unnamed: DockerCandidate = { ...dk, containerName: "" };
     expect(() => buildUpgradePlan(unnamed, "/tmp/stage")).toThrow(/name/i);
   });
 

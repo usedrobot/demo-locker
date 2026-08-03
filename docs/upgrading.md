@@ -41,11 +41,19 @@ Recreates the container against the same volume, carrying over its port,
 publish address (a `127.0.0.1`-only binding stays loopback-only) and
 environment. The old container isn't deleted up front — it's renamed to
 `<name>-preupgrade` and removed only once the new one answers `/health`. If
-the new one never comes up, the CLI says so and leaves the old one in place:
+the new one never comes up, the CLI says so, leaves the old one in place, and
+prints the command below — the failed new container is still running under the
+original name and holding the port, so it has to be removed before the old one
+can take its name back:
 
 ```bash
-docker rename demolocker-preupgrade demolocker && docker start demolocker
+docker rm -f demolocker \
+  && docker rename demolocker-preupgrade demolocker \
+  && docker start demolocker
 ```
+
+That `rm -f` is the *failed new* container. Never add `-v` to it — the volume
+is what carries your music.
 
 If your container is attached to a user-defined docker network, the CLI
 refuses rather than recreating it on the default bridge, where anything that

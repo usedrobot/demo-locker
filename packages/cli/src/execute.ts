@@ -226,6 +226,11 @@ export async function executePlan(
         );
         for (const s of plan.afterHealthySteps) io.output.write(`    ${s.kind === "note" ? s.text : s.title}\n`);
       }
+      // Knowing the old version survived is only half of it — say how to get
+      // back to it, for the user who never opens the docs.
+      if (plan.rollbackHint) {
+        io.output.write(`  to roll back to the previous version:\n    ${plan.rollbackHint}\n`);
+      }
       return 1;
     }
     io.output.write(`✓ healthy\n`);

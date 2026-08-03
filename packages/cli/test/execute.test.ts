@@ -135,6 +135,24 @@ describe("executePlan", () => {
       expect(r.calls).not.toContain("docker rm demolocker-preupgrade");
       expect(read()).toContain("NOT removed");
     });
+
+    // Knowing the old container survived is useless without the command that
+    // brings it back — and the obvious guess (rename first) fails, because the
+    // failed new container still holds the name and the port.
+    it("prints the rollback command when health never passes", async () => {
+      const { io, read } = fakeIO();
+      const r = fakeRunner({
+        fetchFn: vi.fn(async () => new Response("", { status: 500 })) as unknown as typeof fetch,
+      });
+      await executePlan(
+        { ...withCleanup, rollbackHint: "docker rm -f demolocker && docker rename demolocker-preupgrade demolocker && docker start demolocker" },
+        null, io, r,
+      );
+      const out = read();
+      expect(out).toContain("docker rm -f demolocker && docker rename demolocker-preupgrade demolocker && docker start demolocker");
+      // The removal of the FAILED NEW container must come first.
+      expect(out.indexOf("rm -f demolocker")).toBeLessThan(out.indexOf("rename demolocker-preupgrade"));
+    });
   });
 
   it("stops on nonzero exit and reports the failed step", async () => {

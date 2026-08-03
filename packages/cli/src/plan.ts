@@ -64,6 +64,12 @@ export interface DeployPlan {
    * uses this to remove the renamed pre-upgrade container.
    */
   afterHealthySteps?: Step[];
+  /**
+   * A copy-pasteable command that undoes this plan, printed when the health
+   * check never passes. Only meaningful for a plan that replaced something
+   * that was already running — an install has nothing to roll back to.
+   */
+  rollbackHint?: string;
 }
 
 /** Directory the deployable is unpacked into, relative to the user's cwd. */

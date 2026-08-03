@@ -34,10 +34,47 @@ describe("buildUpgradePlan cloudflare", () => {
     expect(write.contents).toContain("demolocker.dlisok.com");
   });
 
-  it("creates nothing", () => {
+  // The whole point of resolving the id (rather than reusing the empty-id
+  // short-circuit) is that it actually ends up in the deployed config. A
+  // Worker bound to the literal string "__DATABASE_ID__" is a silent no-op
+  // deploy against no database at all.
+  it("substitutes the real D1 id and leaves no placeholder behind", () => {
+    const write = buildUpgradePlan(cf, "/tmp/stage").steps.find(
+      (s): s is Extract<Step, { kind: "write" }> => s.kind === "write",
+    )!;
+    expect(write.contents).toContain("ca6096da");
+    expect(write.contents).not.toContain("__DATABASE_ID__");
+  });
+
+  it("refuses to build a plan when the D1 id is unresolved", () => {
+    const noId = { ...cf, d1Id: "" };
+    expect(() => buildUpgradePlan(noId, "/tmp/stage")).toThrow(/demo-locker-dlisok-db/);
+  });
+
+  it("refuses to build a plan when the R2 bucket is unresolved", () => {
+    const noBucket = { ...cf, r2Bucket: null };
+    expect(() => buildUpgradePlan(noBucket, "/tmp/stage")).toThrow(/demo-locker-dlisok-demos|r2|bucket/i);
+  });
+
+  it("creates nothing, but still runs the expected upgrade verbs", () => {
     const args = runs(buildUpgradePlan(cf, "/tmp/stage").steps).map((s) => s.args.join(" "));
     expect(args.some((a) => a.includes("d1 create"))).toBe(false);
     expect(args.some((a) => a.includes("r2 bucket create"))).toBe(false);
+    // Anchor: an empty step list would also pass the assertions above.
+    expect(args.some((a) => a.includes("migrations apply"))).toBe(true);
+    expect(args.some((a) => a.includes("deploy"))).toBe(true);
+  });
+
+  // probeCloudflare never discovers a domain (it always sets domain: null), so
+  // this is the common path, not an edge case. Deploying a routes-less config
+  // over a Worker that already has a custom-domain route must not silently
+  // report success without ever having checked the new version is live.
+  it("surfaces that no health check will run when the domain is unknown", () => {
+    const noDomain = { ...cf, domain: null };
+    const plan = buildUpgradePlan(noDomain, "/tmp/stage");
+    expect(plan.healthUrl).toBeNull();
+    const notes = plan.steps.filter((s): s is Extract<Step, { kind: "note" }> => s.kind === "note");
+    expect(notes.some((n) => /health/i.test(n.text) && /--domain/.test(n.text))).toBe(true);
   });
 });
 
@@ -55,8 +92,26 @@ describe("buildUpgradePlan docker", () => {
     expect(run.args).toContain("ALLOW_SIGNUP=true");
   });
 
+  // A wrong or default --name here starts the new container under a different
+  // name than the old one, orphaning it rather than replacing it.
+  it("starts the new container under the same name as the old one", () => {
+    const run = runs(buildUpgradePlan(dk, "/tmp/stage").steps).find((s) => s.args[0] === "run")!;
+    const nameIdx = run.args.indexOf("--name");
+    expect(nameIdx).toBeGreaterThanOrEqual(0);
+    expect(run.args[nameIdx + 1]).toBe(dk.containerName);
+  });
+
   it("has no migration step — the image migrates on boot", () => {
     const args = runs(buildUpgradePlan(dk, "/tmp/stage").steps).map((s) => s.args.join(" "));
     expect(args.some((a) => a.includes("migrations"))).toBe(false);
+  });
+
+  it("creates nothing beyond the running container — no new volume, no forced removal", () => {
+    const args = runs(buildUpgradePlan(dk, "/tmp/stage").steps).map((s) => s.args.join(" "));
+    expect(args.some((a) => a.includes("volume create"))).toBe(false);
+    expect(args.some((a) => a.startsWith("rm") && a.includes("-f"))).toBe(false);
+    // Anchor: an empty step list would also pass the assertions above.
+    expect(args.some((a) => a.startsWith("pull"))).toBe(true);
+    expect(args.some((a) => a.startsWith("run"))).toBe(true);
   });
 });

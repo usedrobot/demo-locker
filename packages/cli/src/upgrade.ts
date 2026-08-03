@@ -15,10 +15,26 @@ function cloudflareUpgrade(
   cf: Extract<DiscoveredInstance, { target: "cloudflare" }>,
   stagingDir: string,
 ): DeployPlan {
+  // Both guards below must run before a single step is built: cloudflareUpgrade
+  // substitutes these values straight into wrangler.jsonc, and by the time
+  // `migrations apply` has run against the live D1, it is too late to back out.
+  if (!cf.d1Id) {
+    throw new Error(
+      `internal error: cannot upgrade "${cf.d1Name}" — no D1 database id was resolved for it. ` +
+        `This is a bug in discovery, not something a flag can work around.`,
+    );
+  }
+  if (!cf.r2Bucket) {
+    throw new Error(
+      `cannot upgrade "${cf.workerName}": no R2 bucket named "${cf.workerName}-demos" (or matching ` +
+        `--r2-bucket) could be found on this account. Fix the bucket first, or pass --r2-bucket <name>.`,
+    );
+  }
+
   const config = wranglerConfig({
     workerName: cf.workerName,
     d1Name: cf.d1Name,
-    r2Bucket: cf.r2Bucket ?? `${cf.workerName}-demos`,
+    r2Bucket: cf.r2Bucket,
     domain: cf.domain,
   }).replace("__DATABASE_ID__", cf.d1Id);
 
@@ -50,6 +66,22 @@ function cloudflareUpgrade(
   ];
 
   const appUrl = cf.domain ? `https://${cf.domain}` : null;
+  if (!cf.domain) {
+    // probeCloudflare never discovers a domain — this is the common path, not
+    // an edge case. Deploying with no routes/custom-domain block in the config
+    // is confirmed inert against wrangler's remote state (see task-6-report.md
+    // for the source dive into triggersDeploy/publishCustomDomains: with an
+    // empty routes list neither the zone-routes PUT nor the custom-domains PUT
+    // is ever called, so an existing custom domain is left untouched). But we
+    // have no way to health-check a domain we were never told, so the upgrade
+    // must not be allowed to look like it verified anything it didn't.
+    steps.push({
+      kind: "note",
+      text:
+        "No domain was discovered for this instance, so no post-deploy health check will run. " +
+        "Pass --domain <host> to verify the new version is actually serving before trusting this upgrade.",
+    });
+  }
   return { steps, healthUrl: appUrl ? `${appUrl}/health` : null, appUrl };
 }
 

@@ -28,6 +28,7 @@ Options:
   --worker-name <name>            cloudflare Worker name (default demo-locker)
   --d1-name <name>                cloudflare D1 database name (default demo-locker-db)
   --r2-bucket <name>              cloudflare R2 bucket name (default demo-locker-demos)
+  --upgrade                       update an existing instance in place
   --yes                           accept defaults for unanswered questions
   --dry-run                       print the deploy plan without running it
   --help, --version

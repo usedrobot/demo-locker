@@ -353,3 +353,33 @@ describe("cloudflare flags", () => {
     expect(read()).not.toContain("Create the first account now?");
   });
 });
+
+describe("--upgrade flag", () => {
+  it("parses as a boolean, defaulting false", () => {
+    expect(parseFlags([]).upgrade).toBe(false);
+    expect(parseFlags(["--upgrade"]).upgrade).toBe(true);
+  });
+
+  it("rejects install-only flags alongside --upgrade", () => {
+    for (const bad of [
+      ["--upgrade", "--mode", "instance"],
+      ["--upgrade", "--storage", "local"],
+      ["--upgrade", "--port", "3001"],
+      ["--upgrade", "--volume", "demolocker"],
+    ]) {
+      expect(() => parseFlags(bad), bad.join(" ")).toThrow(/--upgrade/);
+    }
+  });
+
+  it("allows the naming flags as overrides", () => {
+    const f = parseFlags([
+      "--upgrade", "--worker-name", "w", "--d1-name", "d",
+      "--r2-bucket", "r", "--domain", "h.co", "--target", "cloudflare",
+    ]);
+    expect(f.upgrade).toBe(true);
+    expect(f.workerName).toBe("w");
+    expect(f.d1Name).toBe("d");
+    expect(f.r2Bucket).toBe("r");
+    expect(f.domain).toBe("h.co");
+  });
+});

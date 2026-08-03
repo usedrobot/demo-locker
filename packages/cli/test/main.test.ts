@@ -24,7 +24,7 @@ describe("main", () => {
       "--mode", "--target", "--storage", "--port", "--volume", "--url",
       "--email", "--password", "--s3-endpoint", "--s3-bucket", "--s3-access-key",
       "--s3-secret-key", "--s3-region", "--worker-name", "--d1-name",
-      "--r2-bucket", "--domain", "--yes", "--dry-run", "--help", "--version",
+      "--r2-bucket", "--domain", "--upgrade", "--yes", "--dry-run", "--help", "--version",
     ];
     for (const flag of flags) expect(usage, `${flag} missing from --help`).toContain(flag);
   });

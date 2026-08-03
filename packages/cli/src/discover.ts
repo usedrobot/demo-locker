@@ -6,6 +6,7 @@
 // account or daemon.
 
 import type { Runner } from "./execute.js";
+import { IMAGE } from "./plan.js";
 
 export interface CloudflareCandidate {
   target: "cloudflare";
@@ -118,5 +119,123 @@ export function parseDockerInspect(stdout: string, containerId: string): DockerC
         APP_ENV_EXACT_NAMES.some((name) => e.startsWith(name + "=")) ||
         APP_ENV_PREFIXES.some((p) => e.startsWith(p))
     ),
+  };
+}
+
+export type DiscoveredInstance = DockerCandidate | CloudflareCandidate;
+
+export interface ResolveOptions {
+  target?: "cloudflare" | "docker" | "existing";
+  workerName?: string;
+  d1Name?: string;
+  r2Bucket?: string;
+  domain?: string;
+}
+
+export type ResolveResult =
+  | { ok: true; instance: DiscoveredInstance }
+  | { ok: false; reason: string; candidates: string[] };
+
+const IMAGE_NAME = IMAGE.split(":")[0];
+
+export async function probeDocker(runner: Runner): Promise<DockerCandidate[]> {
+  const { code, stdout } = await runner.execCapture("docker", [
+    "ps", "-a", "--filter", `ancestor=${IMAGE_NAME}`, "--format", "{{.ID}}",
+  ]);
+  if (code !== 0) return [];
+  const ids = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  const found: DockerCandidate[] = [];
+  for (const id of ids) {
+    const res = await runner.execCapture("docker", ["inspect", id]);
+    if (res.code !== 0) continue;
+    const c = parseDockerInspect(res.stdout, id);
+    if (c) found.push(c);
+  }
+  return found;
+}
+
+export async function probeCloudflare(runner: Runner): Promise<CloudflareCandidate[]> {
+  const list = await runner.execCapture("npx", ["wrangler", "d1", "list", "--json"]);
+  if (list.code !== 0) return [];
+  const buckets = await runner.execCapture("npx", ["wrangler", "r2", "bucket", "list"]);
+
+  const found: CloudflareCandidate[] = [];
+  for (const db of parseD1List(list.stdout)) {
+    const workerName = workerNameFromD1(db.name);
+    if (!workerName) continue;
+    // A derived name is a guess until the Worker is confirmed to exist.
+    const check = await runner.execCapture("npx", ["wrangler", "deployments", "list", "--name", workerName]);
+    if (check.code !== 0) continue;
+    const bucket = `${workerName}-demos`;
+    found.push({
+      target: "cloudflare",
+      workerName,
+      d1Name: db.name,
+      d1Id: db.id,
+      r2Bucket: buckets.code === 0 && buckets.stdout.includes(bucket) ? bucket : null,
+      domain: null,
+    });
+  }
+  return found;
+}
+
+/**
+ * A supplied flag always beats a discovered value, including when only some
+ * are supplied — `--domain` alone must still take effect on an otherwise
+ * discovered instance.
+ */
+function applyOverrides(inst: DiscoveredInstance, opts: ResolveOptions): DiscoveredInstance {
+  if (inst.target !== "cloudflare") return inst;
+  return {
+    ...inst,
+    d1Name: opts.d1Name ?? inst.d1Name,
+    r2Bucket: opts.r2Bucket ?? inst.r2Bucket,
+    domain: opts.domain ?? inst.domain,
+  };
+}
+
+/**
+ * Explicit flags win outright and skip probing. Otherwise probe both targets;
+ * exactly one hit resolves, anything else is an error that names the
+ * candidates. Nothing here ever picks on the user's behalf — an upgrade writes
+ * to something that already exists and holds data.
+ */
+export async function resolveInstance(opts: ResolveOptions, runner: Runner): Promise<ResolveResult> {
+  if (opts.target === "cloudflare" && opts.workerName) {
+    return {
+      ok: true,
+      instance: {
+        target: "cloudflare",
+        workerName: opts.workerName,
+        d1Name: opts.d1Name ?? `${opts.workerName}-db`,
+        d1Id: "",
+        r2Bucket: opts.r2Bucket ?? `${opts.workerName}-demos`,
+        domain: opts.domain ?? null,
+      },
+    };
+  }
+
+  const docker = opts.target === "cloudflare" ? [] : await probeDocker(runner);
+  const cloud = opts.target === "docker" ? [] : await probeCloudflare(runner);
+  const all: DiscoveredInstance[] = [...docker, ...cloud];
+
+  // A partial override still overrides. Discovery fills the rest.
+  if (all.length === 1) return { ok: true, instance: applyOverrides(all[0], opts) };
+  if (all.length === 0) {
+    return {
+      ok: false,
+      candidates: [],
+      reason:
+        `No Demo Locker instance found.\n` +
+        `  docker:     looked for a container from ${IMAGE_NAME}\n` +
+        `  cloudflare: looked for a D1 database named <worker>-db with a deployed Worker\n` +
+        `If your instance runs somewhere else (Fly, Railway, a VPS), upgrade it by ` +
+        `redeploying the image — see docs/upgrading.md.`,
+    };
+  }
+  return {
+    ok: false,
+    candidates: all.map((c) => (c.target === "docker" ? `docker: ${c.containerName}` : `cloudflare: ${c.workerName}`)),
+    reason: "More than one Demo Locker instance found. Disambiguate with --target or --worker-name.",
   };
 }

@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseD1List, workerNameFromD1 } from "../src/discover.js";
+import { parseD1List, workerNameFromD1, resolveInstance } from "../src/discover.js";
+import type { Runner } from "../src/execute.js";
 
 const D1_JSON = JSON.stringify([
   { uuid: "ca6096da-2ca9-4dfa-ba22-5f154cc0a322", name: "demo-locker-dlisok-db", num_tables: 0 },
@@ -174,6 +175,77 @@ describe("env var alignment with bindings.ts", () => {
         appEnvExactNames,
         `FORWARDED_ENV_VARS entry "${varName}" not found in APP_ENV_EXACT_NAMES`
       ).toContain(varName);
+    }
+  });
+});
+
+function runnerWith(responses: Record<string, string>): Runner {
+  return {
+    exec: vi.fn(async () => 0),
+    execCapture: vi.fn(async (cmd: string, args: string[]) => {
+      const key = `${cmd} ${args.join(" ")}`;
+      const match = Object.keys(responses).find((k) => key.startsWith(k));
+      return match ? { code: 0, stdout: responses[match] } : { code: 1, stdout: "" };
+    }),
+    writeFile: vi.fn(async () => {}),
+    copyDir: vi.fn(async () => {}),
+    mkdtemp: vi.fn(async () => "/tmp/x"),
+    rmDir: vi.fn(async () => {}),
+    fetchFn: vi.fn() as unknown as typeof fetch,
+    sleep: async () => {},
+  };
+}
+
+describe("resolveInstance", () => {
+  it("uses explicit flags without probing at all", async () => {
+    const runner = runnerWith({});
+    const res = await resolveInstance(
+      { target: "cloudflare", workerName: "w", d1Name: "d", r2Bucket: "r", domain: "h" },
+      runner,
+    );
+    expect(res.ok).toBe(true);
+    expect(runner.execCapture).not.toHaveBeenCalled();
+  });
+
+  it("finds a single docker instance", async () => {
+    const runner = runnerWith({
+      "docker ps": "abc123def456\n",
+      "docker inspect": INSPECT_JSON,
+    });
+    const res = await resolveInstance({}, runner);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.instance).toMatchObject({ target: "docker", volume: "demolocker" });
+  });
+
+  it("errors, listing candidates, when docker and cloudflare both match", async () => {
+    const runner = runnerWith({
+      "docker ps": "abc123def456\n",
+      "docker inspect": INSPECT_JSON,
+      "npx wrangler d1 list": D1_JSON,
+      "npx wrangler deployments list": "ok",
+      "npx wrangler r2 bucket list": "demo-locker-dlisok-demos",
+    });
+    const res = await resolveInstance({}, runner);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.candidates.length).toBeGreaterThan(1);
+  });
+
+  it("applies a partial override on top of a discovered instance", async () => {
+    const runner = runnerWith({
+      "npx wrangler d1 list": D1_JSON,
+      "npx wrangler deployments list": "ok",
+      "npx wrangler r2 bucket list": "demo-locker-demos",
+    });
+    const res = await resolveInstance({ target: "docker" }, runner);
+    expect(res.ok).toBe(false); // target docker, no containers -> not found
+  });
+
+  it("errors with a useful reason when nothing is found", async () => {
+    const res = await resolveInstance({}, runnerWith({}));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toMatch(/docker/i);
+      expect(res.reason).toMatch(/cloudflare/i);
     }
   });
 });

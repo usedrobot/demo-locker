@@ -157,7 +157,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         <TrackList
           tracks={tracks}
           onReorder={handleReorder}
-          onDelete={(id) => {
+          onRemove={(id) => {
             setTracks(tracks.filter((t) => t.id !== id));
             if (selectedTrackId === id) setSelectedTrackId(null);
           }}

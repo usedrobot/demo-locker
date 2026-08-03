@@ -504,8 +504,12 @@ export default function Home({ onSelect, onLogout }: Props) {
               <button
                 onClick={(e) => handleTrackDelete(e, t.id)}
                 onMouseLeave={() => setConfirmTrackDeleteId(null)}
-                title={confirmTrackDeleteId === t.id ? "Click again to delete" : "Delete track"}
-                aria-label={`Delete track ${t.title}`}
+                title={
+                  confirmTrackDeleteId === t.id
+                    ? "Click again to delete permanently — this erases the original file"
+                    : "Delete this track and its files for good"
+                }
+                aria-label={`Delete ${t.title} permanently, including the original file`}
                 style={{
                   ...linkStyle,
                   color: confirmTrackDeleteId === t.id ? "var(--error)" : "var(--fg-dim)",

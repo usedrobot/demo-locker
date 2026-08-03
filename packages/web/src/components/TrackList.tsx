@@ -6,7 +6,12 @@ import { player } from "../lib/audio";
 type Props = {
   tracks: Track[];
   onReorder: (trackIds: string[]) => void;
-  onDelete?: (trackId: string) => void;
+  // Removes the track from THIS playlist. The track and its files survive and
+  // drop back to the library on Home — this control must never destroy a
+  // master. Deleting for good is a library-level action and lives there, where
+  // the word "delete" is accurate. Named onRemove, not onDelete, because it
+  // used to call DELETE /tracks/:id while every label said "remove".
+  onRemove?: (trackId: string) => void;
   selectedId?: string | null;
   onSelect?: (id: string) => void;
 };
@@ -49,9 +54,9 @@ function ProgressBar({ trackId }: { trackId: string }) {
   );
 }
 
-export default function TrackList({ tracks, onReorder, onDelete, selectedId, onSelect }: Props) {
+export default function TrackList({ tracks, onReorder, onRemove, selectedId, onSelect }: Props) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [playerState, setPlayerState] = useState(player.getState());
 
   useEffect(() => player.subscribe(setPlayerState), []);
@@ -75,16 +80,18 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
     setDragIndex(null);
   }
 
-  async function handleDelete(e: React.MouseEvent, trackId: string) {
+  async function handleRemove(e: React.MouseEvent, trackId: string) {
     e.stopPropagation();
-    if (confirmDeleteId !== trackId) {
-      setConfirmDeleteId(trackId);
+    if (confirmRemoveId !== trackId) {
+      setConfirmRemoveId(trackId);
       return;
     }
-    await tracksApi.delete(trackId);
+    // Detach, don't destroy: playlistId null sends it back to the library with
+    // both the master and the rendition intact.
+    await tracksApi.attach(trackId, null);
     if (player.getState().track?.id === trackId) player.clear();
-    setConfirmDeleteId(null);
-    onDelete?.(trackId);
+    setConfirmRemoveId(null);
+    onRemove?.(trackId);
   }
 
   if (tracks.length === 0) {
@@ -176,24 +183,28 @@ export default function TrackList({ tracks, onReorder, onDelete, selectedId, onS
               [↓]
             </a>
 
-            {/* Delete button */}
-            {onDelete && (
+            {/* Remove-from-playlist button — detaches, never destroys */}
+            {onRemove && (
               <button
-                onClick={(e) => handleDelete(e, track.id)}
-                onMouseLeave={() => setConfirmDeleteId(null)}
-                title={confirmDeleteId === track.id ? "Click again to remove" : "Remove track"}
-                aria-label={`Remove track ${track.title}`}
+                onClick={(e) => handleRemove(e, track.id)}
+                onMouseLeave={() => setConfirmRemoveId(null)}
+                title={
+                  confirmRemoveId === track.id
+                    ? "Click again to remove from this playlist"
+                    : "Remove from this playlist (the track stays in your library)"
+                }
+                aria-label={`Remove ${track.title} from this playlist`}
                 style={{
                   background: "none",
                   border: "none",
-                  color: confirmDeleteId === track.id ? "var(--error)" : "var(--fg-dim)",
+                  color: confirmRemoveId === track.id ? "var(--accent)" : "var(--fg-dim)",
                   fontFamily: "var(--font)",
                   fontSize: "12px",
                   cursor: "pointer",
                   padding: "0 0.25rem",
                 }}
               >
-                {confirmDeleteId === track.id ? "[delete?]" : "[x]"}
+                {confirmRemoveId === track.id ? "[remove?]" : "[x]"}
               </button>
             )}
 

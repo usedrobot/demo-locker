@@ -77,8 +77,80 @@ describe("parseDockerInspect", () => {
       containerName: "demolocker",
       volume: "demolocker",
       port: 8080,
+      hostIp: null,
+      networkMode: null,
       env: ["DATA_DIR=/data", "ALLOW_SIGNUP=true", "S3_BUCKET=demos"],
     });
+  });
+
+  // A container published with `-p 127.0.0.1:3001:3001` is deliberately NOT on
+  // the LAN. Dropping HostIp republishes it on 0.0.0.0 — the upgrade reports
+  // success while exposing a private locker to every machine on the network.
+  it("carries a loopback-only HostIp through", () => {
+    const loopback = JSON.stringify([
+      {
+        Id: "abc123def456",
+        Name: "/demolocker",
+        Config: { Image: "i", Env: [] },
+        Mounts: [{ Type: "volume", Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostIp: "127.0.0.1", HostPort: "3001" }] } },
+      },
+    ]);
+    expect(parseDockerInspect(loopback, "abc123def456")!.hostIp).toBe("127.0.0.1");
+  });
+
+  // 0.0.0.0 and "" both mean "every interface", which is `-p host:3001`'s own
+  // default — carrying them through would only add noise.
+  it("normalises a wildcard HostIp to null", () => {
+    for (const ip of ["0.0.0.0", "", undefined]) {
+      const json = JSON.stringify([
+        {
+          Id: "x", Name: "/x", Config: { Env: [] },
+          Mounts: [{ Name: "demolocker", Destination: "/data" }],
+          NetworkSettings: { Ports: { "3001/tcp": [{ HostIp: ip, HostPort: "3001" }] } },
+        },
+      ]);
+      expect(parseDockerInspect(json, "x")!.hostIp).toBeNull();
+    }
+  });
+
+  // A container we cannot name cannot be recreated: `docker run --name ""` is
+  // not a faithful replacement, it is a differently-named orphan.
+  it("returns null when the container has no name to recreate it under", () => {
+    const noName = JSON.stringify([
+      {
+        Id: "x", Config: { Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      },
+    ]);
+    expect(parseDockerInspect(noName, "x")).toBeNull();
+  });
+
+  it("reads a custom NetworkMode", () => {
+    const networked = JSON.stringify([
+      {
+        Id: "x", Name: "/x", Config: { Env: [] },
+        HostConfig: { NetworkMode: "studio-net" },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      },
+    ]);
+    expect(parseDockerInspect(networked, "x")!.networkMode).toBe("studio-net");
+  });
+
+  it("treats the default bridge network as no custom network", () => {
+    for (const mode of ["default", "bridge", undefined]) {
+      const json = JSON.stringify([
+        {
+          Id: "x", Name: "/x", Config: { Env: [] },
+          HostConfig: { NetworkMode: mode },
+          Mounts: [{ Name: "demolocker", Destination: "/data" }],
+          NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+        },
+      ]);
+      expect(parseDockerInspect(json, "x")!.networkMode).toBeNull();
+    }
   });
 
   // Carrying PATH or NODE_VERSION into `docker run` would override the image's
@@ -125,6 +197,8 @@ describe("parseDockerInspect", () => {
       containerName: "demolocker",
       volume: "demolocker",
       port: 8080,
+      hostIp: null,
+      networkMode: null,
       env: [],
     });
   });
@@ -254,6 +328,95 @@ describe("resolveInstance", () => {
     });
     const res = await resolveInstance({ target: "docker" }, runner);
     expect(res.ok).toBe(false); // target docker, no containers -> not found
+  });
+
+  // defaultRunner REJECTS when a binary is missing (spawn ENOENT), which is
+  // useful for a step that genuinely needs the tool — but a probe is not that.
+  // Without Docker installed, a --target cloudflare upgrade would die with
+  // "could not run docker", which is most Cloudflare users.
+  it("yields no candidates rather than throwing when a probe's tool is missing", async () => {
+    const missing: Runner = {
+      ...runnerWith({}),
+      execCapture: vi.fn(async (cmd: string) => {
+        throw new Error(`could not run "${cmd}" — is it installed and on PATH? (spawn ENOENT)`);
+      }),
+    };
+    const res = await resolveInstance({}, missing);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/No Demo Locker instance found/);
+  });
+
+  it("still finds a cloudflare instance when docker is not installed", async () => {
+    const noDocker: Runner = {
+      ...runnerWith({
+        "npx wrangler d1 list": D1_JSON,
+        "npx wrangler deployments list": "ok",
+        "npx wrangler r2 bucket list": "demo-locker-dlisok-demos\ndemo-locker-demos",
+      }),
+      execCapture: vi.fn(async (cmd: string, args: string[]) => {
+        if (cmd === "docker") throw new Error(`could not run "docker" (spawn ENOENT)`);
+        const key = `${cmd} ${args.join(" ")}`;
+        const responses: Record<string, string> = {
+          "npx wrangler d1 list": D1_JSON,
+          "npx wrangler deployments list": "ok",
+          "npx wrangler r2 bucket list": "demo-locker-dlisok-demos",
+        };
+        const match = Object.keys(responses).find((k) => key.startsWith(k));
+        return match ? { code: 0, stdout: responses[match] } : { code: 1, stdout: "" };
+      }),
+    };
+    const res = await resolveInstance({ workerName: "demo-locker-dlisok" }, noDocker);
+    expect(res.ok).toBe(true);
+  });
+
+  // The ambiguity error, AGENTS.md and docs/upgrading.md all advertise
+  // --worker-name as the disambiguator. It has to actually disambiguate.
+  describe("--worker-name", () => {
+    const bothRunner = () =>
+      runnerWith({
+        "docker ps": "abc123def456\n",
+        "docker inspect": INSPECT_JSON,
+        "npx wrangler d1 list": D1_JSON,
+        "npx wrangler deployments list": "ok",
+        "npx wrangler r2 bucket list": "demo-locker-dlisok-demos\ndemo-locker-demos",
+      });
+
+    it("picks the matching worker out of several candidates", async () => {
+      const res = await resolveInstance({ workerName: "demo-locker-dlisok" }, bothRunner());
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.instance).toMatchObject({ target: "cloudflare", workerName: "demo-locker-dlisok" });
+    });
+
+    it("picks the other worker just as readily", async () => {
+      const res = await resolveInstance({ workerName: "demo-locker" }, bothRunner());
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.instance).toMatchObject({ workerName: "demo-locker" });
+    });
+
+    // Deploying over a different worker than the one named is exactly the
+    // accident --worker-name exists to prevent.
+    it("refuses rather than upgrading a single candidate that does not match", async () => {
+      const runner = runnerWith({
+        "npx wrangler d1 list": JSON.stringify([
+          { uuid: "0ea573b2-861c-482c-a9c7-de5335d29fa0", name: "demo-locker-db" },
+        ]),
+        "npx wrangler deployments list": "ok",
+        "npx wrangler r2 bucket list": "demo-locker-demos",
+      });
+      const res = await resolveInstance({ workerName: "some-other-worker" }, runner);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.reason).toMatch(/some-other-worker/);
+        expect(res.candidates).toContain("cloudflare: demo-locker");
+      }
+    });
+
+    it("refuses when only docker instances exist, since a Worker name cannot name one", async () => {
+      const runner = runnerWith({ "docker ps": "abc123def456\n", "docker inspect": INSPECT_JSON });
+      const res = await resolveInstance({ workerName: "demo-locker" }, runner);
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toMatch(/--worker-name/);
+    });
   });
 
   it("errors with a useful reason when nothing is found", async () => {

@@ -580,6 +580,16 @@ describe("resolveInstance", () => {
     if (!res.ok) expect(res.candidates.length).toBeGreaterThan(1);
   });
 
+  it("applies a partial override on top of a discovered instance", async () => {
+    const runner = runnerWith({
+      "npx wrangler d1 list": D1_JSON,
+      "npx wrangler deployments list": "ok",
+      "npx wrangler r2 bucket list": "demo-locker-demos",
+    });
+    const res = await resolveInstance({ target: "docker" }, runner);
+    expect(res.ok).toBe(false); // target docker, no containers -> not found
+  });
+
   it("errors with a useful reason when nothing is found", async () => {
     const res = await resolveInstance({}, runnerWith({}));
     expect(res.ok).toBe(false);
@@ -661,6 +671,21 @@ export async function probeCloudflare(runner: Runner): Promise<CloudflareCandida
 }
 
 /**
+ * A supplied flag always beats a discovered value, including when only some
+ * are supplied — `--domain` alone must still take effect on an otherwise
+ * discovered instance.
+ */
+function applyOverrides(inst: DiscoveredInstance, opts: ResolveOptions): DiscoveredInstance {
+  if (inst.target !== "cloudflare") return inst;
+  return {
+    ...inst,
+    d1Name: opts.d1Name ?? inst.d1Name,
+    r2Bucket: opts.r2Bucket ?? inst.r2Bucket,
+    domain: opts.domain ?? inst.domain,
+  };
+}
+
+/**
  * Explicit flags win outright and skip probing. Otherwise probe both targets;
  * exactly one hit resolves, anything else is an error that names the
  * candidates. Nothing here ever picks on the user's behalf — an upgrade writes
@@ -685,7 +710,8 @@ export async function resolveInstance(opts: ResolveOptions, runner: Runner): Pro
   const cloud = opts.target === "docker" ? [] : await probeCloudflare(runner);
   const all: DiscoveredInstance[] = [...docker, ...cloud];
 
-  if (all.length === 1) return { ok: true, instance: all[0] };
+  // A partial override still overrides. Discovery fills the rest.
+  if (all.length === 1) return { ok: true, instance: applyOverrides(all[0], opts) };
   if (all.length === 0) {
     return {
       ok: false,

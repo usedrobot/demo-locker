@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { executePlan } from "../src/execute.js";
+import { executePlan, defaultRunner } from "../src/execute.js";
 import type { Runner } from "../src/execute.js";
 import type { DeployPlan } from "../src/plan.js";
 import { fakeIO } from "./helpers.js";
@@ -21,6 +21,8 @@ function fakeRunner(overrides: Partial<Runner> = {}): Runner & { calls: string[]
     }),
     fetchFn: vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
     sleep: async () => {},
+    mkdtemp: vi.fn(async (prefix: string) => `/tmp/${prefix}fake`),
+    rmDir: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -42,6 +44,115 @@ describe("executePlan", () => {
     expect(code).toBe(0);
     expect(r.calls).toEqual(["docker volume create demolocker", "docker run -d"]);
     expect(read()).toContain("http://localhost:3001");
+  });
+
+  // `wrangler d1 migrations apply` exits 0 when the user answers "n" to its
+  // confirm prompt, so exit codes alone cannot guarantee "migrations before
+  // deploy". run-assert gates on what the follow-up check actually prints.
+  describe("run-assert", () => {
+    const gatedPlan: DeployPlan = {
+      steps: [
+        { kind: "run", title: "Apply migrations", cmd: "npx", args: ["wrangler", "d1", "migrations", "apply"] },
+        {
+          kind: "run-assert", title: "Verify no migrations are still pending",
+          cmd: "npx", args: ["wrangler", "d1", "migrations", "list"],
+          pattern: "No migrations to apply",
+          failure: "migrations are still pending — refusing to deploy",
+        },
+        { kind: "run", title: "Deploy", cmd: "npx", args: ["wrangler", "deploy"] },
+      ],
+      healthUrl: null,
+      appUrl: "https://demos.example.com",
+    };
+
+    it("does NOT deploy when the check reports migrations still pending", async () => {
+      const { io, read } = fakeIO();
+      const r = fakeRunner({
+        execCapture: vi.fn(async () => ({
+          code: 0,
+          stdout: "Migrations to be applied:\n┌──────────────────┐\n│ 0003_add_col.sql │\n",
+        })),
+      });
+      const code = await executePlan(gatedPlan, null, io, r);
+      expect(code).toBe(1);
+      expect(r.calls).not.toContain("npx wrangler deploy");
+      expect(read()).toContain("refusing to deploy");
+    });
+
+    it("deploys when the check reports nothing pending", async () => {
+      const { io } = fakeIO();
+      const r = fakeRunner({
+        execCapture: vi.fn(async () => ({ code: 0, stdout: "✅ No migrations to apply!\n" })),
+      });
+      const code = await executePlan(gatedPlan, null, io, r);
+      expect(code).toBe(0);
+      expect(r.calls).toContain("npx wrangler deploy");
+    });
+
+    // Fails closed: output we cannot recognise is not evidence of success.
+    it("does not deploy on unrecognisable check output", async () => {
+      const { io } = fakeIO();
+      const r = fakeRunner({ execCapture: vi.fn(async () => ({ code: 0, stdout: "" })) });
+      expect(await executePlan(gatedPlan, null, io, r)).toBe(1);
+      expect(r.calls).not.toContain("npx wrangler deploy");
+    });
+
+    it("stops when the check command itself fails", async () => {
+      const { io } = fakeIO();
+      const r = fakeRunner({ execCapture: vi.fn(async () => ({ code: 1, stdout: "" })) });
+      expect(await executePlan(gatedPlan, null, io, r)).toBe(1);
+      expect(r.calls).not.toContain("npx wrangler deploy");
+    });
+  });
+
+  describe("afterHealthySteps", () => {
+    const withCleanup: DeployPlan = {
+      ...dockerPlan,
+      afterHealthySteps: [
+        { kind: "run", title: "Remove the pre-upgrade container", cmd: "docker", args: ["rm", "demolocker-preupgrade"] },
+      ],
+    };
+
+    it("runs cleanup only after health passes", async () => {
+      const { io } = fakeIO();
+      const r = fakeRunner();
+      expect(await executePlan(withCleanup, null, io, r)).toBe(0);
+      expect(r.calls).toEqual([
+        "docker volume create demolocker",
+        "docker run -d",
+        "docker rm demolocker-preupgrade",
+      ]);
+    });
+
+    // The old container is the only way back. An unhealthy new deployment must
+    // not take it with it.
+    it("leaves the old container alone when health never passes", async () => {
+      const { io, read } = fakeIO();
+      const r = fakeRunner({
+        fetchFn: vi.fn(async () => new Response("", { status: 500 })) as unknown as typeof fetch,
+      });
+      expect(await executePlan(withCleanup, null, io, r)).toBe(1);
+      expect(r.calls).not.toContain("docker rm demolocker-preupgrade");
+      expect(read()).toContain("NOT removed");
+    });
+
+    // Knowing the old container survived is useless without the command that
+    // brings it back — and the obvious guess (rename first) fails, because the
+    // failed new container still holds the name and the port.
+    it("prints the rollback command when health never passes", async () => {
+      const { io, read } = fakeIO();
+      const r = fakeRunner({
+        fetchFn: vi.fn(async () => new Response("", { status: 500 })) as unknown as typeof fetch,
+      });
+      await executePlan(
+        { ...withCleanup, rollbackHint: "docker rm -f demolocker && docker rename demolocker-preupgrade demolocker && docker start demolocker" },
+        null, io, r,
+      );
+      const out = read();
+      expect(out).toContain("docker rm -f demolocker && docker rename demolocker-preupgrade demolocker && docker start demolocker");
+      // The removal of the FAILED NEW container must come first.
+      expect(out.indexOf("rm -f demolocker")).toBeLessThan(out.indexOf("rename demolocker-preupgrade"));
+    });
   });
 
   it("stops on nonzero exit and reports the failed step", async () => {
@@ -244,6 +355,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
 
     const code = await executePlan(
@@ -289,6 +402,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
 
     const code = await executePlan(
@@ -316,6 +431,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
     const code = await executePlan(
       {
@@ -341,6 +458,8 @@ describe("run-capture", () => {
       fetchFn: (async () => new Response("{}", { status: 200 })) as typeof fetch,
       sleep: async () => {},
       copyDir: async () => {},
+      mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`,
+      rmDir: async () => {},
     };
 
     const code = await executePlan(
@@ -356,5 +475,17 @@ describe("run-capture", () => {
 
     expect(code).toBe(1);
     expect(read()).toContain("something unexpected");
+  });
+});
+
+describe("Runner temp directories", () => {
+  it("defaultRunner creates a real directory and removes it", async () => {
+    const { io } = fakeIO();
+    const r = defaultRunner(io);
+    const dir = await r.mkdtemp("demo-locker-test-");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(dir)).toBe(true);
+    await r.rmDir(dir);
+    expect(existsSync(dir)).toBe(false);
   });
 });

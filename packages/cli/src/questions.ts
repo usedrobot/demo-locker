@@ -26,6 +26,7 @@ export interface Flags {
   d1Name?: string;
   r2Bucket?: string;
   domain?: string;
+  upgrade: boolean;
   yes: boolean;
   dryRun: boolean;
 }
@@ -117,6 +118,7 @@ export function parseFlags(argv: string[]): Flags {
       "d1-name": { type: "string" },
       "r2-bucket": { type: "string" },
       domain: { type: "string" },
+      upgrade: { type: "boolean", default: false },
       yes: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
     },
@@ -146,6 +148,20 @@ export function parseFlags(argv: string[]): Flags {
     }
   }
 
+  // Install-only flags describe resources to CREATE. On upgrade every one of
+  // them is already fixed by the running instance, so accepting them would
+  // silently imply we can change something we cannot.
+  if (v.upgrade) {
+    const installOnly = ["mode", "storage", "port", "volume", "url", "email"] as const;
+    const offenders = installOnly.filter((k) => v[k] !== undefined);
+    if (offenders.length > 0) {
+      throw new Error(
+        `--upgrade cannot be combined with: ${offenders.map((o) => `--${o}`).join(", ")}. ` +
+          `Those describe a new install; an upgrade reuses what the instance already has.`,
+      );
+    }
+  }
+
   return {
     mode: oneOf("mode", v.mode, MODES),
     target: oneOf("target", v.target, TARGETS),
@@ -164,6 +180,7 @@ export function parseFlags(argv: string[]): Flags {
     d1Name: v["d1-name"],
     r2Bucket: v["r2-bucket"],
     domain: v.domain,
+    upgrade: v.upgrade ?? false,
     yes: v.yes ?? false,
     dryRun: v["dry-run"] ?? false,
   };

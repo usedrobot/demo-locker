@@ -1,9 +1,12 @@
 import { createRequire } from "node:module";
 import { parseFlags, detectContext, collectAnswers } from "./questions.js";
-import { buildPlan, renderPlan } from "./plan.js";
+import { IMAGE, buildPlan, cliVersion, renderPlan, versionedImage } from "./plan.js";
 import { executePlan, defaultRunner } from "./execute.js";
 import type { Runner } from "./execute.js";
 import { setupPlayer } from "./embed.js";
+import { resolveInstance } from "./discover.js";
+import { buildUpgradePlan } from "./upgrade.js";
+import { ask } from "./prompts.js";
 
 export interface IO {
   input: NodeJS.ReadableStream;
@@ -28,6 +31,7 @@ Options:
   --worker-name <name>            cloudflare Worker name (default demo-locker)
   --d1-name <name>                cloudflare D1 database name (default demo-locker-db)
   --r2-bucket <name>              cloudflare R2 bucket name (default demo-locker-demos)
+  --upgrade                       update an existing instance in place
   --yes                           accept defaults for unanswered questions
   --dry-run                       print the deploy plan without running it
   --help, --version
@@ -57,6 +61,10 @@ export async function main(
   } catch (err) {
     io.output.write(`${err instanceof Error ? err.message : err}\n\n${USAGE}`);
     return 1;
+  }
+
+  if (flags.upgrade) {
+    return runUpgrade(flags, io, runner);
   }
 
   let answers;
@@ -107,4 +115,102 @@ export async function main(
     return setupPlayer(instanceUrl, cwd, io, runner);
   }
   return 0;
+}
+
+/**
+ * The image tag a docker upgrade should move to.
+ *
+ * `npx demo-locker@0.2.9 --upgrade` must install 0.2.9 — pinning :latest here
+ * would make the version flag a lie and turn an intended downgrade into an
+ * upgrade. Not every CLI version necessarily has a matching image tag though
+ * (a CLI-only patch release, a local build), so the tag is checked against the
+ * registry first and :latest is used — out loud — when it is missing.
+ */
+async function resolveUpgradeImage(io: IO, runner: Runner): Promise<string> {
+  const wanted = versionedImage();
+  try {
+    // Read-only, and quiet: the manifest itself is noise.
+    const { code } = await runner.execCapture("docker", ["manifest", "inspect", wanted], {
+      quiet: true,
+    });
+    if (code === 0) return wanted;
+  } catch {
+    // No docker to ask with. The pull step reports that far better than a
+    // tag-resolution helper can.
+  }
+  io.output.write(
+    `• no image tagged "${cliVersion()}" is published (or the registry could not be reached) — ` +
+      `upgrading to ${IMAGE} instead.\n`,
+  );
+  return IMAGE;
+}
+
+async function runUpgrade(
+  flags: Awaited<ReturnType<typeof parseFlags>>,
+  io: IO,
+  runner: Runner,
+): Promise<number> {
+  if (flags.target === "existing") {
+    io.output.write(
+      "--target existing points at an instance someone else runs — nothing to upgrade here.\n",
+    );
+    return 0;
+  }
+
+  const resolved = await resolveInstance(
+    {
+      target: flags.target,
+      workerName: flags.workerName,
+      d1Name: flags.d1Name,
+      r2Bucket: flags.r2Bucket,
+      domain: flags.domain,
+    },
+    runner,
+  );
+
+  if (!resolved.ok) {
+    io.output.write(`${resolved.reason}\n`);
+    for (const c of resolved.candidates) io.output.write(`  - ${c}\n`);
+    return 1;
+  }
+
+  const inst = resolved.instance;
+  const label =
+    inst.target === "docker"
+      ? `docker container "${inst.containerName}" (volume ${inst.volume})`
+      : `cloudflare worker "${inst.workerName}"`;
+  io.output.write(`Found: ${label}\n`);
+
+  // "The version you upgrade to is the CLI version you run" — so a docker
+  // upgrade takes the image tagged with this CLI's version, not :latest.
+  const image = inst.target === "docker" ? await resolveUpgradeImage(io, runner) : undefined;
+
+  const stagingDir = await runner.mkdtemp("demo-locker-upgrade-");
+  try {
+    let plan;
+    try {
+      plan = buildUpgradePlan(inst, stagingDir, { image });
+    } catch (err) {
+      io.output.write(`${err instanceof Error ? err.message : err}\n`);
+      return 1;
+    }
+    if (flags.dryRun) {
+      io.output.write(renderPlan(plan));
+      return 0;
+    }
+    // Confirm before writing to something that already exists and holds data.
+    // Prompting here rather than inside executePlan keeps the executor free of
+    // interaction — it is used by the install path too.
+    if (!flags.yes) {
+      io.output.write(renderPlan(plan));
+      const answer = await ask(io, "Upgrade this instance? (y/N)", "N");
+      if (!/^y(es)?$/i.test(answer)) {
+        io.output.write("Cancelled — nothing was changed.\n");
+        return 0;
+      }
+    }
+    return await executePlan(plan, null, io, runner);
+  } finally {
+    await runner.rmDir(stagingDir);
+  }
 }

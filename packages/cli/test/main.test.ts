@@ -3,7 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/main.js";
-import { fakeIO } from "./helpers.js";
+import { IMAGE_REPO, versionedImage } from "../src/plan.js";
+import { fakeIO, waitForOutput } from "./helpers.js";
 
 describe("main", () => {
   it("--help prints usage and exits 0", async () => {
@@ -24,7 +25,7 @@ describe("main", () => {
       "--mode", "--target", "--storage", "--port", "--volume", "--url",
       "--email", "--password", "--s3-endpoint", "--s3-bucket", "--s3-access-key",
       "--s3-secret-key", "--s3-region", "--worker-name", "--d1-name",
-      "--r2-bucket", "--domain", "--yes", "--dry-run", "--help", "--version",
+      "--r2-bucket", "--domain", "--upgrade", "--yes", "--dry-run", "--help", "--version",
     ];
     for (const flag of flags) expect(usage, `${flag} missing from --help`).toContain(flag);
   });
@@ -52,7 +53,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "docker", "--storage", "local", "--yes", "--dry-run"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("docker run -d");
@@ -67,7 +68,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "docker", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(exec).toHaveBeenCalledTimes(2); // volume create + docker run
@@ -81,7 +82,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "player", "--url", "https://demos.fldl.space", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("https://demos.fldl.space/embed.js");
@@ -94,7 +95,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "docker", "--url", "https://x", "--yes"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(1);
     expect(read()).toContain("--url");
@@ -110,7 +111,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "both", "--target", "cloudflare", "--yes"],
       io,
-      { runner: { exec, execCapture, writeFile, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("--mode player --url");
@@ -133,7 +134,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "cloudflare", "--yes"],
       io,
-      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     // There is no knowable URL yet, so no health poll and no signup POST — but
@@ -155,7 +156,7 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "instance", "--target", "cloudflare", "--domain", "demos.example.com", "--yes"],
       io,
-      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture, writeFile: async () => {}, fetchFn, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(read()).toContain("Your Demo Locker: https://demos.example.com");
@@ -168,10 +169,157 @@ describe("main end-to-end (non-interactive)", () => {
     const code = await main(
       ["--mode", "player", "--url", "https://demos.fldl.space", "--yes", "--dry-run"],
       io,
-      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {} }, cwd: dir },
+      { runner: { exec, execCapture: async () => ({ code: 0, stdout: "" }), writeFile: async () => {}, fetchFn: fetch, sleep: async () => {}, copyDir: async () => {}, mkdtemp: async (prefix: string) => `/tmp/${prefix}fake`, rmDir: async () => {} }, cwd: dir },
     );
     expect(code).toBe(0);
     expect(exec).not.toHaveBeenCalled();
     expect(read()).toContain("dry-run");
+  });
+});
+
+describe("--upgrade", () => {
+  function upgradeRunner(responses: Record<string, string>) {
+    const calls: string[] = [];
+    return {
+      calls,
+      exec: vi.fn(async (cmd: string, args: string[]) => {
+        calls.push(`${cmd} ${args.join(" ")}`);
+        return 0;
+      }),
+      execCapture: vi.fn(async (cmd: string, args: string[]) => {
+        const key = `${cmd} ${args.join(" ")}`;
+        const hit = Object.keys(responses).find((k) => key.startsWith(k));
+        return hit ? { code: 0, stdout: responses[hit] } : { code: 1, stdout: "" };
+      }),
+      writeFile: vi.fn(async () => {}),
+      copyDir: vi.fn(async () => {}),
+      mkdtemp: vi.fn(async () => "/tmp/stage"),
+      rmDir: vi.fn(async () => {}),
+      fetchFn: vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
+      sleep: async () => {},
+    };
+  }
+
+  it("exits 1 and explains when nothing is found", async () => {
+    const { io, read } = fakeIO();
+    const code = await main(["--upgrade", "--yes"], io, { runner: upgradeRunner({}) });
+    expect(code).toBe(1);
+    expect(read()).toContain("No Demo Locker instance found");
+  });
+
+  it("--dry-run prints the plan and runs nothing", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": JSON.stringify([{
+        Id: "abc123", Name: "/demolocker",
+        Config: { Image: "ghcr.io/usedrobot/demo-locker:latest", Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      }]),
+    });
+    const code = await main(["--upgrade", "--dry-run"], io, { runner });
+    expect(code).toBe(0);
+    expect(read()).toContain("docker");
+    expect(runner.exec).not.toHaveBeenCalled();
+  });
+
+  it("cancels without running anything when the confirm is declined", async () => {
+    const { io, read, write } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": JSON.stringify([{
+        Id: "abc123", Name: "/demolocker",
+        Config: { Image: "ghcr.io/usedrobot/demo-locker:latest", Env: [] },
+        Mounts: [{ Name: "demolocker", Destination: "/data" }],
+        NetworkSettings: { Ports: { "3001/tcp": [{ HostPort: "3001" }] } },
+      }]),
+    });
+    const run = main(["--upgrade"], io, { runner });
+    await waitForOutput(read, "Upgrade this instance?");
+    write("n\n");
+    expect(await run).toBe(0);
+    expect(read()).toMatch(/cancelled/i);
+    expect(runner.exec).not.toHaveBeenCalled();
+  });
+
+  const DOCKER_INSPECT = JSON.stringify([{
+    Id: "abc123", Name: "/demolocker",
+    Config: { Image: "ghcr.io/usedrobot/demo-locker:latest", Env: [] },
+    HostConfig: { NetworkMode: "bridge" },
+    Mounts: [{ Name: "demolocker", Destination: "/data" }],
+    NetworkSettings: { Ports: { "3001/tcp": [{ HostIp: "127.0.0.1", HostPort: "3001" }] } },
+  }]);
+
+  // The spec: "the version you upgrade to is the CLI version you run".
+  it("upgrades docker to the image tagged with the CLI's own version", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": DOCKER_INSPECT,
+      "docker manifest inspect": "{}",
+    });
+    expect(await main(["--upgrade", "--dry-run"], io, { runner })).toBe(0);
+    expect(read()).toContain(versionedImage());
+    expect(read()).not.toContain(`${IMAGE_REPO}:latest`);
+  });
+
+  it("falls back to :latest, out loud, when no image carries this version's tag", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": DOCKER_INSPECT,
+      // no "docker manifest inspect" response → exits nonzero, tag not found
+    });
+    expect(await main(["--upgrade", "--dry-run"], io, { runner })).toBe(0);
+    expect(read()).toContain(`${IMAGE_REPO}:latest`);
+    expect(read()).toMatch(/no image tagged/);
+  });
+
+  // The upgrade must not republish a loopback-bound locker onto the LAN.
+  it("keeps a loopback publish address in the plan it prints", async () => {
+    const { io, read } = fakeIO();
+    const runner = upgradeRunner({
+      "docker ps": "abc123\n",
+      "docker inspect": DOCKER_INSPECT,
+      "docker manifest inspect": "{}",
+    });
+    expect(await main(["--upgrade", "--dry-run"], io, { runner })).toBe(0);
+    expect(read()).toContain("-p 127.0.0.1:3001:3001");
+  });
+
+  // A missing docker binary makes defaultRunner.execCapture REJECT. That must
+  // not take down a cloudflare upgrade, which is most upgrade users.
+  it("survives a machine with no docker installed", async () => {
+    const { io, read } = fakeIO();
+    const base = upgradeRunner({
+      "npx wrangler d1 list": JSON.stringify([
+        { uuid: "0ea573b2-861c-482c-a9c7-de5335d29fa0", name: "demo-locker-db" },
+      ]),
+      "npx wrangler deployments list": "ok",
+      "npx wrangler r2 bucket list": "demo-locker-demos",
+    });
+    const runner = {
+      ...base,
+      execCapture: vi.fn(async (cmd: string, args: string[]) => {
+        if (cmd === "docker") throw new Error(`could not run "docker" (spawn ENOENT)`);
+        return base.execCapture(cmd, args);
+      }),
+    };
+    const code = await main(
+      ["--upgrade", "--dry-run", "--domain", "demos.example.com"], io, { runner },
+    );
+    expect(code).toBe(0);
+    expect(read()).not.toContain("could not run");
+    expect(read()).toContain("wrangler deploy");
+  });
+
+  it("--target existing is a clean no-op", async () => {
+    const { io, read } = fakeIO();
+    const code = await main(["--upgrade", "--target", "existing", "--yes"], io, {
+      runner: upgradeRunner({}),
+    });
+    expect(code).toBe(0);
+    expect(read()).toMatch(/nothing to upgrade/i);
   });
 });

@@ -4,6 +4,8 @@ export type User = {
   id: string;
   email: string;
   accent: string | null;
+  // Null = owns this locker. Set = collaborator on that owner's locker.
+  lockerOwnerId: string | null;
 };
 
 export type Bindings = {

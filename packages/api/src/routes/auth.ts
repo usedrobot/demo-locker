@@ -56,7 +56,12 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   const [user] = await db
     .insert(users)
     .values({ email, passwordHash })
-    .returning({ id: users.id, email: users.email, accent: users.accent });
+    .returning({
+      id: users.id,
+      email: users.email,
+      accent: users.accent,
+      lockerOwnerId: users.lockerOwnerId,
+    });
 
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -101,7 +106,12 @@ auth.post("/login", rateLimit("login", LOGIN_RULE), async (c) => {
   await createSession(db, user.id, token, expiresAt);
 
   return c.json({
-    user: { id: user.id, email: user.email, accent: user.accent },
+    user: {
+      id: user.id,
+      email: user.email,
+      accent: user.accent,
+      lockerOwnerId: user.lockerOwnerId,
+    },
     token,
   });
 });

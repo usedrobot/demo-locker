@@ -10,7 +10,7 @@ import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
-import { users, playlists, sessions } from "../db/schema.js";
+import { users, playlists, sessions, tracks } from "../db/schema.js";
 
 let db: Database;
 let root: string;
@@ -224,6 +224,77 @@ describe("playlists under collaboration", () => {
         method: "PATCH",
         headers: { ...auth(strangerToken), "Content-Type": "application/json" },
         body: JSON.stringify({ name: "hijacked" }),
+      },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("the shared playlist-access gates resolve the locker", () => {
+  it("lets a collaborator open the owner's playlist", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: { id: string } };
+    expect(body.playlist.id).toBe(ownerPlaylistId);
+  });
+
+  it("still 404s a stranger opening it", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("lets a collaborator reorder the owner's playlist", async () => {
+    const [a] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId: ownerPlaylistId,
+        title: "first",
+        position: 0,
+        originalKey: "lib/reorder-a",
+        uploadedBy: ownerId,
+      })
+      .returning();
+    const [b] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId: ownerPlaylistId,
+        title: "second",
+        position: 1,
+        originalKey: "lib/reorder-b",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [b.id, a.id] }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("still refuses a stranger reordering it", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [] }),
       },
       env
     );

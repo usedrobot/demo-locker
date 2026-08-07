@@ -5,10 +5,12 @@
 // share/invite token that maps to the playlist (a session token only grants
 // access when it belongs to the playlist's owner).
 //
-// NOTE on the data model: `shares` has no user column — "collaborators" are
-// represented entirely by share tokens (shares.playlistId -> token), which map
-// 1:1 to a playlist. There is no collaborator-*user* relation, so the only
-// session-based access is ownership; every other grant is via a share token.
+// NOTE on the data model: a session token grants access when it belongs to
+// the playlist owner's locker — either the owner themselves, or a
+// collaborator whose `users.lockerOwnerId` points at that owner (see
+// lib/locker.ts). Separately, `shares` has no user column — share/invite
+// tokens (shares.playlistId -> token) map 1:1 to a playlist and grant access
+// to anyone holding the token, collaborator or not.
 //
 // Callers must translate a `false` result into the same non-enumerable
 // `{ error: "not found" }` 404 the public API uses — never 401/403.
@@ -18,6 +20,7 @@ import type { Context } from "hono";
 import { getDb, type Database } from "../db/index.js";
 import { playlists, shares } from "../db/schema.js";
 import { bearerToken, findSession } from "./session.js";
+import { lockerIdForUserId } from "./locker.js";
 import type { Env } from "../types.js";
 
 type AccessCreds = {
@@ -54,10 +57,12 @@ export async function canAccessPlaylist(
     return true;
   }
 
-  // token as a session token whose user owns the playlist
+  // token as a session token acting in the playlist's locker (the owner, or a
+  // collaborator on that owner's locker)
   const session = await findSession(db, token);
-  if (session && session.expiresAt >= new Date() && session.userId === playlist.ownerId) {
-    return true;
+  if (session && session.expiresAt >= new Date()) {
+    const lockerId = await lockerIdForUserId(db, session.userId);
+    if (lockerId === playlist.ownerId) return true;
   }
 
   return false;
@@ -86,12 +91,9 @@ export async function requestCanEditPlaylist(
     if (!token) continue;
 
     const session = await findSession(db, token);
-    if (
-      session &&
-      session.expiresAt >= new Date() &&
-      session.userId === playlist.ownerId
-    ) {
-      return playlist.ownerId;
+    if (session && session.expiresAt >= new Date()) {
+      const lockerId = await lockerIdForUserId(db, session.userId);
+      if (lockerId === playlist.ownerId) return playlist.ownerId;
     }
 
     const [share] = await db

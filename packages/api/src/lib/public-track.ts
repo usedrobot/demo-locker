@@ -8,24 +8,44 @@
 // Nothing outside the API ever needed the values: the web client only asked
 // "is there a stream yet", which `hasStream` answers.
 //
-// uploadedBy is stripped for the same reason: it's an internal user UUID,
-// and publicTrack() is the seam every reader shares — including anonymous
-// listen-share holders, who should never learn a collaborator's id just by
-// viewing a playlist. Nothing in the UI shows attribution yet; a future
-// feature that wants it should expose it deliberately on a locker-scoped
-// response, not leak it here by default.
+// Two serializers, not one with a flag:
+//   - `publicTrack` is for share-facing and anonymous responses (playlist
+//     reads via a share/invite token). It also strips `uploadedBy` — an
+//     internal user UUID — since an anonymous listen-share holder should
+//     never learn a collaborator's id just by viewing a playlist.
+//   - `lockerTrack` is for authenticated, locker-scoped responses (the
+//     track library, upload, and patch routes). Those readers are already
+//     inside the locker, and Task 6's delete guard / Task 11's UI both need
+//     `uploadedBy` to decide what a collaborator may delete.
+// A boolean parameter here would let a caller flip it and leak the field
+// through the wrong route by accident; two named functions can't.
+//
+// Both take a real track row (not `Record<string, unknown>`), so a caller
+// that hands them something without these columns — e.g. an already-public
+// track, or an unrelated object — is a compile error rather than a
+// silently-inert Omit.
+
+import type { tracks } from "../db/schema.js";
+
+type TrackRow = typeof tracks.$inferSelect;
+
+type WithStream = { hasStream: boolean };
 
 export type PublicTrack = Omit<
-  Record<string, unknown>,
+  TrackRow,
   "originalKey" | "streamKey" | "uploadedBy"
-> & { hasStream: boolean };
+> &
+  WithStream;
 
-export function publicTrack<T extends Record<string, unknown>>(row: T): PublicTrack {
-  const {
-    originalKey: _originalKey,
-    streamKey,
-    uploadedBy: _uploadedBy,
-    ...rest
-  } = row;
+export type LockerTrack = Omit<TrackRow, "originalKey" | "streamKey"> &
+  WithStream;
+
+export function publicTrack(row: TrackRow): PublicTrack {
+  const { originalKey: _originalKey, streamKey, uploadedBy: _uploadedBy, ...rest } = row;
+  return { ...rest, hasStream: streamKey != null };
+}
+
+export function lockerTrack(row: TrackRow): LockerTrack {
+  const { originalKey: _originalKey, streamKey, ...rest } = row;
   return { ...rest, hasStream: streamKey != null };
 }

@@ -505,6 +505,75 @@ describe("uploadedBy is not exposed to playlist readers", () => {
       expect(t).not.toHaveProperty("uploadedBy");
     }
   });
+
+  it("is present on GET /tracks for a locker session", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([3, 3, 3])], "locker-visible.wav"), "locker-visible.wav");
+    form.append("title", "locker visible track");
+    const uploadRes = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(collabToken), body: form },
+      env
+    );
+    expect(uploadRes.status).toBe(201);
+    const { track: uploaded } = (await uploadRes.json()) as {
+      track: { id: string; uploadedBy: string };
+    };
+    expect(uploaded.uploadedBy).toBe(collabId);
+
+    const res = await app.request("/tracks", { headers: auth(ownerToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tracks: { id: string; uploadedBy: string | null }[];
+    };
+    const row = body.tracks.find((t) => t.id === uploaded.id);
+    expect(row?.uploadedBy).toBe(collabId);
+  });
+});
+
+describe("createdBy is not exposed to anonymous playlist readers", () => {
+  it("is absent from a share-token view of the playlist", async () => {
+    const shareToken = "member-createdby-share-token";
+    await db.insert(shares).values({
+      playlistId: ownerPlaylistId,
+      token: shareToken,
+      permission: "listen",
+    });
+
+    const res = await app.request(`/playlists/${ownerPlaylistId}?token=${shareToken}`, {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: Record<string, unknown> };
+    expect(body.playlist).not.toHaveProperty("createdBy");
+  });
+
+  it("is absent from the invite view of the playlist", async () => {
+    const inviteToken = "member-createdby-invite-token";
+    await db.insert(shares).values({
+      playlistId: ownerPlaylistId,
+      token: inviteToken,
+      permission: "listen",
+    });
+
+    const res = await app.request(`/shares/invite/${inviteToken}`, {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: Record<string, unknown> };
+    expect(body.playlist).not.toHaveProperty("createdBy");
+  });
+
+  it("is still present for the owner's own authenticated read via create", async () => {
+    const res = await app.request(
+      "/playlists",
+      {
+        method: "POST",
+        headers: { ...auth(ownerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "createdBy sanity check" }),
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { playlist } = (await res.json()) as { playlist: { createdBy: string | null } };
+    expect(playlist.createdBy).toBe(ownerId);
+  });
 });
 
 describe("comments on a library track under collaboration", () => {

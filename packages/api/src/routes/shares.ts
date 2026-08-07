@@ -5,6 +5,7 @@ import { shares, playlists, tracks, users } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { publicTrack } from "../lib/public-track.js";
+import { publicPlaylist } from "../lib/public-playlist.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
@@ -210,7 +211,9 @@ sharesRouter.get("/invite/:token", async (c) => {
 
   return c.json({
     permission: share.permission,
-    playlist,
+    // publicPlaylist here: an anonymous invite holder must not learn the id
+    // of the collaborator who created the playlist.
+    playlist: publicPlaylist(playlist),
     // publicTrack here too. Missing it broke this route twice over: listeners
     // got no `hasStream`, so the player refused to start any track on a share
     // link, and the raw rows still carried originalKey/streamKey — the exact

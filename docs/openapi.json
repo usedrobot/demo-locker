@@ -1445,7 +1445,7 @@
     "/tracks/{id}/stream": {
       "get": {
         "summary": "Stream a track (private)",
-        "description": "Gated by the parent playlist: owner session or a valid share token, via Bearer or `?token=` (an <audio> tag cannot send an Authorization header). Supports byte-range requests. Anonymous access to public playlists' tracks goes through the separate /public/v1/tracks/{id}/stream route instead.",
+        "description": "A track in a playlist is gated by the parent playlist: a session acting in the playlist's locker (the owner, or a collaborator) or a valid share token, via Bearer or `?token=` (an <audio> tag cannot send an Authorization header). A library track (no playlist) is gated on the locker directly: the owner's session or a collaborator's session, not the raw acting user. Supports byte-range requests. Anonymous access to public playlists' tracks goes through the separate /public/v1/tracks/{id}/stream route instead.",
         "operationId": "streamTrack",
         "security": [
           {
@@ -1522,7 +1522,7 @@
     "/tracks/{id}/download": {
       "get": {
         "summary": "Download the original upload",
-        "description": "Returns the original file byte-for-byte — the untouched master, not the lossy streaming rendition. Gated identically to /tracks/{id}/stream: a track in a playlist needs owner session or a valid share token; a library track (no playlist) is owner-only. Accepts the token via Bearer or the `?token=` query parameter, so a plain `<a download>` link works. Responds with `Content-Disposition: attachment` naming the stored filename — both an ASCII-sanitized `filename=` and an RFC 5987 percent-encoded `filename*=UTF-8''...` are emitted, since uploaded titles routinely contain non-Latin1 characters. Does not support Range requests.",
+        "description": "Returns the original file byte-for-byte — the untouched master, not the lossy streaming rendition. Gated identically to /tracks/{id}/stream: a track in a playlist needs a session acting in the playlist's locker (the owner, or a collaborator) or a valid share token; a library track (no playlist) is gated on the locker directly — the owner's session or a collaborator's session, not the raw acting user. Accepts the token via Bearer or the `?token=` query parameter, so a plain `<a download>` link works. Responds with `Content-Disposition: attachment` naming the stored filename — both an ASCII-sanitized `filename=` and an RFC 5987 percent-encoded `filename*=UTF-8''...` are emitted, since uploaded titles routinely contain non-Latin1 characters. Does not support Range requests.",
         "operationId": "downloadTrack",
         "security": [
           {

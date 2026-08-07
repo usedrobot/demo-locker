@@ -10,7 +10,7 @@ import {
 } from "../lib/playlist-access.js";
 import { lockerIdOf, lockerIdForUserId } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
-import { publicTrack } from "../lib/public-track.js";
+import { lockerTrack } from "../lib/public-track.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { INERT_CONTENT_HEADERS, safeAudioType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
@@ -137,7 +137,7 @@ tracksRouter.post("/upload", async (c) => {
     })
     .returning();
 
-  return c.json({ track: publicTrack(track) }, 201);
+  return c.json({ track: lockerTrack(track) }, 201);
 });
 
 // List the locker's whole track library (every upload, in or out of
@@ -149,7 +149,7 @@ tracksRouter.get("/", requireAuth, async (c) => {
     .from(tracks)
     .where(eq(tracks.ownerId, lockerIdOf(c.get("user"))))
     .orderBy(desc(tracks.uploadedAt));
-  return c.json({ tracks: rows.map(publicTrack) });
+  return c.json({ tracks: rows.map(lockerTrack) });
 });
 
 // Stream a track from R2 — gated by the parent playlist. <audio> can't send an
@@ -292,7 +292,7 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .returning();
 
-  return c.json({ track: publicTrack(updated) });
+  return c.json({ track: lockerTrack(updated) });
 });
 
 // Delete a track

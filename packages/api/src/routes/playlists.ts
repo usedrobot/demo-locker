@@ -10,6 +10,7 @@ import {
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
 import { publicTrack } from "../lib/public-track.js";
+import { publicPlaylist } from "../lib/public-playlist.js";
 import {
   INERT_CONTENT_HEADERS,
   isAllowedImageType,
@@ -86,7 +87,10 @@ playlistsRouter.get("/:id", async (c) => {
     .where(eq(tracks.playlistId, id))
     .orderBy(asc(tracks.position));
 
-  return c.json({ playlist, tracks: trackList.map(publicTrack) });
+  // This route is reachable by an anonymous share-token holder, not just a
+  // locker session — publicPlaylist() keeps createdBy (a collaborator's
+  // user id) from leaking to them.
+  return c.json({ playlist: publicPlaylist(playlist), tracks: trackList.map(publicTrack) });
 });
 
 playlistsRouter.patch("/:id", requireAuth, async (c) => {

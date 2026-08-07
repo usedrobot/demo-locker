@@ -1392,6 +1392,23 @@ Redemption is Task 8. This task ships the owner's side only.
 
 **Revoking a member deletes their user row.** Sessions cascade (they are logged out), and `uploaded_by`/`created_by` go SET NULL, so their music stays in the owner's library and reads as the owner's. That is deliberate: the files belong to the locker.
 
+### 🔴 Also in this task: a collaborator's share links must die with them (DL, 2026-08-07)
+
+Found by review of Task 5. Once collaborators can mint share links, a link **outlives its minter**: the ex-collaborator keeps upload and reorder on private playlists forever (nothing sets `expiresAt`), and the owner's access panel shows the link with nothing saying who created it. Before collaborators could mint, revoking a person removed every grant they held. This restores that property.
+
+It is not only an edit-link problem: **a listen link can download the lossless master**, so a leftover listen link is real access too. DL's ruling: *removing the person removes everything they minted, edit and listen alike.*
+
+**Add `shares.created_by`** (nullable FK → `users.id`, **`ON DELETE CASCADE`**). Cascade rather than an explicit purge in the handler: the database then enforces the rule for every deletion path, including ones nobody has written yet, and it cannot be forgotten. Rows predating the column have `created_by` NULL and are unaffected — correct, since they are all the owner's.
+
+**⚠️ This is a second additive FK column, so the drizzle-kit trap applies again.** Per the Global Constraints exception: `drizzle-kit@0.31.10` will generate `ALTER TABLE shares ADD created_by text REFERENCES users(id)` and **silently drop the `ON DELETE CASCADE`**, while recording it in the snapshot. Generate migration `0004`, then hand-patch that one line, then verify against `meta/0004_snapshot.json`. Do not skip the verification — the whole guarantee lives in that clause.
+
+**Populate it on mint.** `POST /shares` (in `shares.ts`, Task 5's file) must set `createdBy: user.id`. Owner-minted links carry the owner's id and are never affected, since the owner's row is never deleted.
+
+**Tests, and mutation-check the cascade:**
+- A collaborator mints an edit link and a listen link; the owner removes that collaborator; **both links are gone from the database**, and a request presenting either token is refused.
+- The owner's own links survive that removal untouched.
+- Remove ` ON DELETE CASCADE` from the patched migration line and confirm the first test FAILS. Restore, confirm green. Record both directions.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `packages/api/src/routes/collab.test.ts`:

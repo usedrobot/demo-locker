@@ -1,7 +1,7 @@
 // Upgrading an instance that already exists. Creates nothing.
 
 import { join } from "node:path";
-import { PACKAGED_ASSETS_FOR_UPGRADE, versionedImage, wranglerConfig } from "./plan.js";
+import { PACKAGED_ASSETS_FOR_UPGRADE, cliVersion, versionedImage, wranglerConfig } from "./plan.js";
 import type { DeployPlan, Step } from "./plan.js";
 import type { DiscoveredInstance } from "./discover.js";
 
@@ -24,13 +24,40 @@ export interface UpgradeOptions {
 // outside release notes.
 //
 // The notice is narrowly targeted, because a misfire is worse than silence:
-// telling someone already on the new meaning to "copy the value to
-// MAX_SHARE_LINKS" would install a per-playlist cap they never wanted and
-// start 403ing share creation. Hence the three gates below.
+// telling someone already on the new meaning to move their value to
+// MAX_SHARE_LINKS would install a per-playlist cap they never wanted and start
+// 403ing share creation. Hence the three gates below, and the two wordings.
+//
+// The wording matters as much as the gating. Nothing here establishes what the
+// operator *meant* by MAX_COLLABORATORS — only that they set it. So even the
+// definite form says "if you set it to limit share links, move the value",
+// matching docs/self-hosting.md, rather than instructing them to move it.
 // ---------------------------------------------------------------------------
 
 /** The release in which MAX_COLLABORATORS stopped meaning "share links". */
 export const RENAME_VERSION: readonly number[] = [0, 2, 13];
+
+/**
+ * Past this, the rename is old news and an undirected pointer is just noise.
+ * Anyone still crossing the boundary by then has skipped the whole 0.3 line,
+ * and docs/upgrading.md keeps the instructions regardless. Used only for the
+ * Cloudflare notice, which cannot be targeted any other way.
+ */
+export const RENAME_NOTICE_SUNSET: readonly number[] = [0, 4, 0];
+
+/** `"0.2.10"` → `[0, 2, 10]`; null if it is not a semantic version. */
+export function parseVersion(text: string): number[] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(text);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** Numeric, not lexical — 0.10.0 is after 0.2.13, not before it. */
+function isBefore(v: readonly number[], than: readonly number[]): boolean {
+  for (let i = 0; i < than.length; i++) {
+    if (v[i]! !== than[i]!) return v[i]! < than[i]!;
+  }
+  return false;
+}
 
 /**
  * The semantic version in a docker image reference, or null when it cannot be
@@ -42,25 +69,21 @@ export const RENAME_VERSION: readonly number[] = [0, 2, 13];
 export function imageVersion(image: string): number[] | null {
   const ref = image.split("/").pop() ?? "";
   const tag = ref.includes(":") ? ref.slice(ref.indexOf(":") + 1) : "";
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(tag);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  return parseVersion(tag);
 }
 
 /**
  * Is this instance old enough to be affected?
  *
- * **Unknown counts as yes.** An unparseable or `:latest` tag is exactly where
- * the operator most needs the pointer, and the cost of the two errors is not
- * symmetric: a spurious notice is four lines of text, while a missed one lets
- * a cap change meaning with nothing said.
+ * Null (unknown) is NOT treated as "yes" — see renameNotes. `:latest` is the
+ * documented install and upgrade tag (README.md:52, docs/upgrading.md:69) and
+ * main.ts falls back to it whenever the registry cannot be reached, so
+ * unknown is a large share of live installs and stays unknown forever. What
+ * unknown gets is a weaker, non-directive wording, not a guess.
  */
 export function predatesRename(image: string): boolean {
   const v = imageVersion(image);
-  if (!v) return true;
-  for (let i = 0; i < RENAME_VERSION.length; i++) {
-    if (v[i]! !== RENAME_VERSION[i]!) return v[i]! < RENAME_VERSION[i]!;
-  }
-  return false;
+  return v !== null && isBefore(v, RENAME_VERSION);
 }
 
 /** The value of `NAME=value` in a docker-style env list, or null if absent. */
@@ -85,28 +108,91 @@ export function renameNotes(env: readonly string[], image: string): Step[] {
   // force" — someone who set it to 0 to mean unlimited has still migrated.
   if (envValue(env, "MAX_SHARE_LINKS") !== null) return [];
 
-  // Gate 3 — are they crossing the boundary? An operator already on 0.2.13+
-  // who set MAX_COLLABORATORS deliberately, as a seat cap, must not be told it
-  // has "changed meaning in this release" and advised to move the value.
-  if (!predatesRename(image)) return [];
+  // Gate 3 — are they crossing the boundary?
+  //
+  // Three outcomes, not two. An instance demonstrably on 0.2.13+ is silent: it
+  // set MAX_COLLABORATORS under the current meaning, deliberately, as a seat
+  // cap, and must not be nudged into moving it.
+  const from = imageVersion(image);
+  if (from !== null && !isBefore(from, RENAME_VERSION)) return [];
 
+  const changed = {
+    kind: "note" as const,
+    text: "note: MAX_COLLABORATORS is set on this instance, and it changed meaning in 0.2.13.",
+  };
+  // Shared by both wordings: what the variable means now. Split across two
+  // lines so it does not wrap in an 80-column terminal.
+  const nowMeans: Step[] = [
+    {
+      kind: "note",
+      text: "  It caps collaborators — people who sign in and share your library.",
+    },
+    { kind: "note", text: "  Share links per playlist are capped by MAX_SHARE_LINKS." },
+  ];
+
+  // Unknown version. `:latest` is the documented install and upgrade tag, and
+  // main.ts falls back to it whenever the registry cannot be reached, so this
+  // is a large share of installs — and it never resolves, because the new
+  // container carries the same unreadable tag next time.
+  //
+  // So it gets the facts and no instruction. An operator on 0.3.1-as-:latest
+  // who set a deliberate seat cap and wants unlimited share links reaches this
+  // branch, and "move the value to MAX_SHARE_LINKS" would hand them a cap that
+  // 403s their share creation — the exact harm the gates exist to prevent. The
+  // same reasoning as the Cloudflare path below: state it conditionally, and
+  // let the docs carry the instruction to whoever it actually applies to.
+  if (from === null) {
+    return [
+      changed,
+      ...nowMeans,
+      {
+        kind: "note",
+        text: "  This instance's version could not be read from its image tag; if it predates 0.2.13,",
+      },
+      { kind: "note", text: "  see docs/upgrading.md." },
+    ];
+  }
+
+  // Known to predate the rename. Even here the gates establish only that a cap
+  // was set, never that it was meant as a share-link cap — someone who set it
+  // as a seat cap and never made a share link would gain a ceiling they never
+  // had. So this stays conditional too, phrased as docs/self-hosting.md does.
+  return [
+    changed,
+    ...nowMeans,
+    {
+      kind: "note",
+      text: "  If you set MAX_COLLABORATORS to limit share links, move the value there.",
+    },
+    { kind: "note", text: "  See docs/upgrading.md." },
+  ];
+}
+
+/**
+ * The Cloudflare pointer. Unconditional in content, because a Worker's vars
+ * live in the dashboard: no read-only wrangler command reports them, so
+ * CloudflareCandidate carries neither env nor a deployed version and there is
+ * nothing to condition on. Worded so it says nothing false to an operator who
+ * never set the variable.
+ *
+ * Bounded in time, though. "Undetectable" justifies printing it while the
+ * boundary is plausibly still being crossed — not narrating a 0.2.13 change
+ * during a 1.4.0 upgrade years later. Gated on the version being installed,
+ * which is the one version this code does know.
+ */
+export function cloudflareRenameNotes(version: string = cliVersion()): Step[] {
+  const v = parseVersion(version);
+  if (v !== null && !isBefore(v, RENAME_NOTICE_SUNSET)) return [];
   return [
     {
       kind: "note",
-      text: "note: MAX_COLLABORATORS is set on this instance and changed meaning in 0.2.13.",
+      text: "note: if this instance sets MAX_COLLABORATORS, its meaning changed in 0.2.13.",
     },
     {
       kind: "note",
-      text: "  It now caps collaborators — people who sign in and share your library — not share links.",
+      text: "  It now caps collaborators; MAX_SHARE_LINKS caps share links per playlist.",
     },
-    {
-      kind: "note",
-      text: "  Share links per playlist are capped by MAX_SHARE_LINKS. If you set MAX_COLLABORATORS to",
-    },
-    {
-      kind: "note",
-      text: "  limit share links, copy the value to MAX_SHARE_LINKS. See docs/upgrading.md.",
-    },
+    { kind: "note", text: "  See docs/upgrading.md." },
   ];
 }
 
@@ -166,23 +252,9 @@ function cloudflareUpgrade(
 
   const configPath = join(stagingDir, "wrangler.jsonc");
   const steps: Step[] = [
-    // Cloudflare operators are hit by the identical MAX_COLLABORATORS meaning
-    // change, but here it cannot be *detected*: a Worker's vars live in the
-    // dashboard, no read-only wrangler command reports them, and so
-    // CloudflareCandidate carries no env — the same blind spot as the custom
-    // domain above. Neither can it be version-gated: nothing on the candidate
-    // records which version is deployed.
-    //
-    // Unconditional, therefore, and worded conditionally ("if this instance
-    // sets ...") so that printing it to someone unaffected costs one line and
-    // tells them nothing false. It deliberately does not repeat the
-    // copy-the-value advice, which is only safe once you know the from-version.
-    {
-      kind: "note",
-      text:
-        "note: if this instance sets MAX_COLLABORATORS, its meaning changed in 0.2.13 — " +
-        "it now caps collaborators, and MAX_SHARE_LINKS caps share links. See docs/upgrading.md.",
-    },
+    // See cloudflareRenameNotes: undetectable here, so unconditional in
+    // content, conditional in wording, and sunset by version.
+    ...cloudflareRenameNotes(),
     { kind: "copy", title: "Stage the new build", from: PACKAGED_ASSETS_FOR_UPGRADE, to: stagingDir },
     { kind: "write", title: "Write wrangler config for this instance", path: configPath, contents: config },
     // MUST precede deploy: the ORM selects every column explicitly, so a Worker

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildUpgradePlan, imageVersion, predatesRename } from "../src/upgrade.js";
+import {
+  buildUpgradePlan,
+  cloudflareRenameNotes,
+  imageVersion,
+  predatesRename,
+} from "../src/upgrade.js";
 import type { DiscoveredInstance, DockerCandidate } from "../src/discover.js";
 import { cliVersion, versionedImage } from "../src/plan.js";
 import type { DeployPlan, Step } from "../src/plan.js";
@@ -318,7 +323,12 @@ describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
   // Unknown is the case where the pointer is most needed, and the two errors
   // cost very different amounts: a spurious notice is four lines, a missed one
   // lets a cap change meaning silently.
-  it("warns when the from-version cannot be read", () => {
+  // `:latest` is the documented install and upgrade tag and main.ts falls back
+  // to it whenever the registry is unreachable, so "unknown" is a large share
+  // of real installs and never resolves. Telling all of them to move a value
+  // would hand a share-link cap to every one of them that is actually on a
+  // recent version — so unknown states the change and stops there.
+  it("warns without an instruction when the from-version cannot be read", () => {
     for (const image of [
       "ghcr.io/usedrobot/demo-locker:latest",
       "ghcr.io/usedrobot/demo-locker",
@@ -326,8 +336,28 @@ describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
       "demo-locker:dev",
     ]) {
       const unknown: DockerCandidate = { ...dk, image, env: ["MAX_COLLABORATORS=4"] };
-      expect(notes(buildUpgradePlan(unknown, "/tmp/stage")).length, image).toBeGreaterThan(0);
+      const text = notes(buildUpgradePlan(unknown, "/tmp/stage")).join("\n");
+      expect(text, image).toContain("changed meaning in 0.2.13");
+      expect(text, image).toContain("docs/upgrading.md");
+      expect(text, image).not.toMatch(/move the value/i);
+      // Says why it is being vague rather than just being vague.
+      expect(text, image).toMatch(/could not be read/i);
     }
+  });
+
+  // A known-old instance keeps the actionable line — but conditionally. The
+  // gates prove a cap was set, never that it was meant as a share-link cap.
+  it("keeps the conditional instruction for a known pre-rename version", () => {
+    const before: DockerCandidate = {
+      ...dk,
+      image: "ghcr.io/usedrobot/demo-locker:0.2.12",
+      env: ["MAX_COLLABORATORS=4"],
+    };
+    const text = notes(buildUpgradePlan(before, "/tmp/stage")).join("\n");
+    expect(text).toMatch(/move the value/i);
+    // Conditional, not a directive: "if you set MAX_COLLABORATORS to limit …".
+    expect(text).toMatch(/if you set MAX_COLLABORATORS to limit share links/i);
+    expect(text).not.toMatch(/^\s*move the value/im);
   });
 
   // Presence of the new variable is the clearest signal the operator has
@@ -382,7 +412,7 @@ describe("imageVersion / predatesRename", () => {
 // are not readable by discovery, so there is nothing to condition on. An
 // unconditional, conditionally-worded pointer is the most that can be said.
 describe("buildUpgradePlan cloudflare — MAX_COLLABORATORS pointer", () => {
-  it("always points at the upgrade notes", () => {
+  it("points at the upgrade notes while the boundary is still being crossed", () => {
     const text = buildUpgradePlan(cf, "/tmp/stage")
       .steps.filter((s): s is Extract<Step, { kind: "note" }> => s.kind === "note")
       .map((s) => s.text)
@@ -393,5 +423,26 @@ describe("buildUpgradePlan cloudflare — MAX_COLLABORATORS pointer", () => {
     // Worded so it is harmless to an unaffected reader: no bare instruction to
     // copy a value they may not have set.
     expect(text).toMatch(/if this instance sets/i);
+  });
+});
+
+describe("cloudflareRenameNotes sunset", () => {
+  it("still prints through the 0.3 line", () => {
+    for (const v of ["0.2.13", "0.2.99", "0.3.0", "0.3.9"]) {
+      expect(cloudflareRenameNotes(v).length, v).toBeGreaterThan(0);
+    }
+  });
+
+  // A 1.4.0 → 1.4.1 upgrade years from now must not narrate a 0.2.13 change.
+  it("stops once the version being installed is past the sunset", () => {
+    for (const v of ["0.4.0", "0.5.2", "1.0.0", "1.4.1"]) {
+      expect(cloudflareRenameNotes(v), v).toEqual([]);
+    }
+  });
+
+  // Its own version is the one thing this code always knows; an unreadable
+  // value should not silence the notice.
+  it("prints when its own version is unreadable", () => {
+    expect(cloudflareRenameNotes("not-a-version").length).toBeGreaterThan(0);
   });
 });

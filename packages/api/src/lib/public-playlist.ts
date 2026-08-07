@@ -12,12 +12,18 @@
 // ownerId and artworkKey also leak on these same responses (a raw user id,
 // a bucket pointer) but predate this branch — deliberately left alone here
 // so they get fixed in one sweep rather than piecemeal.
+//
+// Typed against the real playlists row (not Record<string, unknown>), so a
+// route that hands this an object missing these columns — or the wrong
+// object entirely — is a compile error, same as lockerTrack/publicTrack.
 
-export type PublicPlaylist = Omit<Record<string, unknown>, "createdBy">;
+import type { playlists } from "../db/schema.js";
 
-export function publicPlaylist<T extends Record<string, unknown>>(
-  row: T
-): PublicPlaylist {
+type PlaylistRow = typeof playlists.$inferSelect;
+
+export type PublicPlaylist = Omit<PlaylistRow, "createdBy">;
+
+export function publicPlaylist(row: PlaylistRow): PublicPlaylist {
   const { createdBy: _createdBy, ...rest } = row;
   return rest;
 }

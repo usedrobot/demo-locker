@@ -68,12 +68,21 @@
               null
             ],
             "description": "Owner accent colour, one of the shipped palette. Null when never set — clients fall back to #fc0."
+          },
+          "lockerOwnerId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null when this account owns its locker. Set to that owner's user id when this account is a collaborator on that owner's locker instead."
           }
         },
         "required": [
           "id",
           "email",
-          "accent"
+          "accent",
+          "lockerOwnerId"
         ]
       },
       "Playlist": {

@@ -15,7 +15,7 @@
 //
 // Typed against the real playlists row (not Record<string, unknown>), so a
 // route that hands this an object missing these columns — or the wrong
-// object entirely — is a compile error, same as lockerTrack/publicTrack.
+// object entirely — is a compile error, same as publicTrack.
 
 import type { playlists } from "../db/schema.js";
 

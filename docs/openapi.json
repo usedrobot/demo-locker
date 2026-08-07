@@ -96,6 +96,56 @@
             "type": "string",
             "format": "uuid"
           },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user who created the playlist — the locker owner, or a collaborator acting in their locker. Null for playlists created before collaborators existed. Returned by GET /playlists, POST /playlists and PATCH /playlists/{id} (all locker-session-only). NOT returned by GET /playlists/{id} or GET /shares/invite/{token}, which also admit anonymous share/invite holders — see SharedPlaylist."
+          },
+          "name": {
+            "type": "string"
+          },
+          "artworkKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isPublic": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "ownerId",
+          "createdBy",
+          "name",
+          "isPublic",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "SharedPlaylist": {
+        "type": "object",
+        "description": "A playlist as returned by the two routes reachable by an anonymous share/invite holder. Identical to Playlist except that createdBy is stripped: an anonymous holder must not learn the user id of the collaborator who created the playlist.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ownerId": {
+            "type": "string",
+            "format": "uuid"
+          },
           "name": {
             "type": "string"
           },
@@ -162,6 +212,10 @@
           "hasStream": {
             "type": "boolean",
             "description": "Whether a streaming rendition exists yet. Replaces originalKey/streamKey, which were bucket coordinates and are no longer exposed to clients."
+          },
+          "uploadedByMe": {
+            "type": "boolean",
+            "description": "Whether the acting user uploaded this track. Computed per request; false for an anonymous share/invite holder, who has no user id. The raw uploader id (tracks.uploaded_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id. Servers do not trust this field: delete authorisation reads the stored uploader column directly."
           }
         },
         "required": [
@@ -170,7 +224,8 @@
           "title",
           "position",
           "uploadedAt",
-          "hasStream"
+          "hasStream",
+          "uploadedByMe"
         ]
       },
       "PublicTrackSummary": {
@@ -849,7 +904,7 @@
     "/playlists/{id}": {
       "get": {
         "summary": "Get a playlist and its tracks",
-        "description": "Gated: requires the owner's session OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404.",
+        "description": "Gated: requires a session acting in the playlist's locker (owner or collaborator) OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404. Because this route admits anonymous share holders as well as locker sessions, the playlist is returned as SharedPlaylist (no createdBy) and each track's uploadedByMe is computed from the caller's session — false when there is none.",
         "operationId": "getPlaylist",
         "security": [
           {
@@ -888,7 +943,7 @@
                   "type": "object",
                   "properties": {
                     "playlist": {
-                      "$ref": "#/components/schemas/Playlist"
+                      "$ref": "#/components/schemas/SharedPlaylist"
                     },
                     "tracks": {
                       "type": "array",
@@ -1328,6 +1383,51 @@
         }
       }
     },
+    "/tracks": {
+      "get": {
+        "summary": "List the locker's track library",
+        "description": "Every track in the caller's locker — in a playlist or not, uploaded by the locker owner or by any collaborator on that locker — newest first. Scoped by locker, not by uploader: a collaborator sees the owner's uploads and vice versa. Each row's uploadedByMe says whether the caller uploaded it; the uploader's user id itself is never returned.",
+        "operationId": "listTracks",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The locker's tracks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tracks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Track"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tracks"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tracks/upload": {
       "post": {
         "summary": "Upload a track",
@@ -1578,6 +1678,90 @@
       }
     },
     "/tracks/{id}": {
+      "patch": {
+        "summary": "Move a track into or out of a playlist",
+        "description": "Sets the track's parent playlist. `playlistId: null` moves it back to the bare library. Both the track and the destination playlist must belong to the caller's locker; either failing returns the same non-enumerable 404. The track is appended to the end of the destination's order.",
+        "operationId": "moveTrack",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "playlistId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid",
+                    "description": "Destination playlist, or null to move the track to the bare library."
+                  }
+                },
+                "required": [
+                  "playlistId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The moved track.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "track": {
+                      "$ref": "#/components/schemas/Track"
+                    }
+                  },
+                  "required": [
+                    "track"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Track or destination playlist is outside the caller's locker, or does not exist (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "summary": "Delete a track",
         "description": "Session-authenticated caller must own the track's parent playlist. Deletes the original (and stream, if distinct) object from storage, then the row.",
@@ -2292,7 +2476,7 @@
                       ]
                     },
                     "playlist": {
-                      "$ref": "#/components/schemas/Playlist"
+                      "$ref": "#/components/schemas/SharedPlaylist"
                     },
                     "tracks": {
                       "type": "array",

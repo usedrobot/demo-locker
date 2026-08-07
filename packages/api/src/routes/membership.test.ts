@@ -477,8 +477,96 @@ describe("tracks under collaboration", () => {
   });
 });
 
-describe("uploadedBy is not exposed to playlist readers", () => {
-  it("is absent from a share-token view of a playlist's tracks", async () => {
+// The raw `uploadedBy` user id is never serialized to anyone. What a client
+// actually needs is "may I delete this?", which `uploadedByMe` answers without
+// telling collaborator A anything about collaborator B's internal id.
+describe("uploadedByMe replaces the raw uploadedBy id", () => {
+  // A second collaborator on the same locker, created here rather than in the
+  // shared fixture: only these tests need two distinct uploaders.
+  let collab2Id: string;
+  const collab2Token = "member-collab2-token";
+  let ownUploadId: string;
+  let otherUploadId: string;
+
+  beforeAll(async () => {
+    const [collab2] = await db
+      .insert(users)
+      .values({
+        email: "member-collab2@test.dev",
+        passwordHash: "x",
+        lockerOwnerId: ownerId,
+      })
+      .returning();
+    collab2Id = collab2.id;
+    await db.insert(sessions).values({
+      userId: collab2.id,
+      token: collab2Token,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60),
+    });
+
+    const upload = async (token: string, title: string, playlistId?: string) => {
+      const form = new FormData();
+      form.append("file", new File([new Uint8Array([7, 7, 7])], `${title}.wav`), `${title}.wav`);
+      form.append("title", title);
+      if (playlistId) form.append("playlistId", playlistId);
+      const res = await app.request(
+        "/tracks/upload",
+        { method: "POST", headers: auth(token), body: form },
+        env
+      );
+      expect(res.status).toBe(201);
+      const { track } = (await res.json()) as { track: { id: string } };
+      return track.id;
+    };
+
+    ownUploadId = await upload(collabToken, "collab one upload");
+    otherUploadId = await upload(collab2Token, "collab two upload");
+  });
+
+  it("is true on a collaborator's own upload and false on another's, with no raw id", async () => {
+    const res = await app.request("/tracks", { headers: auth(collabToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tracks: (Record<string, unknown> & { id: string })[];
+    };
+
+    expect(body.tracks.find((t) => t.id === ownUploadId)?.uploadedByMe).toBe(true);
+    expect(body.tracks.find((t) => t.id === otherUploadId)?.uploadedByMe).toBe(false);
+    expect(body.tracks.length).toBeGreaterThan(0);
+    for (const t of body.tracks) {
+      expect(t).not.toHaveProperty("uploadedBy");
+    }
+  });
+
+  it("is false for the owner on a collaborator's upload, with no raw id", async () => {
+    const res = await app.request("/tracks", { headers: auth(ownerToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tracks: (Record<string, unknown> & { id: string })[];
+    };
+    const row = body.tracks.find((t) => t.id === ownUploadId);
+    expect(row?.uploadedByMe).toBe(false);
+    expect(row).not.toHaveProperty("uploadedBy");
+    // and collab2's id is nowhere in the payload at all
+    expect(JSON.stringify(body)).not.toContain(collab2Id);
+  });
+
+  it("is true on the uploader's own 201 response", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([8, 8, 8])], "own-201.wav"), "own-201.wav");
+    form.append("title", "own 201 upload");
+    const res = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(collabToken), body: form },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { track } = (await res.json()) as Record<string, Record<string, unknown>>;
+    expect(track.uploadedByMe).toBe(true);
+    expect(track).not.toHaveProperty("uploadedBy");
+  });
+
+  it("is false for an anonymous share holder, with no raw id", async () => {
     const shareToken = "member-listen-share-token";
     await db.insert(shares).values({
       playlistId: ownerPlaylistId,
@@ -503,31 +591,52 @@ describe("uploadedBy is not exposed to playlist readers", () => {
     expect(body.tracks.length).toBeGreaterThan(0);
     for (const t of body.tracks) {
       expect(t).not.toHaveProperty("uploadedBy");
+      expect(t.uploadedByMe).toBe(false);
     }
   });
 
-  it("is present on GET /tracks for a locker session", async () => {
+  // The case the two-serializer split made impossible: GET /playlists/:id is
+  // reachable by BOTH an anonymous share holder and a locker session, so it had
+  // to use the stripping serializer and an authenticated collaborator got no
+  // attribution at all. Task 11's per-track delete control depends on this.
+  it("reaches a collaborator opening GET /playlists/:id", async () => {
     const form = new FormData();
-    form.append("file", new File([new Uint8Array([3, 3, 3])], "locker-visible.wav"), "locker-visible.wav");
-    form.append("title", "locker visible track");
+    form.append("file", new File([new Uint8Array([9, 9, 9])], "in-playlist.wav"), "in-playlist.wav");
+    form.append("title", "collab track in playlist");
+    form.append("playlistId", ownerPlaylistId);
     const uploadRes = await app.request(
       "/tracks/upload",
       { method: "POST", headers: auth(collabToken), body: form },
       env
     );
     expect(uploadRes.status).toBe(201);
-    const { track: uploaded } = (await uploadRes.json()) as {
-      track: { id: string; uploadedBy: string };
-    };
-    expect(uploaded.uploadedBy).toBe(collabId);
+    const { track: uploaded } = (await uploadRes.json()) as { track: { id: string } };
 
-    const res = await app.request("/tracks", { headers: auth(ownerToken) }, env);
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(collabToken) },
+      env
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      tracks: { id: string; uploadedBy: string | null }[];
+      tracks: (Record<string, unknown> & { id: string })[];
     };
-    const row = body.tracks.find((t) => t.id === uploaded.id);
-    expect(row?.uploadedBy).toBe(collabId);
+    const mine = body.tracks.find((t) => t.id === uploaded.id);
+    expect(mine?.uploadedByMe).toBe(true);
+    for (const t of body.tracks) {
+      expect(t).not.toHaveProperty("uploadedBy");
+    }
+
+    // ...and the owner reading the same playlist sees it as not theirs.
+    const ownerRes = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(ownerToken) },
+      env
+    );
+    const ownerBody = (await ownerRes.json()) as {
+      tracks: (Record<string, unknown> & { id: string })[];
+    };
+    expect(ownerBody.tracks.find((t) => t.id === uploaded.id)?.uploadedByMe).toBe(false);
   });
 });
 
@@ -560,7 +669,11 @@ describe("createdBy is not exposed to anonymous playlist readers", () => {
     expect(body.playlist).not.toHaveProperty("createdBy");
   });
 
-  it("is still present for the owner's own authenticated read via create", async () => {
+  // Named for the path it actually exercises. `GET /playlists/:id` strips
+  // createdBy for everyone (it admits anonymous share tokens), so this cannot
+  // claim to cover "the owner's authenticated read" — POST /playlists is the
+  // route that returns it, and this is the guard against over-stripping there.
+  it("is still present on the creator's own POST /playlists response", async () => {
     const res = await app.request(
       "/playlists",
       {

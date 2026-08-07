@@ -4,8 +4,9 @@ import { getDb } from "../db/index.js";
 import { shares, playlists, tracks, users } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { getLimits, isLimited } from "../lib/limits.js";
-import { publicTrack } from "../lib/public-track.js";
+import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { publicPlaylist } from "../lib/public-playlist.js";
+import { requestSessionUserId } from "../lib/playlist-access.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
@@ -209,6 +210,11 @@ sharesRouter.get("/invite/:token", async (c) => {
     .where(eq(users.id, playlist.ownerId))
     .limit(1);
 
+  // Usually null — this is the anonymous invite landing view. Resolved rather
+  // than hardcoded so a signed-in visitor following an invite link gets a
+  // truthful uploadedByMe instead of a blanket false.
+  const actingUserId = await requestSessionUserId(c);
+
   return c.json({
     permission: share.permission,
     // publicPlaylist here: an anonymous invite holder must not learn the id
@@ -219,7 +225,7 @@ sharesRouter.get("/invite/:token", async (c) => {
     // link, and the raw rows still carried originalKey/streamKey — the exact
     // leak the 0.2.8 review closed everywhere except the one route that
     // listeners, not owners, actually use.
-    tracks: trackList.map(publicTrack),
+    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId)),
     accent: owner?.accent ?? null,
   });
 });

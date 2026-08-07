@@ -6,10 +6,11 @@ import { requireAuth } from "../lib/session.js";
 import {
   requestCanAccessPlaylist,
   requestCanEditPlaylist,
+  requestSessionUserId,
 } from "../lib/playlist-access.js";
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
-import { publicTrack } from "../lib/public-track.js";
+import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { publicPlaylist } from "../lib/public-playlist.js";
 import {
   INERT_CONTENT_HEADERS,
@@ -89,8 +90,14 @@ playlistsRouter.get("/:id", async (c) => {
 
   // This route is reachable by an anonymous share-token holder, not just a
   // locker session — publicPlaylist() keeps createdBy (a collaborator's
-  // user id) from leaking to them.
-  return c.json({ playlist: publicPlaylist(playlist), tracks: trackList.map(publicTrack) });
+  // user id) from leaking to them. Same for the tracks: nobody gets a raw
+  // uploadedBy, but a session reader still learns which rows are their own
+  // (null here for a share holder, who has no id and therefore owns nothing).
+  const actingUserId = await requestSessionUserId(c);
+  return c.json({
+    playlist: publicPlaylist(playlist),
+    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId)),
+  });
 });
 
 playlistsRouter.patch("/:id", requireAuth, async (c) => {

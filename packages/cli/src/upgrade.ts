@@ -38,10 +38,13 @@ export interface UpgradeOptions {
 export const RENAME_VERSION: readonly number[] = [0, 2, 13];
 
 /**
- * Past this, the rename is old news and an undirected pointer is just noise.
+ * Past this, the rename is old news and an *undirected* pointer is just noise.
  * Anyone still crossing the boundary by then has skipped the whole 0.3 line,
- * and docs/upgrading.md keeps the instructions regardless. Used only for the
- * Cloudflare notice, which cannot be targeted any other way.
+ * and docs/upgrading.md keeps the instructions regardless.
+ *
+ * Applies to the two notices that cannot show their reader is affected: the
+ * Cloudflare pointer and the unreadable-version branch. Not to the notice that
+ * can — see noticeSunsetPassed.
  */
 export const RENAME_NOTICE_SUNSET: readonly number[] = [0, 4, 0];
 
@@ -57,6 +60,19 @@ function isBefore(v: readonly number[], than: readonly number[]): boolean {
     if (v[i]! !== than[i]!) return v[i]! < than[i]!;
   }
   return false;
+}
+
+/**
+ * Has the rename passed into history for the version being installed?
+ *
+ * Applies only to the notices that CANNOT establish the reader is affected —
+ * the Cloudflare pointer and the unreadable-version branch. A notice that has
+ * proven its reader is crossing the boundary stays correct however late they
+ * do it, and is not sunset.
+ */
+function noticeSunsetPassed(version: string): boolean {
+  const v = parseVersion(version);
+  return v !== null && !isBefore(v, RENAME_NOTICE_SUNSET);
 }
 
 /**
@@ -92,7 +108,11 @@ function envValue(env: readonly string[], name: string): string | null {
   return hit === undefined ? null : hit.slice(name.length + 1);
 }
 
-export function renameNotes(env: readonly string[], image: string): Step[] {
+export function renameNotes(
+  env: readonly string[],
+  image: string,
+  installing: string = cliVersion(),
+): Step[] {
   // Gate 1 — was a cap actually in force? getLimits treats unset, empty and
   // "0" identically (isLimited is `limit > 0`), so an empty or zero value
   // never capped anything and there is nothing to tell the operator about.
@@ -116,12 +136,12 @@ export function renameNotes(env: readonly string[], image: string): Step[] {
   const from = imageVersion(image);
   if (from !== null && !isBefore(from, RENAME_VERSION)) return [];
 
-  const changed = {
-    kind: "note" as const,
-    text: "note: MAX_COLLABORATORS is set on this instance, and it changed meaning in 0.2.13.",
+  const changed: Step = {
+    kind: "note",
+    text: "note: MAX_COLLABORATORS is set here, and changed meaning in 0.2.13.",
   };
-  // Shared by both wordings: what the variable means now. Split across two
-  // lines so it does not wrap in an 80-column terminal.
+  // Shared by both wordings: what the variable means now. Split so that no
+  // line exceeds 80 columns once renderPlan has prefixed it with "# ".
   const nowMeans: Step[] = [
     {
       kind: "note",
@@ -137,34 +157,48 @@ export function renameNotes(env: readonly string[], image: string): Step[] {
   //
   // So it gets the facts and no instruction. An operator on 0.3.1-as-:latest
   // who set a deliberate seat cap and wants unlimited share links reaches this
-  // branch, and "move the value to MAX_SHARE_LINKS" would hand them a cap that
+  // branch, and "copy the value to MAX_SHARE_LINKS" would hand them a cap that
   // 403s their share creation — the exact harm the gates exist to prevent. The
   // same reasoning as the Cloudflare path below: state it conditionally, and
   // let the docs carry the instruction to whoever it actually applies to.
+  //
+  // Sunset applies here for the same reason it applies to Cloudflare: this
+  // branch cannot show the operator is affected, it never stops being reached
+  // (the tag stays unreadable), and an undirected pointer narrating a 0.2.13
+  // change during a 1.4.x upgrade is noise. The known-old branch below is
+  // deliberately NOT sunset — there the from-version proves the operator is
+  // crossing the boundary, and that stays true and actionable whenever they
+  // happen to do it.
   if (from === null) {
+    if (noticeSunsetPassed(installing)) return [];
     return [
       changed,
       ...nowMeans,
       {
         kind: "note",
-        text: "  This instance's version could not be read from its image tag; if it predates 0.2.13,",
+        text: "  This instance's version could not be read from its image tag;",
       },
-      { kind: "note", text: "  see docs/upgrading.md." },
+      { kind: "note", text: "  if it predates 0.2.13, see docs/upgrading.md." },
     ];
   }
 
   // Known to predate the rename. Even here the gates establish only that a cap
   // was set, never that it was meant as a share-link cap — someone who set it
   // as a seat cap and never made a share link would gain a ceiling they never
-  // had. So this stays conditional too, phrased as docs/self-hosting.md does.
+  // had. So this stays conditional too.
+  //
+  // "copy", not "move": MAX_COLLABORATORS still has a live meaning (seats), so
+  // telling them to move it would quietly drop a collaborator cap.
+  // docs/upgrading.md has this right — copy the value across, then decide about
+  // a seat cap separately — and the three texts are now worded alike.
   return [
     changed,
     ...nowMeans,
     {
       kind: "note",
-      text: "  If you set MAX_COLLABORATORS to limit share links, move the value there.",
+      text: "  If you set MAX_COLLABORATORS to limit share links, copy the value",
     },
-    { kind: "note", text: "  See docs/upgrading.md." },
+    { kind: "note", text: "  to MAX_SHARE_LINKS. See docs/upgrading.md." },
   ];
 }
 
@@ -181,12 +215,11 @@ export function renameNotes(env: readonly string[], image: string): Step[] {
  * which is the one version this code does know.
  */
 export function cloudflareRenameNotes(version: string = cliVersion()): Step[] {
-  const v = parseVersion(version);
-  if (v !== null && !isBefore(v, RENAME_NOTICE_SUNSET)) return [];
+  if (noticeSunsetPassed(version)) return [];
   return [
     {
       kind: "note",
-      text: "note: if this instance sets MAX_COLLABORATORS, its meaning changed in 0.2.13.",
+      text: "note: if this instance sets MAX_COLLABORATORS, meaning changed in 0.2.13.",
     },
     {
       kind: "note",

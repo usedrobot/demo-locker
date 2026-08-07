@@ -101,7 +101,7 @@ something or to tighten a quota.
 | `MAX_STORAGE_BYTES` | unset (unlimited) | Total stored bytes per account. Uploads that would cross it are rejected with 413. |
 | `MAX_PLAYLISTS` | unset (unlimited) | Playlists per account. |
 | `MAX_COLLABORATORS` | unset (unlimited) | Collaborators per locker — people who sign in and share your library. Counts invites you have minted but nobody has redeemed yet, so an unredeemed invite holds a seat until you revoke it. |
-| `MAX_SHARE_LINKS` | unset (unlimited) | Share links per playlist. **Before 0.2.13 this ceiling was controlled by `MAX_COLLABORATORS`** — if you set that variable to limit share links, move the value here. |
+| `MAX_SHARE_LINKS` | unset (unlimited) | Share links per playlist. **Before 0.2.13 this ceiling was controlled by `MAX_COLLABORATORS`** — if you set that variable to limit share links, copy the value here — and note that `MAX_COLLABORATORS` still applies, now as a collaborator cap, so decide separately whether you want one. |
 
 `/auth/login` and `/auth/signup` are rate limited per client IP (10 logins per
 15 minutes, 5 signups per hour) and answer 429 with `Retry-After` past that.

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildUpgradePlan,
   cloudflareRenameNotes,
+  renameNotes,
   imageVersion,
   predatesRename,
 } from "../src/upgrade.js";
@@ -328,6 +329,9 @@ describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
   // of real installs and never resolves. Telling all of them to move a value
   // would hand a share-link cap to every one of them that is actually on a
   // recent version — so unknown states the change and stops there.
+  // Version passed explicitly: this branch is sunset, so resolving it against
+  // the real cliVersion() would turn the test red on the day package.json
+  // reaches 0.4.0 — in a file unrelated to whatever is being released.
   it("warns without an instruction when the from-version cannot be read", () => {
     for (const image of [
       "ghcr.io/usedrobot/demo-locker:latest",
@@ -335,14 +339,31 @@ describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
       "ghcr.io/usedrobot/demo-locker@sha256:abc123",
       "demo-locker:dev",
     ]) {
-      const unknown: DockerCandidate = { ...dk, image, env: ["MAX_COLLABORATORS=4"] };
-      const text = notes(buildUpgradePlan(unknown, "/tmp/stage")).join("\n");
+      const text = renameNotes(["MAX_COLLABORATORS=4"], image, "0.2.12")
+        .map((s) => (s.kind === "note" ? s.text : ""))
+        .join("\n");
       expect(text, image).toContain("changed meaning in 0.2.13");
       expect(text, image).toContain("docs/upgrading.md");
-      expect(text, image).not.toMatch(/move the value/i);
+      expect(text, image).not.toMatch(/\bcopy the value\b/i);
       // Says why it is being vague rather than just being vague.
       expect(text, image).toMatch(/could not be read/i);
     }
+  });
+
+  // The unreadable branch is undirected and never stops being reached, so it
+  // is sunset like the Cloudflare pointer. The known-old branch is NOT: there
+  // the from-version proves the reader is crossing the boundary, and that
+  // stays true and actionable whenever they get round to it.
+  it("sunsets the unreadable-version notice but not the known-old one", () => {
+    const unknown = (v: string) => renameNotes(["MAX_COLLABORATORS=4"], "r/x:latest", v);
+    const knownOld = (v: string) => renameNotes(["MAX_COLLABORATORS=4"], "r/x:0.2.12", v);
+
+    expect(unknown("0.3.9").length).toBeGreaterThan(0);
+    expect(unknown("0.4.0")).toEqual([]);
+    expect(unknown("1.4.1")).toEqual([]);
+
+    expect(knownOld("0.4.0").length).toBeGreaterThan(0);
+    expect(knownOld("1.4.1").length).toBeGreaterThan(0);
   });
 
   // A known-old instance keeps the actionable line — but conditionally. The
@@ -354,10 +375,13 @@ describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
       env: ["MAX_COLLABORATORS=4"],
     };
     const text = notes(buildUpgradePlan(before, "/tmp/stage")).join("\n");
-    expect(text).toMatch(/move the value/i);
+    expect(text).toMatch(/copy the value/i);
     // Conditional, not a directive: "if you set MAX_COLLABORATORS to limit …".
     expect(text).toMatch(/if you set MAX_COLLABORATORS to limit share links/i);
-    expect(text).not.toMatch(/^\s*move the value/im);
+    expect(text).not.toMatch(/^\s*copy the value/im);
+    // "copy", not "move": MAX_COLLABORATORS still means something (seats), so
+    // moving it would silently drop a cap. docs/upgrading.md says copy.
+    expect(text).not.toMatch(/move the value/i);
   });
 
   // Presence of the new variable is the clearest signal the operator has
@@ -412,10 +436,13 @@ describe("imageVersion / predatesRename", () => {
 // are not readable by discovery, so there is nothing to condition on. An
 // unconditional, conditionally-worded pointer is the most that can be said.
 describe("buildUpgradePlan cloudflare — MAX_COLLABORATORS pointer", () => {
+  // Asserted through cloudflareRenameNotes with an explicit pre-sunset version.
+  // Going through buildUpgradePlan would resolve against the real cliVersion(),
+  // and cloudflareUpgrade emits no other note steps — so every assertion here
+  // would fail the day package.json reaches 0.4.0.
   it("points at the upgrade notes while the boundary is still being crossed", () => {
-    const text = buildUpgradePlan(cf, "/tmp/stage")
-      .steps.filter((s): s is Extract<Step, { kind: "note" }> => s.kind === "note")
-      .map((s) => s.text)
+    const text = cloudflareRenameNotes("0.2.12")
+      .map((s) => (s.kind === "note" ? s.text : ""))
       .join("\n");
     expect(text).toContain("MAX_COLLABORATORS");
     expect(text).toContain("MAX_SHARE_LINKS");
@@ -444,5 +471,30 @@ describe("cloudflareRenameNotes sunset", () => {
   // value should not silence the notice.
   it("prints when its own version is unreadable", () => {
     expect(cloudflareRenameNotes("not-a-version").length).toBeGreaterThan(0);
+  });
+});
+
+// The notes render as "# <text>" (renderPlan) — the wider of the two paths —
+// so they are budgeted against 80 columns including that prefix. Measured
+// rather than eyeballed, because the last two rewrites each pushed a line over
+// while the comment above it still claimed it fit.
+describe("notice line width", () => {
+  const RENDER_PREFIX = "# ";
+  const texts = [
+    ...renameNotes(["MAX_COLLABORATORS=4"], "r/x:0.2.12", "0.2.12"),
+    ...renameNotes(["MAX_COLLABORATORS=4"], "r/x:latest", "0.2.12"),
+    ...cloudflareRenameNotes("0.2.12"),
+  ].map((s) => (s.kind === "note" ? s.text : ""));
+
+  it("has notes to measure", () => {
+    expect(texts.length).toBeGreaterThan(5);
+  });
+
+  it("fits 80 columns once rendered", () => {
+    for (const text of texts) {
+      // Spread, not .length: an em dash is one column but two UTF-16 units in
+      // some encodings, and miscounting it is how a line sneaks over.
+      expect([...(RENDER_PREFIX + text)].length, text).toBeLessThanOrEqual(80);
+    }
   });
 });

@@ -304,7 +304,8 @@ mint another.
 
 `MAX_COLLABORATORS` is seats only. The separate per-playlist share-link ceiling
 is `MAX_SHARE_LINKS` — before 0.2.13 both were `MAX_COLLABORATORS`, so an
-operator who set it to cap share links should move that value across.
+operator who set it to cap share links should copy that value across, leaving
+`MAX_COLLABORATORS` to be decided on its own merits as a seat cap.
 
 ```bash
 curl -fsS "$BASE/collab/invites" -H "Authorization: Bearer $TOKEN" | jq .

@@ -477,9 +477,10 @@ describe("tracks under collaboration", () => {
   });
 });
 
-// The raw `uploadedBy` user id is never serialized to anyone. What a client
-// actually needs is "may I delete this?", which `uploadedByMe` answers without
-// telling collaborator A anything about collaborator B's internal id.
+// The raw `uploadedBy` user id is never serialized to anyone. `uploadedByMe`
+// carries the one bit a client can use — did I upload this — without telling
+// collaborator A anything about collaborator B's internal id. It is
+// attribution, not delete authority: see the note in lib/public-track.ts.
 describe("uploadedByMe replaces the raw uploadedBy id", () => {
   // A second collaborator on the same locker, created here rather than in the
   // shared fixture: only these tests need two distinct uploaders.

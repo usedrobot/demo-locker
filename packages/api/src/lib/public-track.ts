@@ -13,9 +13,9 @@
 // so serializing the raw column let collaborator A harvest collaborator B's
 // internal user UUID off B's uploads — and nothing else in this API exposes
 // another user's id. The id was also useless to the client that received it:
-// no consumer can turn a UUID into a name. The only question a client asks of
-// this column is "may I delete this track?", and `uploadedByMe` is exactly
-// that question, answered without disclosing anything about anyone else.
+// no consumer can turn a UUID into a name. What a client can actually use is
+// the one bit the id was being reduced to anyway: is this row mine? That is
+// what `uploadedByMe` answers, and it discloses nothing about anyone else.
 //
 // One serializer, not two. The previous split (`publicTrack` stripping the
 // field, `lockerTrack` keeping it) existed solely because of `uploadedBy`, and
@@ -25,9 +25,26 @@
 // are stripped (the strip list is unconditional), it supplies the value the
 // comparison needs. Pass null for a reader with no session; they get false.
 //
-// Server-side authorisation never reads this. Delete guards compare
-// `track.uploadedBy` from the database directly — a client-supplied
-// `uploadedByMe` is not evidence of anything.
+// `uploadedByMe` is ATTRIBUTION, not permission. It says whether the
+// requesting session uploaded this track. It is not delete authority and must
+// not be read as such — today it is close to the inverse of it. The DELETE
+// guard below in routes/tracks.ts compares `track.ownerId` to the acting user,
+// so a collaborator holding `uploadedByMe: true` on their own upload is still
+// 404'd, while the locker owner — who can delete anything in the locker — sees
+// `false` on every row a collaborator uploaded. A client rendering a delete
+// affordance needs `uploadedByMe` OR locker ownership; this field alone has
+// never been the answer.
+//
+// Nothing server-side reads it in either direction. Authorisation is decided
+// from stored columns on every request; a client-supplied `uploadedByMe` is
+// not evidence of anything.
+//
+// False is ambiguous by construction, and callers must not render it as
+// "someone else uploaded this". It is also false when no uploader is recorded
+// at all — rows predating the column, or an uploader since removed (the FK is
+// ON DELETE SET NULL) — and when the requester has no identity to compare,
+// which includes an anonymous edit-share holder receiving the 201 for their
+// OWN upload.
 //
 // Takes a real track row (not `Record<string, unknown>`), so a caller that
 // hands it something without these columns — e.g. an already-public track, or

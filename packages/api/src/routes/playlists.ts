@@ -243,10 +243,16 @@ playlistsRouter.get("/:id/artwork", async (c) => {
   return new Response(object.body, { headers });
 });
 
+// Delete a playlist. The locker owner may delete any playlist in their locker;
+// a collaborator may only delete one they created. This guard is consistency
+// with DELETE /tracks/:id rather than data safety — migration 0003's
+// ON DELETE SET NULL detaches this playlist's tracks instead of deleting them,
+// so no audio is destroyed here.
 playlistsRouter.delete("/:id", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
-  const userId = c.get("user").id;
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
 
   const [playlist] = await db
     .select()
@@ -254,7 +260,13 @@ playlistsRouter.delete("/:id", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .limit(1);
 
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  // A null createdBy predates attribution (or its creator has been removed)
+  // and reads as the owner's, so a collaborator may not delete it.
+  if (!isLockerOwner(user) && playlist.createdBy !== user.id) {
     return c.json({ error: "not found" }, 404);
   }
 

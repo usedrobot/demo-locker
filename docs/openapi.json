@@ -215,7 +215,7 @@
           },
           "uploadedByMe": {
             "type": "boolean",
-            "description": "Attribution, NOT permission: whether the requesting session uploaded this track. Computed per request. The raw uploader id (tracks.uploaded_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id. Do not build a delete control from this field alone: DELETE /tracks/{id} authorises on locker ownership, so a collaborator gets true on an upload they cannot currently delete, and the locker owner gets false on collaborator uploads they can. The client-side rule is uploadedByMe OR locker ownership. The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else uploaded this\": it also means no uploader is recorded (rows predating the column, or an uploader since deleted — the column is ON DELETE SET NULL), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
+            "description": "Attribution, NOT permission: whether the requesting session uploaded this track. Computed per request. The raw uploader id (tracks.uploaded_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id. Do not build a delete control from this field alone: DELETE /tracks/{id} lets the locker owner delete any track, so the owner gets false on every collaborator upload they are nonetheless allowed to delete. The client-side rule is uploadedByMe OR locker ownership. (For a collaborator the two now coincide — they may delete exactly the tracks they uploaded — but the field is still attribution that happens to match, not the authority itself.) The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else uploaded this\": it also means no uploader is recorded (rows predating the column, or an uploader since deleted — the column is ON DELETE SET NULL), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
           }
         },
         "required": [
@@ -1070,7 +1070,7 @@
       },
       "delete": {
         "summary": "Delete a playlist",
-        "description": "Owner session only.",
+        "description": "Locker-scoped, then narrowed by who created the playlist. The session must act in the playlist's locker, otherwise 404. Within the locker: the owner may delete any playlist; a collaborator may delete only one whose created_by is their own user id, and a null created_by reads as the owner's. Deleting a playlist does not delete its tracks — the FK is ON DELETE SET NULL, so they are detached back into the locker's library.",
         "operationId": "deletePlaylist",
         "security": [
           {
@@ -1764,7 +1764,7 @@
       },
       "delete": {
         "summary": "Delete a track",
-        "description": "Authorises on locker ownership: the session user's own id must equal the track's ownerId, which is the locker owner for every track including one uploaded by a collaborator. A collaborator is therefore refused on every track in the locker, including their own uploads, and library tracks (which have no parent playlist) are covered by the same check. Deletes the original (and stream, if distinct) object from storage, then the row.",
+        "description": "Locker-scoped, then narrowed by who uploaded the track. The caller's session must act in the track's locker (its ownerId), otherwise 404 — unchanged, and library tracks with no parent playlist are covered by the same check. Within the locker: the owner may delete any track; a collaborator may delete only a track whose uploaded_by is their own user id, and is 404'd otherwise. A null uploaded_by (rows predating the column, an uploader since removed — the column is ON DELETE SET NULL — or an upload by an anonymous edit-share holder) reads as the owner's, so a collaborator may not delete it. The guard runs before any storage call: a refused delete leaves both the row and the stored objects intact. On success this deletes the original (and stream, if distinct) object from storage, then the row — the original is the lossless master, and there is no soft delete or undo.",
         "operationId": "deleteTrack",
         "security": [
           {

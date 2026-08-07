@@ -27,13 +27,18 @@
 //
 // `uploadedByMe` is ATTRIBUTION, not permission. It says whether the
 // requesting session uploaded this track. It is not delete authority and must
-// not be read as such — today it is close to the inverse of it. The DELETE
-// guard below in routes/tracks.ts compares `track.ownerId` to the acting user,
-// so a collaborator holding `uploadedByMe: true` on their own upload is still
-// 404'd, while the locker owner — who can delete anything in the locker — sees
-// `false` on every row a collaborator uploaded. A client rendering a delete
-// affordance needs `uploadedByMe` OR locker ownership; this field alone has
-// never been the answer.
+// not be read as such. The DELETE guard in routes/tracks.ts is locker
+// ownership OR own-upload: the locker owner may delete anything in the locker,
+// a collaborator only a row whose `uploadedBy` is theirs. So the locker owner
+// sees `false` on every row a collaborator uploaded and may delete all of them
+// anyway. A client rendering a delete affordance needs `uploadedByMe ||
+// isOwner`; this field alone has never been the answer.
+//
+// For a collaborator the two now coincide — the tracks they may delete are
+// exactly the ones this field is true for. That is a coincidence of the rule,
+// not a licence to treat the field as the rule: the server decides from
+// `tracks.uploaded_by` and the acting user, and a client that hard-codes
+// "uploadedByMe means deletable" is wrong the moment it renders for the owner.
 //
 // Nothing server-side reads it in either direction. Authorisation is decided
 // from stored columns on every request; a client-supplied `uploadedByMe` is

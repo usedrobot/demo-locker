@@ -936,3 +936,185 @@ describe("sharing under collaboration", () => {
     expect(row.permission).toBe("listen");
   });
 });
+
+describe("delete is limited to what you created", () => {
+  it("refuses to let a collaborator delete the owner's track, and keeps the file", async () => {
+    const bucket = env.DEMOS_BUCKET as { put: Function; get: Function };
+    await bucket.put("lib/precious", Buffer.from("MASTER"), {
+      httpMetadata: { contentType: "audio/wav" },
+    });
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "owner master",
+        position: 0,
+        originalKey: "lib/precious",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+
+    const [still] = await db.select().from(tracks).where(eq(tracks.id, tr.id));
+    expect(still).toBeDefined();
+    expect(await bucket.get("lib/precious")).not.toBeNull();
+  });
+
+  // A null uploadedBy is the fail-closed case the guard exists for: rows that
+  // predate the column, rows whose uploader was removed (ON DELETE SET NULL),
+  // and uploads by anonymous edit-share holders. It reads as the owner's, so a
+  // collaborator must not be able to destroy it — and the master must survive.
+  it("refuses to let a collaborator delete a track with no recorded uploader, and keeps the file", async () => {
+    const bucket = env.DEMOS_BUCKET as { put: Function; get: Function };
+    await bucket.put("lib/unattributed", Buffer.from("MASTER"), {
+      httpMetadata: { contentType: "audio/wav" },
+    });
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "unattributed master",
+        position: 0,
+        originalKey: "lib/unattributed",
+      })
+      .returning();
+    expect(tr.uploadedBy).toBeNull();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+
+    const [still] = await db.select().from(tracks).where(eq(tracks.id, tr.id));
+    expect(still).toBeDefined();
+    expect(await bucket.get("lib/unattributed")).not.toBeNull();
+  });
+
+  it("lets a collaborator delete a track they uploaded themselves", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "collab master",
+        position: 0,
+        originalKey: "lib/collab-own",
+        uploadedBy: collabId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const [gone] = await db.select().from(tracks).where(eq(tracks.id, tr.id));
+    expect(gone).toBeUndefined();
+  });
+
+  it("lets the owner delete a collaborator's track", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "collab upload, owner deletes",
+        position: 0,
+        originalKey: "lib/owner-can",
+        uploadedBy: collabId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      { method: "DELETE", headers: auth(ownerToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const [gone] = await db.select().from(tracks).where(eq(tracks.id, tr.id));
+    expect(gone).toBeUndefined();
+  });
+
+  it("still refuses a stranger, without disclosing that the track exists", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "not the stranger's business",
+        position: 0,
+        originalKey: "lib/stranger-cannot",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      { method: "DELETE", headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not found" });
+    const [still] = await db.select().from(tracks).where(eq(tracks.id, tr.id));
+    expect(still).toBeDefined();
+  });
+
+  // A dedicated row rather than the shared `ownerPlaylistId` fixture: this test
+  // attempts a mutation, and the mutation-check in the brief's Step 5 makes the
+  // delete actually land, which would cascade unrelated failures through the
+  // file and obscure which guard was being checked.
+  it("refuses to let a collaborator delete a playlist they did not create", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "owner's own, no createdBy" })
+      .returning();
+    expect(pl.createdBy).toBeNull();
+
+    const res = await app.request(
+      `/playlists/${pl.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+    const [still] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(still).toBeDefined();
+  });
+
+  it("lets a collaborator delete a playlist they created", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab's own", createdBy: collabId })
+      .returning();
+
+    const res = await app.request(
+      `/playlists/${pl.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const [gone] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(gone).toBeUndefined();
+  });
+
+  it("lets the owner delete a playlist a collaborator created", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab made, owner deletes", createdBy: collabId })
+      .returning();
+
+    const res = await app.request(
+      `/playlists/${pl.id}`,
+      { method: "DELETE", headers: auth(ownerToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const [gone] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(gone).toBeUndefined();
+  });
+});

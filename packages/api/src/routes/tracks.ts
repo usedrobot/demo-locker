@@ -8,7 +8,7 @@ import {
   requestCanEditPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
-import { lockerIdOf, lockerIdForUserId } from "../lib/locker.js";
+import { lockerIdOf, lockerIdForUserId, isLockerOwner } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { getLimits, isLimited } from "../lib/limits.js";
@@ -299,10 +299,13 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
   return c.json({ track: publicTrack(updated, c.get("user").id) });
 });
 
-// Delete a track
+// Delete a track. The locker owner may delete anything in their locker; a
+// collaborator may only delete their own upload.
 tracksRouter.delete("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");
   const db = getDb(c.env.DB);
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
 
   const [track] = await db
     .select()
@@ -310,7 +313,18 @@ tracksRouter.delete("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .limit(1);
 
-  if (!track || track.ownerId !== c.get("user").id) {
+  // Wrong locker entirely — non-enumerable, same 404 a missing row gets.
+  if (!track || track.ownerId !== lockerId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  // Deleting a track erases the lossless master from the bucket with no undo,
+  // so a collaborator may only ever destroy their own upload. A null
+  // uploadedBy predates attribution (or its uploader has been removed, the FK
+  // being ON DELETE SET NULL, or the upload came from an anonymous edit-share
+  // holder) and reads as the owner's — which means a collaborator may not
+  // touch it. Fail closed: this runs before any bucket delete.
+  if (!isLockerOwner(user) && track.uploadedBy !== user.id) {
     return c.json({ error: "not found" }, 404);
   }
 

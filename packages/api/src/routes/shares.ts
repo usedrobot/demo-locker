@@ -7,13 +7,14 @@ import { getLimits, isLimited } from "../lib/limits.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { publicPlaylist } from "../lib/public-playlist.js";
 import { requestSessionUserId } from "../lib/playlist-access.js";
+import { lockerIdOf } from "../lib/locker.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
 
 sharesRouter.post("/", requireAuth, async (c) => {
   const { playlistId, permission, email } = await c.req.json();
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
 
   if (!playlistId || !permission) {
     return c.json({ error: "playlistId and permission required" }, 400);
@@ -30,7 +31,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
     .where(eq(playlists.id, playlistId))
     .limit(1);
 
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 
@@ -66,7 +67,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
 // All share links across every playlist the user owns — the "who has access
 // to my locker" view. Includes the playlist name for display.
 sharesRouter.get("/", requireAuth, async (c) => {
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
   const db = getDb(c.env.DB);
 
   const rows = await db
@@ -82,7 +83,7 @@ sharesRouter.get("/", requireAuth, async (c) => {
     })
     .from(shares)
     .innerJoin(playlists, eq(shares.playlistId, playlists.id))
-    .where(eq(playlists.ownerId, userId));
+    .where(eq(playlists.ownerId, lockerId));
 
   return c.json({ shares: rows });
 });
@@ -90,7 +91,7 @@ sharesRouter.get("/", requireAuth, async (c) => {
 // Change a share's permission (grant or revoke edit). Owner only.
 sharesRouter.patch("/:id", requireAuth, async (c) => {
   const shareId = c.req.param("id");
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
   const { permission } = await c.req.json();
   if (permission !== "listen" && permission !== "edit") {
     return c.json({ error: "permission must be 'listen' or 'edit'" }, 400);
@@ -109,7 +110,7 @@ sharesRouter.patch("/:id", requireAuth, async (c) => {
     .from(playlists)
     .where(eq(playlists.id, share.playlistId))
     .limit(1);
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 
@@ -124,7 +125,7 @@ sharesRouter.patch("/:id", requireAuth, async (c) => {
 
 sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
   const playlistId = c.req.param("playlistId");
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
   const db = getDb(c.env.DB);
 
   const [playlist] = await db
@@ -133,7 +134,7 @@ sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
     .where(eq(playlists.id, playlistId))
     .limit(1);
 
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 
@@ -147,7 +148,7 @@ sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
 
 sharesRouter.delete("/:id", requireAuth, async (c) => {
   const shareId = c.req.param("id");
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
   const db = getDb(c.env.DB);
 
   const [share] = await db
@@ -164,7 +165,7 @@ sharesRouter.delete("/:id", requireAuth, async (c) => {
     .where(eq(playlists.id, share.playlistId))
     .limit(1);
 
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 

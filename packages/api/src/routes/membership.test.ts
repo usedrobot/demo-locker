@@ -761,3 +761,47 @@ describe("comments on a library track under collaboration", () => {
     expect(postRes.status).toBe(404);
   });
 });
+
+describe("sharing under collaboration", () => {
+  it("lets a collaborator mint a share link on the owner's playlist", async () => {
+    const res = await app.request(
+      "/shares",
+      {
+        method: "POST",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: ownerPlaylistId, permission: "edit" }),
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { share } = (await res.json()) as { share: { permission: string } };
+    expect(share.permission).toBe("edit");
+  });
+
+  it("shows the locker's share links to a collaborator", async () => {
+    const res = await app.request("/shares", { headers: auth(collabToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shares: { playlistId: string }[] };
+    expect(body.shares.length).toBeGreaterThan(0);
+    expect(body.shares.every((s) => s.playlistId === ownerPlaylistId)).toBe(true);
+  });
+
+  it("still refuses a stranger minting one", async () => {
+    const res = await app.request(
+      "/shares",
+      {
+        method: "POST",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: ownerPlaylistId, permission: "listen" }),
+      },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns no shares to a stranger listing them", async () => {
+    const res = await app.request("/shares", { headers: auth(strangerToken) }, env);
+    const body = (await res.json()) as { shares: unknown[] };
+    expect(body.shares).toHaveLength(0);
+  });
+});

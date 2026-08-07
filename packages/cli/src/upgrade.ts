@@ -141,6 +141,39 @@ function dockerUpgrade(
   }
 
   const envArgs = dk.env.flatMap((e) => ["-e", e]);
+  // MAX_COLLABORATORS changed meaning in this release: it used to cap share
+  // links per playlist, and now caps collaborator seats, with MAX_SHARE_LINKS
+  // taking over the old job. Discovery re-passes the operator's value
+  // verbatim, so this upgrade is the exact moment their setting starts doing
+  // something they did not choose — an unasked-for seat cap, and unlimited
+  // share links. Nothing else would tell them: docs/upgrading.md only reaches
+  // operators who read release notes. A note step rather than a refusal,
+  // because nothing is broken or exposed by carrying on.
+  //
+  // Docker only: a Worker's env vars are not readable by discovery
+  // (CloudflareCandidate carries no env), so there is nothing to test there.
+  const carriesOldLimit = dk.env.some((e) => e.startsWith("MAX_COLLABORATORS="));
+  const notes: Step[] = carriesOldLimit
+    ? [
+        {
+          kind: "note",
+          text: "note: MAX_COLLABORATORS is set on this instance and has changed meaning in this release.",
+        },
+        {
+          kind: "note",
+          text: "  It now caps collaborators — people who sign in and share your library — not share links.",
+        },
+        {
+          kind: "note",
+          text: "  Share links per playlist are capped by MAX_SHARE_LINKS. If you set MAX_COLLABORATORS to",
+        },
+        {
+          kind: "note",
+          text: "  limit share links, copy the value to MAX_SHARE_LINKS. See docs/upgrading.md.",
+        },
+        { kind: "note", text: "" },
+      ]
+    : [];
   // `-p 127.0.0.1:8080:3001` is a deliberate "not on the LAN". Emitting the
   // two-part form instead would republish it on 0.0.0.0.
   const publish = dk.hostIp ? `${dk.hostIp}:${dk.port}:3001` : `${dk.port}:3001`;
@@ -149,6 +182,8 @@ function dockerUpgrade(
   // is still on disk under this name and can be renamed back and started.
   const preupgrade = `${dk.containerName}-preupgrade`;
   const steps: Step[] = [
+    ...notes,
+
     { kind: "run", title: "Pull the new image", cmd: "docker", args: ["pull", image] },
     { kind: "run", title: "Stop the running container", cmd: "docker", args: ["stop", dk.containerId] },
     {

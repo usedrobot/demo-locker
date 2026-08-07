@@ -256,3 +256,36 @@ describe("buildUpgradePlan docker", () => {
     expect(args.some((a) => a.startsWith("run"))).toBe(true);
   });
 });
+
+// MAX_COLLABORATORS used to cap share links per playlist and now caps
+// collaborator seats; MAX_SHARE_LINKS took over the old job. `upgrade`
+// re-passes the operator's value verbatim, so this is the one moment their
+// setting silently starts doing something else — and the only moment we can
+// say so outside release notes.
+describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
+  const notes = (p: DeployPlan) =>
+    p.steps.filter((s): s is Extract<Step, { kind: "note" }> => s.kind === "note").map((s) => s.text);
+
+  it("warns when the instance carries MAX_COLLABORATORS", () => {
+    const withLimit: DockerCandidate = { ...dk, env: ["ALLOW_SIGNUP=true", "MAX_COLLABORATORS=10"] };
+    const text = notes(buildUpgradePlan(withLimit, "/tmp/stage")).join("\n");
+
+    expect(text).toContain("MAX_COLLABORATORS");
+    expect(text).toContain("MAX_SHARE_LINKS");
+    expect(text).toMatch(/changed meaning/i);
+    // The notice has to precede the work, not trail it.
+    const plan = buildUpgradePlan(withLimit, "/tmp/stage");
+    expect(plan.steps.findIndex((s) => s.kind === "note")).toBeLessThan(
+      plan.steps.findIndex((s) => s.kind === "run"),
+    );
+    // Warning about it must not stop it being carried across.
+    expect(runs(plan).find((s) => s.args[0] === "run")!.args).toContain("MAX_COLLABORATORS=10");
+  });
+
+  it("says nothing when the instance does not set it", () => {
+    expect(notes(buildUpgradePlan(dk, "/tmp/stage"))).toEqual([]);
+    // Not fooled by a variable that merely starts with the same characters.
+    const other: DockerCandidate = { ...dk, env: ["MAX_COLLABORATORS_X=1"] };
+    expect(notes(buildUpgradePlan(other, "/tmp/stage"))).toEqual([]);
+  });
+});

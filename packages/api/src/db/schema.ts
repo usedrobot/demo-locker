@@ -13,6 +13,12 @@ export const users = sqliteTable("users", {
   // colour, and it travels with the invite response.
   accent: text("accent"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  // Null = this account owns a locker. Set = this account is a collaborator on
+  // the referenced owner's locker, sharing that library rather than having one
+  // of its own. Self-referential, so it is declared with an explicit callback.
+  lockerOwnerId: text("locker_owner_id").references((): any => users.id, {
+    onDelete: "cascade",
+  }),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -34,6 +40,11 @@ export const playlists = sqliteTable("playlists", {
   isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  // Who created this playlist. Null on rows predating collaboration, and on
+  // rows whose creator has since been removed — both read as the owner.
+  createdBy: text("created_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
 });
 
 export const tracks = sqliteTable("tracks", {
@@ -58,6 +69,12 @@ export const tracks = sqliteTable("tracks", {
   // the accounting treats as 0 rather than guessing.
   sizeBytes: integer("size_bytes"),
   uploadedAt: integer("uploaded_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  // Who uploaded this file. `ownerId` says which locker it belongs to; this
+  // says whose demo it is. SET NULL rather than cascade: removing a person
+  // must never remove their music from the owner's library.
+  uploadedBy: text("uploaded_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
 });
 
 // Fixed-window counters for the auth routes. A table rather than a Workers
@@ -99,4 +116,24 @@ export const shares = sqliteTable("shares", {
   email: text("email"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+});
+
+// A one-shot invitation to join someone's locker as a collaborator. Signup is
+// closed on every instance once an owner exists (lib/signup.ts); a valid,
+// unredeemed invite is the only thing that opens it, and only for one account.
+export const collaboratorInvites = sqliteTable("collaborator_invites", {
+  id: text("id").primaryKey().$defaultFn(generateId),
+  ownerId: text("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  // Shown in the owner's access list so a pending invite is identifiable
+  // before it is redeemed. Not an email — nothing is sent.
+  label: text("label").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+  acceptedBy: text("accepted_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
 });

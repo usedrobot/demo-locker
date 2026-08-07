@@ -10,7 +10,7 @@ import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
-import { users, playlists, sessions, tracks } from "../db/schema.js";
+import { users, playlists, sessions, tracks, shares } from "../db/schema.js";
 
 let db: Database;
 let root: string;
@@ -390,6 +390,120 @@ describe("tracks under collaboration", () => {
       .where(eq(tracks.title, "collab upload"));
     expect(row.ownerId).toBe(ownerId);
     expect(row.uploadedBy).toBe(collabId);
+  });
+
+  it("lets a collaborator stream and download their own library upload", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([9, 9, 9])], "collab-own.wav"), "collab-own.wav");
+    form.append("title", "collab stream own");
+
+    const uploadRes = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(collabToken), body: form },
+      env
+    );
+    expect(uploadRes.status).toBe(201);
+    const { track } = (await uploadRes.json()) as { track: { id: string } };
+
+    const streamRes = await app.request(
+      `/tracks/${track.id}/stream`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(streamRes.status).toBe(200);
+
+    const downloadRes = await app.request(
+      `/tracks/${track.id}/download`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(downloadRes.status).toBe(200);
+  });
+
+  it("lets a collaborator stream and download an owner's library upload", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([4, 4, 4])], "owner-own.wav"), "owner-own.wav");
+    form.append("title", "owner stream target");
+
+    const uploadRes = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(ownerToken), body: form },
+      env
+    );
+    expect(uploadRes.status).toBe(201);
+    const { track } = (await uploadRes.json()) as { track: { id: string } };
+
+    const streamRes = await app.request(
+      `/tracks/${track.id}/stream`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(streamRes.status).toBe(200);
+
+    const downloadRes = await app.request(
+      `/tracks/${track.id}/download`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(downloadRes.status).toBe(200);
+  });
+
+  it("still 404s a stranger streaming or downloading a library track", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([5, 5, 5])], "stranger-blocked.wav"), "stranger-blocked.wav");
+    form.append("title", "stranger blocked target");
+
+    const uploadRes = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(ownerToken), body: form },
+      env
+    );
+    expect(uploadRes.status).toBe(201);
+    const { track } = (await uploadRes.json()) as { track: { id: string } };
+
+    const streamRes = await app.request(
+      `/tracks/${track.id}/stream`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(streamRes.status).toBe(404);
+
+    const downloadRes = await app.request(
+      `/tracks/${track.id}/download`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(downloadRes.status).toBe(404);
+  });
+});
+
+describe("uploadedBy is not exposed to playlist readers", () => {
+  it("is absent from a share-token view of a playlist's tracks", async () => {
+    const shareToken = "member-listen-share-token";
+    await db.insert(shares).values({
+      playlistId: ownerPlaylistId,
+      token: shareToken,
+      permission: "listen",
+    });
+
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([2, 2, 2])], "share-visible.wav"), "share-visible.wav");
+    form.append("title", "share visible track");
+    form.append("playlistId", ownerPlaylistId);
+    const uploadRes = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(ownerToken), body: form },
+      env
+    );
+    expect(uploadRes.status).toBe(201);
+
+    const res = await app.request(`/playlists/${ownerPlaylistId}?token=${shareToken}`, {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tracks: Record<string, unknown>[] };
+    expect(body.tracks.length).toBeGreaterThan(0);
+    for (const t of body.tracks) {
+      expect(t).not.toHaveProperty("uploadedBy");
+    }
   });
 });
 

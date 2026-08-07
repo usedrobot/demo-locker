@@ -175,9 +175,10 @@ tracksRouter.get("/:id/stream", async (c) => {
       return c.json({ error: "not found" }, 404);
     }
   } else {
-    // Library track not in any playlist — owner only.
+    // Library track not in any playlist — locker only (owner or collaborator).
     const userId = await requestSessionUserId(c);
-    if (!userId || userId !== track.ownerId) {
+    const lockerId = userId && (await lockerIdForUserId(db, userId));
+    if (!lockerId || lockerId !== track.ownerId) {
       return c.json({ error: "not found" }, 404);
     }
   }
@@ -232,8 +233,10 @@ tracksRouter.get("/:id/download", async (c) => {
       return c.json({ error: "not found" }, 404);
     }
   } else {
+    // Library track not in any playlist — locker only (owner or collaborator).
     const userId = await requestSessionUserId(c);
-    if (!userId || userId !== track.ownerId) {
+    const lockerId = userId && (await lockerIdForUserId(db, userId));
+    if (!lockerId || lockerId !== track.ownerId) {
       return c.json({ error: "not found" }, 404);
     }
   }

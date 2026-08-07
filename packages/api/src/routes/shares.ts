@@ -88,7 +88,8 @@ sharesRouter.get("/", requireAuth, async (c) => {
   return c.json({ shares: rows });
 });
 
-// Change a share's permission (grant or revoke edit). Owner only.
+// Change a share's permission (grant or revoke edit). Locker-scoped: any
+// collaborator may re-permission a link, including one an owner minted.
 sharesRouter.patch("/:id", requireAuth, async (c) => {
   const shareId = c.req.param("id");
   const lockerId = lockerIdOf(c.get("user"));

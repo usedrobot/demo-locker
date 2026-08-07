@@ -130,7 +130,9 @@ describe("playlists under collaboration", () => {
       },
       env
     );
-    expect(res.status).toBe(404);
+    // 403, not 404: this caller can already read the playlist, so hiding its
+    // existence would only mislead them into thinking it was deleted.
+    expect(res.status).toBe(403);
     const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
     expect(row.isPublic).toBe(false);
   });
@@ -149,9 +151,29 @@ describe("playlists under collaboration", () => {
       },
       env
     );
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
     expect(row.isPublic).toBe(true);
+  });
+
+  it("refuses a collaborator's publish attempt as a whole — a rename in the same body is not partially applied", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab combined attempt" })
+      .returning();
+    const res = await app.request(
+      `/playlists/${pl.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "renamed and published", isPublic: true }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+    const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(row.name).toBe("collab combined attempt");
+    expect(row.isPublic).toBe(false);
   });
 
   it("lets a collaborator rename while echoing the current (private) isPublic value — a no-op is not a change", async () => {

@@ -116,8 +116,22 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   //
   // An echo of the current value is not a change and is ignored, so a client
   // that includes the field it already has does not fail an unrelated rename.
+  //
+  // This is the one deliberate exception to the blanket-404 convention. That
+  // rule hides whether a resource exists; a collaborator reaching this line has
+  // already passed the ownership check above, so they can list, open and rename
+  // this playlist. A 404 would hide nothing and would actively mislead — it is
+  // the same response as a deleted playlist, and a client following the
+  // convention would navigate them out of a playlist they were just using. A
+  // stranger never gets here: they are still 404'd above, because for them
+  // existence genuinely is the secret.
   if (typeof body.isPublic === "boolean" && body.isPublic !== playlist.isPublic) {
-    if (!isLockerOwner(user)) return c.json({ error: "not found" }, 404);
+    if (!isLockerOwner(user)) {
+      return c.json(
+        { error: "only the locker owner can publish a playlist" },
+        403
+      );
+    }
     updates.isPublic = body.isPublic;
   }
   // artworkKey is deliberately NOT patchable. It is a pointer into the shared

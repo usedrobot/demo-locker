@@ -9,7 +9,15 @@ import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
-import { users, sessions, tracks, collaboratorInvites, playlists, shares } from "../db/schema.js";
+import {
+  users,
+  sessions,
+  tracks,
+  collaboratorInvites,
+  playlists,
+  shares,
+  comments,
+} from "../db/schema.js";
 
 let db: Database;
 let root: string;
@@ -190,6 +198,44 @@ describe("DELETE /collab/members/:id", () => {
 
     const [still] = await db.select().from(users).where(eq(users.id, outsider.id));
     expect(still).toBeDefined();
+  });
+
+  // comments.resolved_by is the one FK to users with no ON DELETE action and
+  // cannot be given one without a full table rebuild, so the handler nulls it
+  // by hand or the delete aborts on a foreign-key error. Nothing can write a
+  // collaborator's id there today (resolving is owner-only), so this test
+  // plants the row directly — it guards a landmine, not a live bug.
+  it("survives a comment the departing member had resolved", async () => {
+    const [resolver] = await db
+      .insert(users)
+      .values({ email: "resolver@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
+      .returning();
+    const [tr] = await db
+      .insert(tracks)
+      .values({ ownerId, title: "resolved", position: 0, originalKey: "lib/resolved" })
+      .returning();
+    const [comment] = await db
+      .insert(comments)
+      .values({
+        trackId: tr.id,
+        authorName: "someone",
+        body: "fix the snare",
+        resolvedAt: new Date(),
+        resolvedBy: resolver.id,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/collab/members/${resolver.id}`,
+      { method: "DELETE", headers: auth(ownerToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(row.resolvedBy).toBeNull();
+    // Still resolved — only the attribution goes.
+    expect(row.resolvedAt).not.toBeNull();
   });
 
   it("404s for a collaborator trying to remove a peer", async () => {

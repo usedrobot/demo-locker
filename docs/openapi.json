@@ -2213,7 +2213,7 @@
     "/shares": {
       "post": {
         "summary": "Create a share/invite for a playlist",
-        "description": "Owner session only. Issues a random unguessable token granting `listen` or `edit` access to the playlist, optionally tied to an email for reference.",
+        "description": "Locker-scoped: any session acting in the playlist's locker — its owner or a collaborator — may call this. Issues a random unguessable token granting `listen` or `edit` access to the playlist, optionally tied to an email for reference.",
         "operationId": "createShare",
         "security": [
           {
@@ -2304,7 +2304,7 @@
             }
           },
           "404": {
-            "description": "Playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Playlist not in the caller's locker, or does not exist (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2319,7 +2319,7 @@
     "/shares/playlist/{playlistId}": {
       "get": {
         "summary": "List shares for a playlist",
-        "description": "Owner session only.",
+        "description": "Locker-scoped: any session acting in the playlist's locker — its owner or a collaborator — may call this.",
         "operationId": "listPlaylistShares",
         "security": [
           {
@@ -2370,7 +2370,7 @@
             }
           },
           "404": {
-            "description": "Playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Playlist not in the caller's locker, or does not exist (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2385,7 +2385,7 @@
     "/shares/{id}": {
       "delete": {
         "summary": "Revoke a share",
-        "description": "Owner (of the share's playlist) session only.",
+        "description": "Locker-scoped: any session acting in the share's playlist's locker — its owner or a collaborator — may revoke it, including a link a different collaborator or the owner created.",
         "operationId": "deleteShare",
         "security": [
           {
@@ -2433,7 +2433,7 @@
             }
           },
           "404": {
-            "description": "Share does not exist, or its playlist is not owned by the caller (non-enumerable).",
+            "description": "Share does not exist, or its playlist is not in the caller's locker (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {

@@ -852,11 +852,14 @@ describe("sharing under collaboration", () => {
   });
 
   it("lets a collaborator list a playlist's share links via GET /shares/playlist/:playlistId", async () => {
-    await db.insert(shares).values({
-      playlistId: ownerPlaylistId,
-      token: "member-playlist-list-share-token",
-      permission: "listen",
-    });
+    const [inserted] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-playlist-list-share-token",
+        permission: "listen",
+      })
+      .returning();
 
     const res = await app.request(
       `/shares/playlist/${ownerPlaylistId}`,
@@ -864,9 +867,12 @@ describe("sharing under collaboration", () => {
       env
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { shares: { playlistId: string }[] };
-    expect(body.shares.length).toBeGreaterThan(0);
-    expect(body.shares.every((s) => s.playlistId === ownerPlaylistId)).toBe(true);
+    const body = (await res.json()) as { shares: { id: string; playlistId: string }[] };
+    // Pin the specific row just inserted, not merely "the list is non-empty" —
+    // every returned row trivially satisfies playlistId === ownerPlaylistId
+    // because the route already filters on it, and the list was non-empty
+    // before this insert too (an earlier test in this block minted a share).
+    expect(body.shares.map((s) => s.id)).toContain(inserted.id);
   });
 
   it("404s a stranger listing the same playlist's share links", async () => {
@@ -876,5 +882,57 @@ describe("sharing under collaboration", () => {
       env
     );
     expect(res.status).toBe(404);
+  });
+
+  it("lets a collaborator re-permission a share link the owner created", async () => {
+    const [ownerShare] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-owner-created-repermission-token",
+        permission: "listen",
+      })
+      .returning();
+
+    const res = await app.request(
+      `/shares/${ownerShare.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ permission: "edit" }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    const { share } = (await res.json()) as { share: { permission: string } };
+    expect(share.permission).toBe("edit");
+
+    const [row] = await db.select().from(shares).where(eq(shares.id, ownerShare.id));
+    expect(row.permission).toBe("edit");
+  });
+
+  it("still refuses a stranger re-permissioning a locker's share link, and leaves it unchanged", async () => {
+    const [ownerShare] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-stranger-repermission-attempt-token",
+        permission: "listen",
+      })
+      .returning();
+
+    const res = await app.request(
+      `/shares/${ownerShare.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ permission: "edit" }),
+      },
+      env
+    );
+    expect(res.status).toBe(404);
+
+    const [row] = await db.select().from(shares).where(eq(shares.id, ownerShare.id));
+    expect(row.permission).toBe("listen");
   });
 });

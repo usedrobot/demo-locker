@@ -1133,7 +1133,7 @@
     "/playlists/{id}/reorder": {
       "patch": {
         "summary": "Reorder a playlist's tracks",
-        "description": "Owner session only. Sets each track's position to its index in trackIds.",
+        "description": "Locker-scoped: the playlist's locker owner or a collaborator session, or an `edit` share token for this playlist (Bearer header or `?token=`, no session required). Sets each track's position to its index in trackIds.",
         "operationId": "reorderPlaylistTracks",
         "security": [
           {
@@ -1431,7 +1431,7 @@
     "/tracks/upload": {
       "post": {
         "summary": "Upload a track",
-        "description": "Multipart upload. With `playlistId` the caller must be able to edit that playlist (owner session or an \"edit\" share token); without it the track lands in the caller's library and a session is required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes.",
+        "description": "Multipart upload. With `playlistId` the caller must be able to edit that playlist: the locker owner or a collaborator session, or an \"edit\" share token (Bearer header or `?token=`, no session required); without it the track lands in the caller's library and a session is required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes.",
         "operationId": "uploadTrack",
         "security": [
           {

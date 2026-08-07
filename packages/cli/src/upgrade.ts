@@ -14,6 +14,102 @@ export interface UpgradeOptions {
   image?: string;
 }
 
+// ---------------------------------------------------------------------------
+// The MAX_COLLABORATORS meaning change (0.2.13)
+//
+// It used to cap share links per playlist; it now caps collaborator seats, and
+// MAX_SHARE_LINKS took over the old job. Upgrade re-passes the operator's env
+// verbatim, so an upgrade across that boundary is the moment their setting
+// silently starts doing something else — and the only moment we can say so
+// outside release notes.
+//
+// The notice is narrowly targeted, because a misfire is worse than silence:
+// telling someone already on the new meaning to "copy the value to
+// MAX_SHARE_LINKS" would install a per-playlist cap they never wanted and
+// start 403ing share creation. Hence the three gates below.
+// ---------------------------------------------------------------------------
+
+/** The release in which MAX_COLLABORATORS stopped meaning "share links". */
+export const RENAME_VERSION: readonly number[] = [0, 2, 13];
+
+/**
+ * The semantic version in a docker image reference, or null when it cannot be
+ * read — `:latest`, a digest pin, or no tag at all.
+ *
+ * Splits on the last path segment first so a registry host with a port
+ * (`localhost:5000/demo-locker:0.2.10`) does not read as a tag.
+ */
+export function imageVersion(image: string): number[] | null {
+  const ref = image.split("/").pop() ?? "";
+  const tag = ref.includes(":") ? ref.slice(ref.indexOf(":") + 1) : "";
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(tag);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * Is this instance old enough to be affected?
+ *
+ * **Unknown counts as yes.** An unparseable or `:latest` tag is exactly where
+ * the operator most needs the pointer, and the cost of the two errors is not
+ * symmetric: a spurious notice is four lines of text, while a missed one lets
+ * a cap change meaning with nothing said.
+ */
+export function predatesRename(image: string): boolean {
+  const v = imageVersion(image);
+  if (!v) return true;
+  for (let i = 0; i < RENAME_VERSION.length; i++) {
+    if (v[i]! !== RENAME_VERSION[i]!) return v[i]! < RENAME_VERSION[i]!;
+  }
+  return false;
+}
+
+/** The value of `NAME=value` in a docker-style env list, or null if absent. */
+function envValue(env: readonly string[], name: string): string | null {
+  const hit = env.find((e) => e.startsWith(`${name}=`));
+  return hit === undefined ? null : hit.slice(name.length + 1);
+}
+
+export function renameNotes(env: readonly string[], image: string): Step[] {
+  // Gate 1 — was a cap actually in force? getLimits treats unset, empty and
+  // "0" identically (isLimited is `limit > 0`), so an empty or zero value
+  // never capped anything and there is nothing to tell the operator about.
+  const configured = Number.parseInt(envValue(env, "MAX_COLLABORATORS") ?? "", 10);
+  if (!(configured > 0)) return [];
+
+  // Gate 2 — have they already migrated? MAX_SHARE_LINKS is preserved across
+  // upgrades like any other app var, so its presence is the clearest signal
+  // available that this operator has seen the new variable and chosen values
+  // for both deliberately. Repeating the advice would talk them into
+  // overwriting a deliberate choice. Presence, not `> 0`, on purpose: the
+  // question here is "have they encountered this variable", not "is a cap in
+  // force" — someone who set it to 0 to mean unlimited has still migrated.
+  if (envValue(env, "MAX_SHARE_LINKS") !== null) return [];
+
+  // Gate 3 — are they crossing the boundary? An operator already on 0.2.13+
+  // who set MAX_COLLABORATORS deliberately, as a seat cap, must not be told it
+  // has "changed meaning in this release" and advised to move the value.
+  if (!predatesRename(image)) return [];
+
+  return [
+    {
+      kind: "note",
+      text: "note: MAX_COLLABORATORS is set on this instance and changed meaning in 0.2.13.",
+    },
+    {
+      kind: "note",
+      text: "  It now caps collaborators — people who sign in and share your library — not share links.",
+    },
+    {
+      kind: "note",
+      text: "  Share links per playlist are capped by MAX_SHARE_LINKS. If you set MAX_COLLABORATORS to",
+    },
+    {
+      kind: "note",
+      text: "  limit share links, copy the value to MAX_SHARE_LINKS. See docs/upgrading.md.",
+    },
+  ];
+}
+
 export function buildUpgradePlan(
   instance: DiscoveredInstance,
   stagingDir: string,
@@ -70,6 +166,23 @@ function cloudflareUpgrade(
 
   const configPath = join(stagingDir, "wrangler.jsonc");
   const steps: Step[] = [
+    // Cloudflare operators are hit by the identical MAX_COLLABORATORS meaning
+    // change, but here it cannot be *detected*: a Worker's vars live in the
+    // dashboard, no read-only wrangler command reports them, and so
+    // CloudflareCandidate carries no env — the same blind spot as the custom
+    // domain above. Neither can it be version-gated: nothing on the candidate
+    // records which version is deployed.
+    //
+    // Unconditional, therefore, and worded conditionally ("if this instance
+    // sets ...") so that printing it to someone unaffected costs one line and
+    // tells them nothing false. It deliberately does not repeat the
+    // copy-the-value advice, which is only safe once you know the from-version.
+    {
+      kind: "note",
+      text:
+        "note: if this instance sets MAX_COLLABORATORS, its meaning changed in 0.2.13 — " +
+        "it now caps collaborators, and MAX_SHARE_LINKS caps share links. See docs/upgrading.md.",
+    },
     { kind: "copy", title: "Stage the new build", from: PACKAGED_ASSETS_FOR_UPGRADE, to: stagingDir },
     { kind: "write", title: "Write wrangler config for this instance", path: configPath, contents: config },
     // MUST precede deploy: the ORM selects every column explicitly, so a Worker
@@ -141,39 +254,7 @@ function dockerUpgrade(
   }
 
   const envArgs = dk.env.flatMap((e) => ["-e", e]);
-  // MAX_COLLABORATORS changed meaning in this release: it used to cap share
-  // links per playlist, and now caps collaborator seats, with MAX_SHARE_LINKS
-  // taking over the old job. Discovery re-passes the operator's value
-  // verbatim, so this upgrade is the exact moment their setting starts doing
-  // something they did not choose — an unasked-for seat cap, and unlimited
-  // share links. Nothing else would tell them: docs/upgrading.md only reaches
-  // operators who read release notes. A note step rather than a refusal,
-  // because nothing is broken or exposed by carrying on.
-  //
-  // Docker only: a Worker's env vars are not readable by discovery
-  // (CloudflareCandidate carries no env), so there is nothing to test there.
-  const carriesOldLimit = dk.env.some((e) => e.startsWith("MAX_COLLABORATORS="));
-  const notes: Step[] = carriesOldLimit
-    ? [
-        {
-          kind: "note",
-          text: "note: MAX_COLLABORATORS is set on this instance and has changed meaning in this release.",
-        },
-        {
-          kind: "note",
-          text: "  It now caps collaborators — people who sign in and share your library — not share links.",
-        },
-        {
-          kind: "note",
-          text: "  Share links per playlist are capped by MAX_SHARE_LINKS. If you set MAX_COLLABORATORS to",
-        },
-        {
-          kind: "note",
-          text: "  limit share links, copy the value to MAX_SHARE_LINKS. See docs/upgrading.md.",
-        },
-        { kind: "note", text: "" },
-      ]
-    : [];
+  const notes: Step[] = renameNotes(dk.env, dk.image);
   // `-p 127.0.0.1:8080:3001` is a deliberate "not on the LAN". Emitting the
   // two-part form instead would republish it on 0.0.0.0.
   const publish = dk.hostIp ? `${dk.hostIp}:${dk.port}:3001` : `${dk.port}:3001`;

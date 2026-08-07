@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildUpgradePlan } from "../src/upgrade.js";
+import { buildUpgradePlan, imageVersion, predatesRename } from "../src/upgrade.js";
 import type { DiscoveredInstance, DockerCandidate } from "../src/discover.js";
 import { cliVersion, versionedImage } from "../src/plan.js";
 import type { DeployPlan, Step } from "../src/plan.js";
@@ -287,5 +287,111 @@ describe("buildUpgradePlan docker — MAX_COLLABORATORS meaning change", () => {
     // Not fooled by a variable that merely starts with the same characters.
     const other: DockerCandidate = { ...dk, env: ["MAX_COLLABORATORS_X=1"] };
     expect(notes(buildUpgradePlan(other, "/tmp/stage"))).toEqual([]);
+  });
+
+  // A notice that fires forever eventually lies. An operator already on the
+  // new meaning who is told to "copy the value to MAX_SHARE_LINKS" installs a
+  // per-playlist cap they never wanted, and share creation starts 403ing —
+  // strictly worse than saying nothing.
+  it("does not warn an instance already on or past the rename", () => {
+    for (const tag of ["0.2.13", "0.2.14", "0.3.0", "1.0.0"]) {
+      const after: DockerCandidate = {
+        ...dk,
+        image: `ghcr.io/usedrobot/demo-locker:${tag}`,
+        env: ["MAX_COLLABORATORS=4"],
+      };
+      expect(notes(buildUpgradePlan(after, "/tmp/stage")), tag).toEqual([]);
+    }
+  });
+
+  it("warns every version below the rename", () => {
+    for (const tag of ["0.2.12", "0.2.9", "0.1.99", "0.0.1"]) {
+      const before: DockerCandidate = {
+        ...dk,
+        image: `ghcr.io/usedrobot/demo-locker:${tag}`,
+        env: ["MAX_COLLABORATORS=4"],
+      };
+      expect(notes(buildUpgradePlan(before, "/tmp/stage")).length, tag).toBeGreaterThan(0);
+    }
+  });
+
+  // Unknown is the case where the pointer is most needed, and the two errors
+  // cost very different amounts: a spurious notice is four lines, a missed one
+  // lets a cap change meaning silently.
+  it("warns when the from-version cannot be read", () => {
+    for (const image of [
+      "ghcr.io/usedrobot/demo-locker:latest",
+      "ghcr.io/usedrobot/demo-locker",
+      "ghcr.io/usedrobot/demo-locker@sha256:abc123",
+      "demo-locker:dev",
+    ]) {
+      const unknown: DockerCandidate = { ...dk, image, env: ["MAX_COLLABORATORS=4"] };
+      expect(notes(buildUpgradePlan(unknown, "/tmp/stage")).length, image).toBeGreaterThan(0);
+    }
+  });
+
+  // Presence of the new variable is the clearest signal the operator has
+  // already migrated and picked both values on purpose. Repeating the advice
+  // would talk them into overwriting a deliberate choice.
+  it("says nothing once MAX_SHARE_LINKS is set", () => {
+    const migrated: DockerCandidate = {
+      ...dk,
+      env: ["MAX_COLLABORATORS=4", "MAX_SHARE_LINKS=20"],
+    };
+    expect(notes(buildUpgradePlan(migrated, "/tmp/stage"))).toEqual([]);
+    // Even at 0, which means "unlimited" — they have still seen the variable.
+    const zeroed: DockerCandidate = { ...dk, env: ["MAX_COLLABORATORS=4", "MAX_SHARE_LINKS=0"] };
+    expect(notes(buildUpgradePlan(zeroed, "/tmp/stage"))).toEqual([]);
+  });
+
+  // getLimits treats unset, empty and "0" identically (isLimited is limit > 0),
+  // so none of these ever capped anything.
+  it("says nothing for values that never imposed a cap", () => {
+    for (const value of ["", "0", "  ", "nonsense"]) {
+      const noCap: DockerCandidate = { ...dk, env: [`MAX_COLLABORATORS=${value}`] };
+      expect(notes(buildUpgradePlan(noCap, "/tmp/stage")), JSON.stringify(value)).toEqual([]);
+    }
+  });
+
+  it("renders no blank note lines", () => {
+    const withLimit: DockerCandidate = { ...dk, env: ["MAX_COLLABORATORS=10"] };
+    for (const text of notes(buildUpgradePlan(withLimit, "/tmp/stage"))) {
+      expect(text.trim()).not.toBe("");
+    }
+  });
+});
+
+describe("imageVersion / predatesRename", () => {
+  it("reads the tag, not a registry host's port", () => {
+    expect(imageVersion("ghcr.io/usedrobot/demo-locker:0.2.10")).toEqual([0, 2, 10]);
+    expect(imageVersion("localhost:5000/demo-locker:0.2.10")).toEqual([0, 2, 10]);
+    expect(imageVersion("demo-locker:1.10.2")).toEqual([1, 10, 2]);
+    // Numeric, not lexical: 10 > 9.
+    expect(predatesRename("ghcr.io/usedrobot/demo-locker:0.10.0")).toBe(false);
+    expect(predatesRename("ghcr.io/usedrobot/demo-locker:0.2.9")).toBe(true);
+  });
+
+  it("returns null for anything that is not a version tag", () => {
+    expect(imageVersion("ghcr.io/usedrobot/demo-locker:latest")).toBeNull();
+    expect(imageVersion("ghcr.io/usedrobot/demo-locker")).toBeNull();
+    expect(imageVersion("ghcr.io/usedrobot/demo-locker@sha256:abc")).toBeNull();
+  });
+});
+
+// Cloudflare operators hit the identical semantics change, but a Worker's vars
+// are not readable by discovery, so there is nothing to condition on. An
+// unconditional, conditionally-worded pointer is the most that can be said.
+describe("buildUpgradePlan cloudflare — MAX_COLLABORATORS pointer", () => {
+  it("always points at the upgrade notes", () => {
+    const text = buildUpgradePlan(cf, "/tmp/stage")
+      .steps.filter((s): s is Extract<Step, { kind: "note" }> => s.kind === "note")
+      .map((s) => s.text)
+      .join("\n");
+    expect(text).toContain("MAX_COLLABORATORS");
+    expect(text).toContain("MAX_SHARE_LINKS");
+    expect(text).toContain("docs/upgrading.md");
+    // Worded so it is harmless to an unaffected reader: no bare instruction to
+    // copy a value they may not have set.
+    expect(text).toMatch(/if this instance sets/i);
   });
 });

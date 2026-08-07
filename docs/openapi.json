@@ -919,7 +919,7 @@
       },
       "patch": {
         "summary": "Update a playlist",
-        "description": "Owner session only. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1).",
+        "description": "Requires a session in the playlist's locker: the owner or one of their collaborators may rename it. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1). isPublic is the locker owner's to change — a collaborator changing it in either direction is refused with 403.",
         "operationId": "updatePlaylist",
         "security": [
           {
@@ -991,8 +991,18 @@
               }
             }
           },
+          "403": {
+            "description": "isPublic is the locker owner's field to change — a collaborator attempting to publish or un-publish is refused. Unlike the 404 below, this is deliberately not non-enumerable: the caller can already read this playlist, so hiding its existence would only mislead them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
-            "description": "Not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Outside the caller's locker, or does not exist (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {

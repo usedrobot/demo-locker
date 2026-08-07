@@ -11,7 +11,7 @@ import {
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
-import { publicPlaylist } from "../lib/public-playlist.js";
+import { publicPlaylist, type PlaylistRow } from "../lib/public-playlist.js";
 import {
   INERT_CONTENT_HEADERS,
   isAllowedImageType,
@@ -23,14 +23,19 @@ const playlistsRouter = new Hono<Env>();
 
 playlistsRouter.get("/", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
-  const lockerId = lockerIdOf(c.get("user"));
+  const user = c.get("user");
   const result = await db
     .select()
     .from(playlists)
-    .where(eq(playlists.ownerId, lockerId))
+    .where(eq(playlists.ownerId, lockerIdOf(user)))
     .orderBy(playlists.createdAt);
 
-  return c.json({ playlists: result });
+  // Every reader here is a locker member, but not necessarily the creator of
+  // every row — a locker can hold several collaborators, and none of them may
+  // learn each other's user id. publicPlaylist answers "is this mine" instead.
+  return c.json({
+    playlists: result.map((p: PlaylistRow) => publicPlaylist(p, user.id)),
+  });
 });
 
 playlistsRouter.post("/", requireAuth, async (c) => {
@@ -60,7 +65,7 @@ playlistsRouter.post("/", requireAuth, async (c) => {
     .values({ name, ownerId: lockerId, createdBy: user.id })
     .returning();
 
-  return c.json({ playlist }, 201);
+  return c.json({ playlist: publicPlaylist(playlist, user.id) }, 201);
 });
 
 playlistsRouter.get("/:id", async (c) => {
@@ -89,13 +94,15 @@ playlistsRouter.get("/:id", async (c) => {
     .orderBy(asc(tracks.position));
 
   // This route is reachable by an anonymous share-token holder, not just a
-  // locker session — publicPlaylist() keeps createdBy (a collaborator's
-  // user id) from leaking to them. Same for the tracks: nobody gets a raw
-  // uploadedBy, but a session reader still learns which rows are their own
-  // (null here for a share holder, who has no id and therefore owns nothing).
+  // locker session — publicPlaylist() keeps createdBy (a collaborator's user
+  // id) from leaking to them, and to the other collaborators in the locker,
+  // replacing it with the createdByMe bit. Same for the tracks: nobody gets a
+  // raw uploadedBy, but a session reader still learns which rows are their own
+  // (both false here for a share holder, who has no id and therefore owns
+  // nothing).
   const actingUserId = await requestSessionUserId(c);
   return c.json({
-    playlist: publicPlaylist(playlist),
+    playlist: publicPlaylist(playlist, actingUserId),
     tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId)),
   });
 });
@@ -159,14 +166,15 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .returning();
 
-  return c.json({ playlist: updated });
+  return c.json({ playlist: publicPlaylist(updated, user.id) });
 });
 
 // Upload playlist artwork — multipart, stored in R2 under playlist-art/<id>
 playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
-  const lockerId = lockerIdOf(c.get("user"));
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
 
   const [playlist] = await db
     .select()
@@ -205,7 +213,7 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .returning();
 
-  return c.json({ playlist: updated });
+  return c.json({ playlist: publicPlaylist(updated, user.id) });
 });
 
 // Stream playlist artwork — gated to a session acting in the locker (owner
@@ -244,10 +252,20 @@ playlistsRouter.get("/:id/artwork", async (c) => {
 });
 
 // Delete a playlist. The locker owner may delete any playlist in their locker;
-// a collaborator may only delete one they created. This guard is consistency
-// with DELETE /tracks/:id rather than data safety — migration 0003's
-// ON DELETE SET NULL detaches this playlist's tracks instead of deleting them,
-// so no audio is destroyed here.
+// a collaborator may only delete one they created.
+//
+// This is not as destructive as DELETE /tracks/:id, but it is not free either.
+// The tracks survive: `tracks.playlist_id` is ON DELETE set null
+// (0000_init.sql:61 — not 0003, which only added created_by/uploaded_by), so
+// they detach back into the locker's library rather than being deleted, and no
+// audio is destroyed here.
+//
+// The playlist-level COMMENTS do not survive: `comments.playlist_id` is
+// ON DELETE cascade (0000_init.sql:14). So a collaborator who is refused
+// directly by DELETE /comments/:id — which is still owner-only — can destroy
+// the same comments by deleting a playlist they created. That asymmetry is
+// known, is not a licence to widen either route, and is carried as a product
+// question rather than settled here.
 playlistsRouter.delete("/:id", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");

@@ -1,13 +1,36 @@
-// Strip server-only fields from a playlist row before it goes to a client
-// that may not be a locker member — the same pattern as publicTrack().
+// Strip server-only fields from a playlist row before it goes to a client —
+// the same pattern, and the same reasoning, as publicTrack().
 //
-// createdBy is an internal user UUID (the collaborator who created the
-// playlist, per Task 3). Handing it to every reader — including an
-// anonymous listen/edit-share holder on `GET /playlists/:id` or the invite
-// view — leaks a collaborator's identity to someone who otherwise never
-// learns it exists. Use this on share-facing responses only; locker-scoped
-// authenticated responses (list, create, patch, artwork upload) may return
-// the raw row.
+// `createdBy` is stripped for EVERY reader and replaced by the computed
+// per-request boolean `createdByMe`. It is an internal user UUID (the locker
+// member who created the playlist, per Task 3), and a locker may hold several
+// collaborators, none of whom may learn another's user id — the invariant
+// spelled out in lib/public-track.ts. Serializing the raw column let
+// collaborator A harvest collaborator B's id off a playlist B created, and
+// handed the same id to anonymous listen/edit-share holders and the invite
+// view, who otherwise never learn a collaborator exists. The id was useless to
+// every one of them: no consumer can turn a UUID into a name. The one bit it
+// was being reduced to — is this row mine? — is what `createdByMe` answers,
+// and it discloses nothing about anyone else.
+//
+// One serializer, not two. Locker-scoped reads (list, create, patch, artwork
+// upload) and share-facing reads (GET /playlists/:id, the invite view) all go
+// through here. `actingUserId` is data, not a mode switch: it does not select
+// WHICH fields are stripped — the strip list is unconditional — it supplies
+// the value the comparison needs. Pass null for a reader with no session;
+// they get false.
+//
+// `createdByMe` is ATTRIBUTION, not permission, exactly as `uploadedByMe` is.
+// DELETE /playlists/:id authorises on locker ownership OR own-creation, so the
+// locker owner sees `false` on every playlist a collaborator created and may
+// delete all of them anyway. The client rule is `createdByMe || isOwner`.
+// Nothing server-side reads the field back: authorisation is decided from
+// stored columns on every request.
+//
+// False is ambiguous by construction and must not be rendered as "someone else
+// created this". It is also false when no creator is recorded at all — rows
+// predating the column — and when the requester has no identity to compare,
+// which includes every anonymous share holder.
 //
 // ownerId and artworkKey also leak on these same responses (a raw user id,
 // a bucket pointer) but predate this branch — deliberately left alone here
@@ -19,11 +42,21 @@
 
 import type { playlists } from "../db/schema.js";
 
-type PlaylistRow = typeof playlists.$inferSelect;
+export type PlaylistRow = typeof playlists.$inferSelect;
 
-export type PublicPlaylist = Omit<PlaylistRow, "createdBy">;
+export type PublicPlaylist = Omit<PlaylistRow, "createdBy"> & {
+  createdByMe: boolean;
+};
 
-export function publicPlaylist(row: PlaylistRow): PublicPlaylist {
-  const { createdBy: _createdBy, ...rest } = row;
-  return rest;
+export function publicPlaylist(
+  row: PlaylistRow,
+  actingUserId: string | null
+): PublicPlaylist {
+  const { createdBy, ...rest } = row;
+  return {
+    ...rest,
+    // An anonymous share holder has no id, so nothing can be theirs. Never
+    // let a null actingUserId match a null createdBy.
+    createdByMe: actingUserId != null && createdBy === actingUserId,
+  };
 }

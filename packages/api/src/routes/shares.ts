@@ -224,7 +224,7 @@ sharesRouter.get("/invite/:token", async (c) => {
     permission: share.permission,
     // publicPlaylist here: an anonymous invite holder must not learn the id
     // of the collaborator who created the playlist.
-    playlist: publicPlaylist(playlist),
+    playlist: publicPlaylist(playlist, actingUserId),
     // publicTrack here too. Missing it broke this route twice over: listeners
     // got no `hasStream`, so the player refused to start any track on a share
     // link, and the raw rows still carried originalKey/streamKey — the exact

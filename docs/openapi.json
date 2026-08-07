@@ -96,12 +96,9 @@
             "type": "string",
             "format": "uuid"
           },
-          "createdBy": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The user who created the playlist — the locker owner, or a collaborator acting in their locker. Null for playlists created before collaborators existed. Returned by GET /playlists, POST /playlists and PATCH /playlists/{id} (all locker-session-only). NOT returned by GET /playlists/{id} or GET /shares/invite/{token}, which also admit anonymous share/invite holders — see SharedPlaylist."
+          "createdByMe": {
+            "type": "boolean",
+            "description": "Attribution, NOT permission: whether the requesting session created this playlist. Computed per request. The raw creator id (playlists.created_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id; the same rule as tracks.uploaded_by. Do not build a delete control from this field alone: DELETE /playlists/{id} lets the locker owner delete any playlist, so the owner gets false on every collaborator-created playlist they are nonetheless allowed to delete. The client-side rule is createdByMe OR locker ownership. The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else created this\": it also means no creator is recorded (rows predating the column), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
           },
           "name": {
             "type": "string"
@@ -127,54 +124,13 @@
         "required": [
           "id",
           "ownerId",
-          "createdBy",
+          "createdByMe",
           "name",
           "isPublic",
           "createdAt",
           "updatedAt"
-        ]
-      },
-      "SharedPlaylist": {
-        "type": "object",
-        "description": "A playlist as returned by the two routes reachable by an anonymous share/invite holder. Identical to Playlist except that createdBy is stripped: an anonymous holder must not learn the user id of the collaborator who created the playlist.",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "ownerId": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "name": {
-            "type": "string"
-          },
-          "artworkKey": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "isPublic": {
-            "type": "boolean"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "id",
-          "ownerId",
-          "name",
-          "isPublic",
-          "createdAt",
-          "updatedAt"
-        ]
+        ],
+        "description": "A playlist as returned by every route that serves one. created_by is never serialized: it is replaced by the per-request createdByMe boolean, so the shape is identical for a locker session and for an anonymous share/invite holder (who simply always gets false). One serializer, not two — see lib/public-playlist.ts."
       },
       "Track": {
         "type": "object",
@@ -904,7 +860,7 @@
     "/playlists/{id}": {
       "get": {
         "summary": "Get a playlist and its tracks",
-        "description": "Gated: requires a session acting in the playlist's locker (owner or collaborator) OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404. Because this route admits anonymous share holders as well as locker sessions, the playlist is returned as SharedPlaylist (no createdBy) and each track's uploadedByMe is computed from the caller's session — false when there is none.",
+        "description": "Gated: requires a session acting in the playlist's locker (owner or collaborator) OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404. Because this route admits anonymous share holders as well as locker sessions, neither the playlist's created_by nor any track's uploaded_by is serialized; createdByMe and uploadedByMe are computed from the caller's session instead — both false when there is none.",
         "operationId": "getPlaylist",
         "security": [
           {
@@ -943,7 +899,7 @@
                   "type": "object",
                   "properties": {
                     "playlist": {
-                      "$ref": "#/components/schemas/SharedPlaylist"
+                      "$ref": "#/components/schemas/Playlist"
                     },
                     "tracks": {
                       "type": "array",
@@ -1118,7 +1074,7 @@
             }
           },
           "404": {
-            "description": "Not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Non-enumerable. Three causes, indistinguishable to the caller: the playlist does not exist; it belongs to another locker; or it is in the caller's locker but the caller is a collaborator who did not create it (including any playlist with a null created_by).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1764,7 +1720,7 @@
       },
       "delete": {
         "summary": "Delete a track",
-        "description": "Locker-scoped, then narrowed by who uploaded the track. The caller's session must act in the track's locker (its ownerId), otherwise 404 — unchanged, and library tracks with no parent playlist are covered by the same check. Within the locker: the owner may delete any track; a collaborator may delete only a track whose uploaded_by is their own user id, and is 404'd otherwise. A null uploaded_by (rows predating the column, an uploader since removed — the column is ON DELETE SET NULL — or an upload by an anonymous edit-share holder) reads as the owner's, so a collaborator may not delete it. The guard runs before any storage call: a refused delete leaves both the row and the stored objects intact. On success this deletes the original (and stream, if distinct) object from storage, then the row — the original is the lossless master, and there is no soft delete or undo.",
+        "description": "Locker-scoped, then narrowed by who uploaded the track. The caller's session must act in the track's locker (its ownerId), otherwise 404; library tracks with no parent playlist are covered by the same check. This locker check is what changed for collaborators: it previously compared the track's ownerId against the raw session user id, which no collaborator ever matched, so a collaborator was refused on every track in the locker. For an owner it is unchanged. Within the locker: the owner may delete any track; a collaborator may delete only a track whose uploaded_by is their own user id, and is 404'd otherwise. A null uploaded_by (rows predating the column, an uploader since removed — the column is ON DELETE SET NULL — or an upload by an anonymous edit-share holder) reads as the owner's, so a collaborator may not delete it. The guard runs before any storage call: a refused delete leaves both the row and the stored objects intact. On success this deletes the original (and stream, if distinct) object from storage, then the row — the original is the lossless master, and there is no soft delete or undo.",
         "operationId": "deleteTrack",
         "security": [
           {
@@ -1812,7 +1768,7 @@
             }
           },
           "404": {
-            "description": "Track or its parent playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Non-enumerable. Three causes, indistinguishable to the caller: the track does not exist; it belongs to another locker; or it is in the caller's locker but the caller is a collaborator who did not upload it (including any track with a null uploaded_by). No parent-playlist check is performed — this route reads tracks.owner_id and tracks.uploaded_by only, so library tracks with no playlist are covered by the same rule.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2476,7 +2432,7 @@
                       ]
                     },
                     "playlist": {
-                      "$ref": "#/components/schemas/SharedPlaylist"
+                      "$ref": "#/components/schemas/Playlist"
                     },
                     "tracks": {
                       "type": "array",

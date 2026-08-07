@@ -96,10 +96,18 @@ describe("playlists under collaboration", () => {
     );
     expect(res.status).toBe(201);
     const { playlist } = (await res.json()) as {
-      playlist: { id: string; ownerId: string; createdBy: string };
+      playlist: Record<string, unknown> & { ownerId: string; createdByMe: boolean };
     };
     expect(playlist.ownerId).toBe(ownerId);
-    expect(playlist.createdBy).toBe(collabId);
+    // Attribution reaches the creator as a bit, never as their raw id.
+    expect(playlist.createdByMe).toBe(true);
+    expect(playlist).not.toHaveProperty("createdBy");
+    // The row really did record them, even though the response does not say so.
+    const [row] = await db
+      .select()
+      .from(playlists)
+      .where(eq(playlists.id, playlist.id as string));
+    expect(row.createdBy).toBe(collabId);
   });
 
   it("lets a collaborator rename the owner's playlist", async () => {
@@ -642,9 +650,35 @@ describe("uploadedByMe replaces the raw uploadedBy id", () => {
   });
 });
 
-describe("createdBy is not exposed to anonymous playlist readers", () => {
+describe("createdBy is not exposed to any reader", () => {
+  // A second collaborator on the same locker, created here rather than in the
+  // shared fixture (the same pattern the uploadedByMe block uses): only the
+  // GET /playlists test needs two distinct creators, and their id is the thing
+  // the strip is protecting.
+  let otherCollabId: string;
+
+  beforeAll(async () => {
+    const [otherCollab] = await db
+      .insert(users)
+      .values({
+        email: "member-createdby-collab2@test.dev",
+        passwordHash: "x",
+        lockerOwnerId: ownerId,
+      })
+      .returning();
+    otherCollabId = otherCollab.id;
+  });
+
   it("is absent from a share-token view of the playlist", async () => {
     const shareToken = "member-createdby-share-token";
+    // This fixture predates the column, so its createdBy is null — which makes
+    // this also the null-vs-null case: an anonymous reader has no id, and must
+    // still get false rather than matching a null creator.
+    const [fixture] = await db
+      .select()
+      .from(playlists)
+      .where(eq(playlists.id, ownerPlaylistId));
+    expect(fixture.createdBy).toBeNull();
     await db.insert(shares).values({
       playlistId: ownerPlaylistId,
       token: shareToken,
@@ -653,8 +687,11 @@ describe("createdBy is not exposed to anonymous playlist readers", () => {
 
     const res = await app.request(`/playlists/${ownerPlaylistId}?token=${shareToken}`, {}, env);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { playlist: Record<string, unknown> };
+    const body = (await res.json()) as {
+      playlist: Record<string, unknown> & { createdByMe: boolean };
+    };
     expect(body.playlist).not.toHaveProperty("createdBy");
+    expect(body.playlist.createdByMe).toBe(false);
   });
 
   it("is absent from the invite view of the playlist", async () => {
@@ -667,15 +704,19 @@ describe("createdBy is not exposed to anonymous playlist readers", () => {
 
     const res = await app.request(`/shares/invite/${inviteToken}`, {}, env);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { playlist: Record<string, unknown> };
+    const body = (await res.json()) as {
+      playlist: Record<string, unknown> & { createdByMe: boolean };
+    };
     expect(body.playlist).not.toHaveProperty("createdBy");
+    expect(body.playlist.createdByMe).toBe(false);
   });
 
-  // Named for the path it actually exercises. `GET /playlists/:id` strips
-  // createdBy for everyone (it admits anonymous share tokens), so this cannot
-  // claim to cover "the owner's authenticated read" — POST /playlists is the
-  // route that returns it, and this is the guard against over-stripping there.
-  it("is still present on the creator's own POST /playlists response", async () => {
+  // Every route now strips it, including the creator's own POST response: the
+  // raw id was useless to the client that received it, and serializing it on
+  // the locker-scoped reads let one collaborator harvest another's user id off
+  // GET /playlists. createdByMe carries the only bit anyone needed. This test
+  // is the guard against under-stripping on the route that used to return it.
+  it("is absent from the creator's own POST /playlists response, replaced by createdByMe", async () => {
     const res = await app.request(
       "/playlists",
       {
@@ -686,9 +727,44 @@ describe("createdBy is not exposed to anonymous playlist readers", () => {
       env
     );
     expect(res.status).toBe(201);
-    const { playlist } = (await res.json()) as { playlist: { createdBy: string | null } };
-    expect(playlist.createdBy).toBe(ownerId);
+    const { playlist } = (await res.json()) as {
+      playlist: Record<string, unknown> & { createdByMe: boolean };
+    };
+    expect(playlist).not.toHaveProperty("createdBy");
+    expect(playlist.createdByMe).toBe(true);
   });
+
+  // The leak this closes: GET /playlists is a locker-scoped read, so it is the
+  // one route where collaborator A is guaranteed to see rows collaborator B
+  // created. It returned raw rows, which shipped B's internal user UUID to A —
+  // the exact disclosure uploadedBy is stripped everywhere to prevent.
+  it("is absent from GET /playlists, which answers createdByMe per row instead", async () => {
+    const [mine] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab's list row", createdBy: collabId })
+      .returning();
+    const [theirs] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "other collab's list row", createdBy: otherCollabId })
+      .returning();
+
+    const res = await app.request("/playlists", { headers: auth(collabToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      playlists: (Record<string, unknown> & { id: string; createdByMe: boolean })[];
+    };
+
+    expect(body.playlists.find((p) => p.id === mine.id)?.createdByMe).toBe(true);
+    expect(body.playlists.find((p) => p.id === theirs.id)?.createdByMe).toBe(false);
+
+    // Not one row, and not one field: no raw creator id anywhere in the
+    // response, including the other collaborator's, whose id is the thing
+    // being protected.
+    for (const p of body.playlists) expect(p).not.toHaveProperty("createdBy");
+    expect(JSON.stringify(body)).not.toContain(otherCollabId);
+    expect(JSON.stringify(body)).not.toContain(collabId);
+  });
+
 });
 
 describe("comments on a library track under collaboration", () => {

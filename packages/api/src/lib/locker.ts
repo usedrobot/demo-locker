@@ -34,8 +34,8 @@ export async function lockerIdForUserId(db: Database, userId: string): Promise<s
 }
 
 // True only for the account that owns the locker. Gates the things that are
-// locker-level rather than library-level: inviting collaborators, publishing a
-// playlist, and minting share links.
+// locker-level rather than library-level: inviting collaborators and
+// publishing a playlist.
 export function isLockerOwner(user: User): boolean {
   return user.lockerOwnerId === null;
 }

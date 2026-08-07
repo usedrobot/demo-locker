@@ -1,6 +1,7 @@
-// A collaborator shares the owner's library: same playlists, same tracks, and
-// the ability to add to both. What they may NOT do is act on the locker itself
-// (publish, share, invite) or destroy something they did not create.
+// A collaborator shares the owner's library: same playlists, same tracks, the
+// ability to add to both, and — sharing being band work, not administration —
+// minting and managing share links too. What they may NOT do is act on the
+// locker itself (publish, invite) or destroy something they did not create.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -803,5 +804,77 @@ describe("sharing under collaboration", () => {
     const res = await app.request("/shares", { headers: auth(strangerToken) }, env);
     const body = (await res.json()) as { shares: unknown[] };
     expect(body.shares).toHaveLength(0);
+  });
+
+  // The intended-but-surprising case per the task ruling: share links are
+  // locker-level state, not per-creator state, so a collaborator can revoke a
+  // link the owner minted.
+  it("lets a collaborator revoke a share link the owner created", async () => {
+    const [ownerShare] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-owner-created-share-token",
+        permission: "listen",
+      })
+      .returning();
+
+    const res = await app.request(
+      `/shares/${ownerShare.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+
+    const rows = await db.select().from(shares).where(eq(shares.id, ownerShare.id));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("still refuses a stranger revoking a locker's share link, and leaves it intact", async () => {
+    const [ownerShare] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-stranger-revoke-attempt-token",
+        permission: "listen",
+      })
+      .returning();
+
+    const res = await app.request(
+      `/shares/${ownerShare.id}`,
+      { method: "DELETE", headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+
+    const rows = await db.select().from(shares).where(eq(shares.id, ownerShare.id));
+    expect(rows).toHaveLength(1);
+  });
+
+  it("lets a collaborator list a playlist's share links via GET /shares/playlist/:playlistId", async () => {
+    await db.insert(shares).values({
+      playlistId: ownerPlaylistId,
+      token: "member-playlist-list-share-token",
+      permission: "listen",
+    });
+
+    const res = await app.request(
+      `/shares/playlist/${ownerPlaylistId}`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shares: { playlistId: string }[] };
+    expect(body.shares.length).toBeGreaterThan(0);
+    expect(body.shares.every((s) => s.playlistId === ownerPlaylistId)).toBe(true);
+  });
+
+  it("404s a stranger listing the same playlist's share links", async () => {
+    const res = await app.request(
+      `/shares/playlist/${ownerPlaylistId}`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(404);
   });
 });

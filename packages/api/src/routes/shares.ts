@@ -64,8 +64,11 @@ sharesRouter.post("/", requireAuth, async (c) => {
   return c.json({ share }, 201);
 });
 
-// All share links across every playlist the user owns — the "who has access
-// to my locker" view. Includes the playlist name for display.
+// All share links across every playlist in the acting user's locker — the
+// "who has access to my locker" view. Locker-scoped: a collaborator sees
+// (and can act on) every token and recipient email the owner or any other
+// collaborator has minted, not just their own. Includes the playlist name
+// for display.
 sharesRouter.get("/", requireAuth, async (c) => {
   const lockerId = lockerIdOf(c.get("user"));
   const db = getDb(c.env.DB);

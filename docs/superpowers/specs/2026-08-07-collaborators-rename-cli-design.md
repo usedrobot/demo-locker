@@ -122,6 +122,11 @@ behind closing signup in 0.2.8. DL's call, made 2026-08-07 with that tradeoff
 stated. The closed-signup *mechanism* survives intact — it is what invites gate
 against.
 
+**Brochure copy is deliberately not touched by either plan.** `site/` still
+describes a single-owner locker. DL's call 2026-08-07: revisit after this ships
+and is launched. Neither plan should quietly amend marketing copy as a side
+effect, and neither is blocked on it.
+
 ### Testing
 
 - Each of the 14 call sites gets a collaborator-can / collaborator-cannot pair.

@@ -116,6 +116,15 @@ export const shares = sqliteTable("shares", {
   email: text("email"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+  // Who minted this link. CASCADE, not SET NULL: nothing ever sets expiresAt,
+  // so a link outlives its minter forever — and a listen link can download the
+  // lossless master. Removing a collaborator must remove every grant they
+  // handed out, edit and listen alike. Enforced by the database rather than by
+  // a purge in the revoke handler so it holds on every deletion path,
+  // including ones nobody has written yet. Migration 0004 backfills existing
+  // rows with their playlist's owner (provably correct: before this branch,
+  // only the owner could mint), so NULL is not a state that occurs.
+  createdBy: text("created_by").references(() => users.id, { onDelete: "cascade" }),
 });
 
 // A one-shot invitation to join someone's locker as a collaborator. Signup is

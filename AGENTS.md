@@ -271,6 +271,61 @@ echo "<demo-locker-player playlist=\"$PLAYLIST_ID\"></demo-locker-player>"
 Drop those two lines into any page. See [docs/embed.md](docs/embed.md) for
 theming, `::part()` hooks, and the full public API reference.
 
+## Collaborators
+
+Most people who need access to the music want a **share link** — no account,
+nothing to manage. Collaborators are the other case: a bandmate or engineer who
+should be able to *add* to the library, not just listen to it. A collaborator
+signs in with their own account but has no locker of their own; they work
+inside the owner's library, so every playlist and track stays owned by the
+owner no matter who created it.
+
+Registration is closed on an instance once it has an owner, so an invite is the
+only way a second account can exist. Every route below is **owner-only** — a
+collaborator calling any of them gets the same non-enumerable 404 a stranger
+does. Invites do not chain, and collaborators cannot remove each other.
+
+```bash
+# Mint an invite. `label` is just how you recognise it in the list; nothing
+# is emailed — you hand the link over yourself.
+INVITE=$(curl -fsS -X POST "$BASE/collab/invites" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"label":"Jimmy (drums)"}' | jq -re .invite.token)
+echo "$BASE/join/$INVITE"
+```
+
+expect: `201` with `{"invite":{"id":"…","label":"Jimmy (drums)","token":"…"}}`.
+
+A `403` means `MAX_COLLABORATORS` is set and you are at it — the cap counts
+people already in the locker **plus** invites still outstanding, so unredeemed
+invites hold a seat until you revoke them.
+
+```bash
+curl -fsS "$BASE/collab/invites" -H "Authorization: Bearer $TOKEN" | jq .
+curl -fsS "$BASE/collab/members" -H "Authorization: Bearer $TOKEN" | jq .
+
+curl -fsS -X DELETE "$BASE/collab/invites/$INVITE_ID" -H "Authorization: Bearer $TOKEN"
+curl -fsS -X DELETE "$BASE/collab/members/$MEMBER_ID" -H "Authorization: Bearer $TOKEN"
+```
+
+`acceptedAt` on an invite is null while it is pending and set once redeemed.
+Revoking a redeemed invite only removes the record; it does not remove the
+person.
+
+**What removing a collaborator does, precisely** — this is the part worth
+reading before you do it:
+
+- **Their music stays.** Tracks and playlists they added belong to the locker,
+  not to them. After removal those rows simply read as the owner's.
+- **They are signed out everywhere.** Their account and sessions are deleted.
+- **Every share link they minted is deleted too** — listen links as well as
+  edit links. Nothing ever expires a share link on its own, so a leftover one
+  would be permanent access to a private playlist, and a listen link can
+  download the lossless master. Removing the person removes what they handed
+  out. The database enforces this, so it holds however the account is deleted.
+
+Links *you* minted are untouched.
+
 ## Troubleshooting
 
 - **Boot fails immediately, no log lines at all:** `DATA_DIR` (default

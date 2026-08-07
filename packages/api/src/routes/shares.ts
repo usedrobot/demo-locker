@@ -12,6 +12,21 @@ import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
 
+// Every field of a share that a client may see. Spelled out rather than
+// `select()` because `created_by` holds a raw internal user id, and this
+// branch has twice had to replace exactly such an id with a computed boolean
+// after it leaked (uploadedByMe, createdByMe). Nothing needs it client-side:
+// it exists so the database can cascade a departing collaborator's links away.
+const SHARE_FIELDS = {
+  id: shares.id,
+  playlistId: shares.playlistId,
+  token: shares.token,
+  permission: shares.permission,
+  email: shares.email,
+  createdAt: shares.createdAt,
+  expiresAt: shares.expiresAt,
+};
+
 sharesRouter.post("/", requireAuth, async (c) => {
   const { playlistId, permission, email } = await c.req.json();
   const lockerId = lockerIdOf(c.get("user"));
@@ -58,8 +73,12 @@ sharesRouter.post("/", requireAuth, async (c) => {
       token,
       permission,
       email: email || null,
+      // Who minted it, so removing that person removes this grant (the FK is
+      // ON DELETE CASCADE). Owner-minted links carry the owner's id and are
+      // never affected — the owner's row is never deleted by /collab.
+      createdBy: c.get("user").id,
     })
-    .returning();
+    .returning(SHARE_FIELDS);
 
   return c.json({ share }, 201);
 });
@@ -122,7 +141,7 @@ sharesRouter.patch("/:id", requireAuth, async (c) => {
     .update(shares)
     .set({ permission })
     .where(eq(shares.id, shareId))
-    .returning();
+    .returning(SHARE_FIELDS);
 
   return c.json({ share: updated });
 });
@@ -143,7 +162,7 @@ sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
   }
 
   const result = await db
-    .select()
+    .select(SHARE_FIELDS)
     .from(shares)
     .where(eq(shares.playlistId, playlistId));
 

@@ -348,6 +348,63 @@
           "permission",
           "createdAt"
         ]
+      },
+      "CollaboratorInvite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string",
+            "description": "Owner-supplied name for the person invited. Not an email — nothing is sent; the owner delivers the link themselves."
+          },
+          "token": {
+            "type": "string",
+            "description": "The one-shot redemption secret. 32 lowercase hex characters."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "acceptedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Null while the invite is still pending."
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "token",
+          "createdAt"
+        ]
+      },
+      "CollaboratorMember": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "createdAt"
+        ]
       }
     }
   },
@@ -2750,6 +2807,332 @@
           },
           "401": {
             "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/invites": {
+      "post": {
+        "summary": "Mint a collaborator invite",
+        "description": "Owner-only. Creates a one-shot invite link that lets one person sign up as a collaborator on this locker, sharing the owner's library rather than getting one of their own. A collaborator calling this gets 404: invites do not chain. Nothing is emailed — the owner delivers the token themselves.",
+        "operationId": "createCollaboratorInvite",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "description": "How this pending invite is identified in the owner's access list before it is redeemed."
+                  }
+                },
+                "required": [
+                  "label"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invite created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invite": {
+                      "$ref": "#/components/schemas/CollaboratorInvite"
+                    }
+                  },
+                  "required": [
+                    "invite"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Label missing, blank, or longer than 100 characters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Collaborator limit reached (MAX_COLLABORATORS counts current members plus pending invites).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller is not this locker's owner, or the target is not in their locker (non-enumerable — collaborators get the same 404 as strangers).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List this locker's collaborator invites",
+        "description": "Owner-only. Both pending and already-redeemed invites; `acceptedAt` distinguishes them.",
+        "operationId": "listCollaboratorInvites",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invites.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CollaboratorInvite"
+                      }
+                    }
+                  },
+                  "required": [
+                    "invites"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller is not this locker's owner, or the target is not in their locker (non-enumerable — collaborators get the same 404 as strangers).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/invites/{id}": {
+      "delete": {
+        "summary": "Revoke a collaborator invite",
+        "description": "Owner-only. Deletes the invite so its token can no longer be redeemed. Revoking an already-redeemed invite removes the record but does not remove the collaborator — use DELETE /collab/members/{id} for that.",
+        "operationId": "deleteCollaboratorInvite",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invite does not exist or belongs to another locker (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/members": {
+      "get": {
+        "summary": "List this locker's collaborators",
+        "description": "Owner-only. The people who have redeemed an invite and now share this library. Ids are returned here because the owner needs them to remove a member; they are not exposed anywhere else.",
+        "operationId": "listCollaborators",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CollaboratorMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "members"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller is not this locker's owner, or the target is not in their locker (non-enumerable — collaborators get the same 404 as strangers).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/members/{id}": {
+      "delete": {
+        "summary": "Remove a collaborator",
+        "description": "Owner-only. Deletes the collaborator's account: their sessions are dropped, so they are signed out everywhere. Their music STAYS — tracks and playlists they added keep belonging to the locker and simply read as the owner's (`uploadedBy`/`createdBy` go null). What does not stay is anything they handed out: every share link they minted, listen and edit alike, is deleted with them. A share link never expires on its own and a listen link can download the lossless master, so removing the person has to remove their grants too.",
+        "operationId": "deleteCollaborator",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user, or that user is not a collaborator on the caller's locker (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {

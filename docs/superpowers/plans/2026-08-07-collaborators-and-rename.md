@@ -642,6 +642,186 @@ git commit -m "feat(api): playlists are locker-scoped, not owner-scoped"
 
 ---
 
+### Task 3b: The shared playlist-access gates (PLAN DEFECT, added 2026-08-07)
+
+**Why this task exists.** The plan's "14 ownership checks" came from a grep for `ownerId !== userId`, `ownerId, userId`, `eq(playlists.ownerId`, and `eq(tracks.ownerId`. That pattern **missed two more sites**, both in `packages/api/src/lib/playlist-access.ts`, because they are written `session.userId === playlist.ownerId`:
+
+- `canAccessPlaylist` (line ~59) — the read gate.
+- `requestCanEditPlaylist` (line ~92) — the write gate.
+
+These two functions back **15 route call sites** across `playlists.ts`, `tracks.ts` and `comments.ts`. Until they resolve the locker, a collaborator can list playlists but cannot open one, cannot reorder, cannot upload into a playlist, cannot stream or download a track that lives in one, and cannot read or post comments. That is essentially the entire collaborator experience.
+
+This is a plan defect, not a product question — it implements what was already approved, and changes no ruling. Task 4's note that `tracks.ts:86` needs no change was written on the same wrong assumption and is superseded by this task.
+
+**Files:**
+- Modify: `packages/api/src/lib/playlist-access.ts`
+- Test: `packages/api/src/routes/membership.test.ts` (extend)
+
+**Interfaces:**
+- Consumes: `users.lockerOwnerId` (Task 1); the fixture from Task 3.
+- Produces: both shared gates resolve the locker, so Tasks 4 and 6 inherit correct behaviour on every route that uses them.
+
+**Why a second resolver.** `lockerIdOf` is pure and takes a loaded `User`. These two gates take a raw token and a `db` — no `User` has been loaded, and `canAccessPlaylist` does not even receive a `Context`. So the session path needs one extra select. Keep it local to `playlist-access.ts`; do not make `lib/locker.ts` impure.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `packages/api/src/routes/membership.test.ts`:
+
+```ts
+describe("the shared playlist-access gates resolve the locker", () => {
+  it("lets a collaborator open the owner's playlist", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: { id: string } };
+    expect(body.playlist.id).toBe(ownerPlaylistId);
+  });
+
+  it("still 404s a stranger opening it", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("lets a collaborator reorder the owner's playlist", async () => {
+    const [a] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId: ownerPlaylistId,
+        title: "first",
+        position: 0,
+        originalKey: "lib/reorder-a",
+        uploadedBy: ownerId,
+      })
+      .returning();
+    const [b] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId: ownerPlaylistId,
+        title: "second",
+        position: 1,
+        originalKey: "lib/reorder-b",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [b.id, a.id] }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("still refuses a stranger reordering it", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [] }),
+      },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+});
+```
+
+Add `tracks` to the schema import if this task runs before Task 4.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm test -w packages/api -- membership.test.ts`
+Expected: FAIL — the collaborator gets 404 on both open and reorder, because both gates compare the raw session user id against the owner id.
+
+- [ ] **Step 3: Resolve the locker in both gates**
+
+In `packages/api/src/lib/playlist-access.ts`, add `users` to the schema import and add this module-local helper:
+
+```ts
+// Which locker does this session act in?
+//
+// lib/locker.ts's lockerIdOf is the pure version, but it needs a loaded User
+// and these two gates receive only a raw token and a db — canAccessPlaylist
+// is not even given a Context. So the session path pays one extra select.
+// Share-token paths are unaffected and must stay untouched.
+async function lockerIdForSession(db: Database, userId: string): Promise<string> {
+  const [row] = await db
+    .select({ lockerOwnerId: users.lockerOwnerId })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row?.lockerOwnerId ?? userId;
+}
+```
+
+In `canAccessPlaylist`, replace the session branch:
+
+```ts
+  // token as a session token acting in the playlist's locker (the owner, or a
+  // collaborator on that owner's locker)
+  const session = await findSession(db, token);
+  if (session && session.expiresAt >= new Date()) {
+    const lockerId = await lockerIdForSession(db, session.userId);
+    if (lockerId === playlist.ownerId) return true;
+  }
+
+  return false;
+```
+
+In `requestCanEditPlaylist`, replace the session branch inside the token loop:
+
+```ts
+    const session = await findSession(db, token);
+    if (session && session.expiresAt >= new Date()) {
+      const lockerId = await lockerIdForSession(db, session.userId);
+      if (lockerId === playlist.ownerId) return playlist.ownerId;
+    }
+```
+
+Note both still return the **owner's** id, not the acting user's — uploads stay attributed to the locker. Task 4 records the acting user separately in `uploadedBy`.
+
+Update the file's header comment: its "there is no collaborator-*user* relation, so the only session-based access is ownership" note is now false and would mislead the next reader.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npm test -w packages/api`
+Expected: PASS. **`legacy-access.test.ts` must still pass unchanged** — it is the suite that pins stranger denial and share-token behaviour on these exact gates. If anything there breaks, access has been widened too far.
+
+- [ ] **Step 5: Mutation-check the stranger path**
+
+Change `lockerIdForSession` to `return userId` unconditionally, run `membership.test.ts`, and confirm the two collaborator cases FAIL. Then change it to `return playlist.ownerId`-equivalent (always grant) — confirm the two **stranger** cases FAIL. Restore, confirm green. Record both in the report. A gate that cannot fail closed is not a gate.
+
+- [ ] **Step 6: Root typecheck**
+
+Run: `npm run typecheck` from the repo root. Expected: clean.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/api/src/lib/playlist-access.ts packages/api/src/routes/membership.test.ts
+git commit -m "fix(api): the shared playlist-access gates resolve the locker
+
+Both gates compared the raw session user id against the playlist owner, so a
+collaborator could list playlists but not open, reorder, upload into, stream
+or comment on one. Missed by the plan's original call-site grep."
+```
+
+---
+
 ### Task 4: Widen the track routes and record who uploaded
 
 **Files:**

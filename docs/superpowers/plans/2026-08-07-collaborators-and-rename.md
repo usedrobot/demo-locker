@@ -2575,6 +2575,8 @@ Use `copyText` from `lib/copy-text` rather than `navigator.clipboard` directly �
 
 Render `<CollabPanel />` in `Home.tsx` next to the existing `[access]` panel, and gate it on the signed-in user being an owner (`user.lockerOwnerId === null`).
 
+**🔴 Also gate Home's library delete control** (found by Task 6's implementer, 2026-08-07). `Home.tsx` renders the `[x]` delete affordance on every library track. The server now refuses a collaborator deleting someone else's upload, so today the control is offered and then silently 404s — the user clicks delete, confirms, and nothing happens, with no explanation. Show it only when `track.uploadedByMe || user.lockerOwnerId === null`. That is precisely the client rule Task 4's `uploadedByMe` exists to support, and Task 12's live verification step 5 checks it explicitly ("the control should not offer it").
+
 - [ ] **Step 6: Build the join page**
 
 Create `packages/web/src/pages/Join.tsx`: reads the token from the route, shows email + password fields, posts to `auth.signup` with `inviteToken`, and on success stores the session and lands on Home exactly as login does. On failure show the API's error text — an invite that has already been used must say so rather than appearing broken.

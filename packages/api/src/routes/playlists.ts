@@ -109,10 +109,11 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   if (body.name) updates.name = body.name;
   // Publishing is a locker-level decision, not library work: it puts the
   // playlist on the open web via /public/v1 and the embed. Only the owner may
-  // change it — but a no-op echo of the current value is not a change, and
-  // must not fail a collaborator's rename in the same request.
-  if (typeof body.isPublic === "boolean" && body.isPublic !== playlist.isPublic) {
-    if (!isLockerOwner(user)) return c.json({ error: "not found" }, 404);
+  // set it. A collaborator's request is not rejected for carrying the field —
+  // clients PATCH whole objects, and failing here would destroy an unrelated
+  // rename in the same request, including from a stale page. The field is
+  // simply not theirs, so it is ignored.
+  if (typeof body.isPublic === "boolean" && isLockerOwner(user)) {
     updates.isPublic = body.isPublic;
   }
   // artworkKey is deliberately NOT patchable. It is a pointer into the shared

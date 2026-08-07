@@ -116,9 +116,13 @@ describe("playlists under collaboration", () => {
     expect(playlist.name).toBe("renamed by collab");
   });
 
-  it("refuses to let a collaborator publish a playlist", async () => {
+  it("a collaborator's isPublic:true is ignored, not rejected — playlist stays private", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab publish attempt" })
+      .returning();
     const res = await app.request(
-      `/playlists/${ownerPlaylistId}`,
+      `/playlists/${pl.id}`,
       {
         method: "PATCH",
         headers: { ...auth(collabToken), "Content-Type": "application/json" },
@@ -126,30 +130,57 @@ describe("playlists under collaboration", () => {
       },
       env
     );
-    expect(res.status).toBe(404);
-    const [row] = await db.select().from(playlists).where(eq(playlists.id, ownerPlaylistId));
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
     expect(row.isPublic).toBe(false);
   });
 
-  it("lets a collaborator rename while echoing the current isPublic value (no-op, not a transition)", async () => {
+  it("a collaborator's isPublic:false is ignored, not rejected — an already-public playlist stays public", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab unpublish attempt", isPublic: true })
+      .returning();
     const res = await app.request(
-      `/playlists/${ownerPlaylistId}`,
+      `/playlists/${pl.id}`,
       {
         method: "PATCH",
         headers: { ...auth(collabToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "still collab's", isPublic: false }),
+        body: JSON.stringify({ isPublic: false }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(row.isPublic).toBe(true);
+  });
+
+  it("lets a collaborator rename while a stale isPublic value rides along in the same request", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "collab rename with stale isPublic" })
+      .returning();
+    const res = await app.request(
+      `/playlists/${pl.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "renamed despite stale isPublic", isPublic: true }),
       },
       env
     );
     expect(res.status).toBe(200);
     const { playlist } = (await res.json()) as { playlist: { name: string; isPublic: boolean } };
-    expect(playlist.name).toBe("still collab's");
+    expect(playlist.name).toBe("renamed despite stale isPublic");
     expect(playlist.isPublic).toBe(false);
   });
 
-  it("lets the owner publish the playlist", async () => {
+  it("lets the owner publish a playlist", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "owner publish target" })
+      .returning();
     const res = await app.request(
-      `/playlists/${ownerPlaylistId}`,
+      `/playlists/${pl.id}`,
       {
         method: "PATCH",
         headers: { ...auth(ownerToken), "Content-Type": "application/json" },
@@ -160,7 +191,7 @@ describe("playlists under collaboration", () => {
     expect(res.status).toBe(200);
     const { playlist } = (await res.json()) as { playlist: { isPublic: boolean } };
     expect(playlist.isPublic).toBe(true);
-    const [row] = await db.select().from(playlists).where(eq(playlists.id, ownerPlaylistId));
+    const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
     expect(row.isPublic).toBe(true);
   });
 

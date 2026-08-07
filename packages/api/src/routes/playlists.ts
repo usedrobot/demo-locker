@@ -108,9 +108,10 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name) updates.name = body.name;
   // Publishing is a locker-level decision, not library work: it puts the
-  // playlist on the open web via /public/v1. Collaborators may organise the
-  // library; only the owner may publish from it.
-  if (typeof body.isPublic === "boolean") {
+  // playlist on the open web via /public/v1 and the embed. Only the owner may
+  // change it — but a no-op echo of the current value is not a change, and
+  // must not fail a collaborator's rename in the same request.
+  if (typeof body.isPublic === "boolean" && body.isPublic !== playlist.isPublic) {
     if (!isLockerOwner(user)) return c.json({ error: "not found" }, 404);
     updates.isPublic = body.isPublic;
   }

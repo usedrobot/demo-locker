@@ -131,6 +131,39 @@ describe("playlists under collaboration", () => {
     expect(row.isPublic).toBe(false);
   });
 
+  it("lets a collaborator rename while echoing the current isPublic value (no-op, not a transition)", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "still collab's", isPublic: false }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    const { playlist } = (await res.json()) as { playlist: { name: string; isPublic: boolean } };
+    expect(playlist.name).toBe("still collab's");
+    expect(playlist.isPublic).toBe(false);
+  });
+
+  it("lets the owner publish the playlist", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(ownerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ isPublic: true }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    const { playlist } = (await res.json()) as { playlist: { isPublic: boolean } };
+    expect(playlist.isPublic).toBe(true);
+    const [row] = await db.select().from(playlists).where(eq(playlists.id, ownerPlaylistId));
+    expect(row.isPublic).toBe(true);
+  });
+
   it("404s a stranger patching the playlist", async () => {
     const res = await app.request(
       `/playlists/${ownerPlaylistId}`,

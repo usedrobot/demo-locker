@@ -116,7 +116,7 @@ describe("playlists under collaboration", () => {
     expect(playlist.name).toBe("renamed by collab");
   });
 
-  it("a collaborator's isPublic:true is ignored, not rejected — playlist stays private", async () => {
+  it("refuses a collaborator's attempt to publish a private playlist", async () => {
     const [pl] = await db
       .insert(playlists)
       .values({ ownerId, name: "collab publish attempt" })
@@ -130,12 +130,12 @@ describe("playlists under collaboration", () => {
       },
       env
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
     expect(row.isPublic).toBe(false);
   });
 
-  it("a collaborator's isPublic:false is ignored, not rejected — an already-public playlist stays public", async () => {
+  it("refuses a collaborator's attempt to un-publish a public playlist — it must not fail open and stay live", async () => {
     const [pl] = await db
       .insert(playlists)
       .values({ ownerId, name: "collab unpublish attempt", isPublic: true })
@@ -149,28 +149,28 @@ describe("playlists under collaboration", () => {
       },
       env
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     const [row] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
     expect(row.isPublic).toBe(true);
   });
 
-  it("lets a collaborator rename while a stale isPublic value rides along in the same request", async () => {
+  it("lets a collaborator rename while echoing the current (private) isPublic value — a no-op is not a change", async () => {
     const [pl] = await db
       .insert(playlists)
-      .values({ ownerId, name: "collab rename with stale isPublic" })
+      .values({ ownerId, name: "collab rename with echoed isPublic" })
       .returning();
     const res = await app.request(
       `/playlists/${pl.id}`,
       {
         method: "PATCH",
         headers: { ...auth(collabToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "renamed despite stale isPublic", isPublic: true }),
+        body: JSON.stringify({ name: "renamed despite echoed isPublic", isPublic: false }),
       },
       env
     );
     expect(res.status).toBe(200);
     const { playlist } = (await res.json()) as { playlist: { name: string; isPublic: boolean } };
-    expect(playlist.name).toBe("renamed despite stale isPublic");
+    expect(playlist.name).toBe("renamed despite echoed isPublic");
     expect(playlist.isPublic).toBe(false);
   });
 

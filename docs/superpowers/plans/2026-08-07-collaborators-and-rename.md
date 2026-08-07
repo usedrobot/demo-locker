@@ -1181,6 +1181,8 @@ git commit -m "feat(api): share routes are locker-scoped — collaborators may s
 - Consumes: `tracks.uploadedBy`, `playlists.createdBy` (Task 1), `lockerIdOf`/`isLockerOwner` (Task 2).
 - Produces: nothing new.
 
+**Also fix `membership.test.ts`'s file header** (found by review of Task 5). It already says a collaborator may not "destroy something they did not create", which implies they *may* destroy what they did create — true only once this task lands. Until then both delete guards compare against the raw acting user, so a collaborator 404s even on their own upload. That file is where a future reader looks for the delete contract, so make the header describe shipped behaviour the moment this task makes it true.
+
 **Docs this task must update in the same commit** (noted by Task 4's implementer, 2026-08-07): widening the delete guard makes three things stale at once — the `DELETE /tracks/{id}` description in `docs/openapi.json`, and the worked inversion example in `packages/api/src/lib/public-track.ts` which currently explains that `uploadedByMe` is *not* delete authority by pointing at today's owner-only guard. Once this task lands, the correct client rule becomes `uploadedByMe || isOwner`, and both places should say so. Also carry the two stale owner-only comments Task 3b deferred at `playlists.ts:200` and `:253`.
 
 **This is the task where a bug destroys someone's masters.** `DELETE /tracks/:id` erases `originalKey` (the lossless master) and `streamKey` from the bucket, then the row — no soft delete, no undo. The guard must fail closed.

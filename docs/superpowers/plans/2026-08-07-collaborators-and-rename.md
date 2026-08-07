@@ -50,11 +50,14 @@
 
 ---
 
-## A decision this plan makes, flagged for DL
+## Where the collaborator boundary sits (DL, 2026-08-07)
 
-The spec says collaborators share the library and may upload, create playlists, and rename. It does not say whether they may **publish** a playlist (`isPublic`) or **mint share links**. This plan keeps both **owner-only**, on the grounds that publishing to the open web and handing out access are locker-level decisions rather than library work. Rename, create, upload, reorder, and attach are all collaborator-allowed.
+The spec was silent on two capabilities. DL's ruling:
 
-If DL wants collaborators to publish or share, that is a one-line change in Task 3 (drop the extra owner check on `isPublic`) and Task 5 — but it is a product call, not a technical one, and this plan does not make it silently.
+- **Collaborators MAY mint share links.** Sharing a playlist with a listener is band work, not administration — the same kind of act as adding a track. Task 5 therefore scopes the share routes to the locker like everything else, with no owner-only guard.
+- **Collaborators MAY NOT publish a playlist** (`isPublic`). Publishing puts a playlist on the open web through `/public/v1` and the embed, permanently and for anyone. That stays the owner's call. Enforced in Task 3.
+
+Everything else — create, upload, reorder, attach, rename — is collaborator-allowed. Inviting further collaborators stays owner-only (Task 7).
 
 ---
 
@@ -815,25 +818,27 @@ git commit -m "feat(api): tracks are locker-scoped, uploads record their uploade
 
 ---
 
-### Task 5: Share routes stay owner-only, scoped to the locker
+### Task 5: Share routes are locker-scoped — collaborators may share
 
 **Files:**
 - Modify: `packages/api/src/routes/shares.ts` (lines 31, 83, 110, 134, 165)
 - Test: `packages/api/src/routes/membership.test.ts` (extend)
 
 **Interfaces:**
-- Consumes: `lockerIdOf`, `isLockerOwner` (Task 2).
+- Consumes: `lockerIdOf` (Task 2).
 - Produces: nothing new for later tasks.
 
-Sharing hands out access to the locker, so it stays **owner-only** — but the playlist lookups must still resolve against the locker so the owner's own checks keep working unchanged. Concretely: every one of the five sites keeps comparing to the owner, and each route gains an early `isLockerOwner` guard that 404s a collaborator.
+Per DL's ruling, sharing a playlist with a listener is band work. All five sites become locker-scoped exactly like the playlist and track routes, with **no** owner-only guard. A collaborator can mint, list, re-permission and revoke share links across the locker's playlists.
+
+Note the consequence, which is intended: a collaborator can mint an **edit** link, and can revoke a link the owner created. Share links are locker-level state, not per-creator state — the same way tracks are.
 
 - [ ] **Step 1: Write the failing test**
 
 Append to `packages/api/src/routes/membership.test.ts`:
 
 ```ts
-describe("sharing stays owner-only", () => {
-  it("refuses to mint a share link for a collaborator", async () => {
+describe("sharing under collaboration", () => {
+  it("lets a collaborator mint a share link on the owner's playlist", async () => {
     const res = await app.request(
       "/shares",
       {
@@ -843,24 +848,34 @@ describe("sharing stays owner-only", () => {
       },
       env
     );
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(201);
+    const { share } = (await res.json()) as { share: { permission: string } };
+    expect(share.permission).toBe("edit");
   });
 
-  it("still lets the owner mint one", async () => {
+  it("shows the locker's share links to a collaborator", async () => {
+    const res = await app.request("/shares", { headers: auth(collabToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shares: { playlistId: string }[] };
+    expect(body.shares.length).toBeGreaterThan(0);
+    expect(body.shares.every((s) => s.playlistId === ownerPlaylistId)).toBe(true);
+  });
+
+  it("still refuses a stranger minting one", async () => {
     const res = await app.request(
       "/shares",
       {
         method: "POST",
-        headers: { ...auth(ownerToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ playlistId: ownerPlaylistId, permission: "edit" }),
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: ownerPlaylistId, permission: "listen" }),
       },
       env
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(404);
   });
 
-  it("returns no shares to a collaborator listing them", async () => {
-    const res = await app.request("/shares", { headers: auth(collabToken) }, env);
+  it("returns no shares to a stranger listing them", async () => {
+    const res = await app.request("/shares", { headers: auth(strangerToken) }, env);
     const body = (await res.json()) as { shares: unknown[] };
     expect(body.shares).toHaveLength(0);
   });
@@ -870,20 +885,31 @@ describe("sharing stays owner-only", () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npm test -w packages/api -- membership.test.ts`
-Expected: FAIL — the collaborator's POST currently 404s for the *wrong* reason (their `userId` isn't the owner), and the list test passes accidentally. Both must pass for the right reason after Step 3.
+Expected: FAIL — the collaborator's POST 404s and their share list is empty, because both compare against `userId` rather than the locker.
 
-- [ ] **Step 3: Add the owner guard**
+- [ ] **Step 3: Scope the five sites to the locker**
 
-In `packages/api/src/routes/shares.ts`, import `isLockerOwner` from `../lib/locker.js`. Add this as the first statement inside each of the five handlers (`POST /`, `GET /`, `PATCH /:id`, `GET /playlist/:playlistId`, `DELETE /:id`):
+In `packages/api/src/routes/shares.ts`, import `lockerIdOf` from `../lib/locker.js`, and in each of the five authenticated handlers replace the acting id with the locker id:
 
 ```ts
-  // Handing out access to the locker is the owner's call, not a collaborator's.
-  if (!isLockerOwner(c.get("user"))) return c.json({ error: "not found" }, 404);
+  const lockerId = lockerIdOf(c.get("user"));
 ```
 
-The existing `ownerId !== userId` comparisons stay exactly as they are: past this guard, the acting user *is* the owner, so `userId` and the locker id are the same value.
+Then, at lines ~31, ~110, ~134 and ~165 (the playlist ownership lookups in `POST /`, `PATCH /:id`, `GET /playlist/:playlistId` and `DELETE /:id`):
 
-`GET /shares/invite/:token` is unauthenticated and must not get the guard.
+```ts
+  if (!playlist || playlist.ownerId !== lockerId) {
+    return c.json({ error: "not found" }, 404);
+  }
+```
+
+and at line ~83 (`GET /`, the all-shares list):
+
+```ts
+    .where(eq(playlists.ownerId, lockerId));
+```
+
+`GET /shares/invite/:token` is unauthenticated and must not change.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1734,15 +1760,43 @@ git commit -m "feat(api): redeem a collaborator invite at signup"
 
 ---
 
-### Task 9: Rename a playlist in the UI
+### Task 9: Rename a playlist, and fix the client-side owner check
 
 **Files:**
-- Modify: `packages/web/src/pages/PlaylistView.tsx` (around line 115)
+- Modify: `packages/web/src/pages/PlaylistView.tsx` (lines 43, 116, 186, 207, and around 115)
 - Test: `packages/web/src/pages/PlaylistView.rename.test.tsx` (created here)
 
 **Interfaces:**
-- Consumes: `playlists.update(id, {name})` in `packages/web/src/lib/api.ts:136` — already exists, already typed, never called with a name.
+- Consumes: `playlists.update(id, {name})` in `packages/web/src/lib/api.ts:136` — already exists, already typed, never called with a name. Also `User.lockerOwnerId` (Task 11 adds it to the web `User` type; if Task 11 has not run yet, add the field here and let Task 11 find it present).
 - Produces: nothing for later tasks.
+
+**The client-side check is wrong for collaborators.** `PlaylistView.tsx:43` computes:
+
+```tsx
+const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
+```
+
+For a collaborator, `playlist.ownerId` is the *locker owner's* id and `currentUserId` is theirs, so `isOwner` is false and they silently lose every control gated on it — including `[+ add tracks]` at line 207, which is exactly the "organise tracklists into playlists" capability DL asked for.
+
+Split the one flag into two, mirroring the server:
+
+```tsx
+// Same resolution the API does in lib/locker.ts: which locker am I acting in?
+const lockerId = currentUser ? (currentUser.lockerOwnerId ?? currentUser.id) : null;
+
+// May act on this locker's library: add tracks, reorder, rename, share.
+const canManage = !!playlist && !!lockerId && playlist.ownerId === lockerId;
+
+// Owns the locker outright. Gates publishing only — a collaborator may share a
+// playlist but may not put it on the open web (DL, 2026-08-07).
+const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
+```
+
+Then:
+- **Line 116** (`[make public]` / `[make private]`) stays on `isOwner`.
+- **Line 207** (`[+ add tracks]`) moves to `canManage`.
+- **Line 186 and 250** (`<Comments isOwner={...}>`) stay on `isOwner` for now. Comment resolve/delete was not part of DL's ask and widening it is a product decision nobody has made. Note it in the task's commit message as knowingly deferred.
+- `<SharePanel>` is already ungated and needs no change — collaborators may share, per DL.
 
 The title renders as figlet art through `AsciiText`, which is a `container-type: inline-size` element inside a `flex: 1` column. **Do not make the ASCII element itself editable** — swap a plain `<input>` in for it while editing and put the art back on commit. Anything else risks the collapse-to-zero trap that has bitten this component three times.
 
@@ -1939,7 +1993,10 @@ Expected: clean. Note `packages/web` uses `tsc -b --noEmit` — a solution-style
 
 ```bash
 git add packages/web/src/pages/PlaylistView.tsx packages/web/src/pages/PlaylistView.rename.test.tsx packages/web/src/index.css
-git commit -m "feat(web): rename a playlist from its page"
+git commit -m "feat(web): rename a playlist, and resolve the locker for collaborators
+
+Splits isOwner into canManage (library work) and isOwner (publishing).
+Comment resolve/delete stays owner-only — knowingly deferred, not decided."
 ```
 
 ---
@@ -2300,9 +2357,10 @@ In a separate browser profile, so you are genuinely not signed in as DL:
 4. Upload a track as the collaborator. Confirm it appears in DL's view.
 5. **Confirm the collaborator cannot delete one of DL's tracks** — the control should not offer it, and the API must 404 if called directly.
 6. Confirm the collaborator can delete their own upload.
-7. Confirm the collaborator sees no publish control, no share panel, and no collaborators panel.
-8. Rename a playlist from each account.
-9. As owner, remove the collaborator. Confirm they are signed out and **their uploaded track is still in the library**.
+7. Confirm the collaborator **can** mint a share link, and that opening that link in a logged-out context works.
+8. Confirm the collaborator sees **no publish control** and **no collaborators panel** — and that `PATCH /playlists/:id` with `{isPublic:true}` 404s if called directly with their token.
+9. Rename a playlist from each account.
+10. As owner, remove the collaborator. Confirm they are signed out and **their uploaded track is still in the library**.
 
 - [ ] **Step 5: Record the result**
 

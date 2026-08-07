@@ -13,7 +13,12 @@ export type Bindings = {
   DEMOS_BUCKET: StorageBucket;
   MAX_PLAYLISTS?: string;
   MAX_STORAGE_BYTES?: string;
+  // Seats in a locker: collaborators plus invites still outstanding.
   MAX_COLLABORATORS?: string;
+  // Share links per playlist. Split out of MAX_COLLABORATORS in 0.2.13 —
+  // one variable cannot mean both, and an operator raising the seat count
+  // must not silently change how many links a playlist may have.
+  MAX_SHARE_LINKS?: string;
   MAX_UPLOAD_BYTES?: string;
   // "true" reopens registration after the first account exists. Anything else
   // (including unset) means only the bootstrap signup is permitted.

@@ -19,7 +19,8 @@
   "assets": {
     "directory": "../player/dist"
   }
-  // Limit vars (MAX_PLAYLISTS, MAX_STORAGE_BYTES, MAX_COLLABORATORS) are set
+  // Limit vars (MAX_PLAYLISTS, MAX_STORAGE_BYTES, MAX_COLLABORATORS,
+  // MAX_SHARE_LINKS, MAX_UPLOAD_BYTES) are set
   // as env vars via wrangler or the dashboard. The database and bucket are
   // bindings above — there are no secrets on this deployment.
 }

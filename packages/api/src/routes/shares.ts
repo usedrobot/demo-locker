@@ -51,15 +51,19 @@ sharesRouter.post("/", requireAuth, async (c) => {
   }
 
   const limits = getLimits(c.env);
-  if (isLimited(limits.maxCollaborators)) {
+  // MAX_SHARE_LINKS, not MAX_COLLABORATORS: this ceiling is per playlist and
+  // has nothing to do with how many people are in the locker. They shared one
+  // binding until 0.2.13, so an operator setting a collaborator seat count
+  // silently capped every playlist's share links to the same number.
+  if (isLimited(limits.maxShareLinks)) {
     const existing = await db
-      .select()
+      .select({ id: shares.id })
       .from(shares)
       .where(eq(shares.playlistId, playlistId));
 
-    if (existing.length >= limits.maxCollaborators) {
+    if (existing.length >= limits.maxShareLinks) {
       return c.json(
-        { error: `this instance limits playlists to ${limits.maxCollaborators} share links` },
+        { error: `this instance limits playlists to ${limits.maxShareLinks} share links` },
         403
       );
     }

@@ -1,5 +1,6 @@
 // The owner's side of collaboration: mint an invite, see who is pending and
-// who has joined, and remove either. Redemption lives in auth.test coverage.
+// who has joined, and remove either. Redeeming an invite is not implemented at
+// this commit — that is Task 8, and its coverage lands with it.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -343,5 +344,48 @@ describe("removing a collaborator kills the links they minted", () => {
     expect(survivor.createdBy).toBe(ownerId);
     const stillWorks = await app.request(`/shares/invite/${ownerListen.token}`, {}, env);
     expect(stillWorks.status).toBe(200);
+  });
+});
+
+// MAX_COLLABORATORS used to be both the locker's seat count and the
+// per-playlist share-link ceiling, so an operator allowing two bandmates also
+// capped every playlist at two links and got a 403 about share links they had
+// never configured. MAX_SHARE_LINKS is now the second one. These two tests
+// exist to keep them apart.
+describe("MAX_COLLABORATORS and MAX_SHARE_LINKS are separate caps", () => {
+  const mint = (envOverride: Record<string, unknown>, playlistId: string) =>
+    app.request(
+      "/shares",
+      {
+        method: "POST",
+        headers: { ...auth(ownerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId, permission: "listen" }),
+      },
+      envOverride
+    );
+
+  it("does not cap share links with the seat count", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "seat cap fixture" })
+      .returning();
+    const capped = { ...env, MAX_COLLABORATORS: "1" };
+
+    expect((await mint(capped, pl.id)).status).toBe(201);
+    expect((await mint(capped, pl.id)).status).toBe(201);
+  });
+
+  it("caps share links with MAX_SHARE_LINKS", async () => {
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "link cap fixture" })
+      .returning();
+    const capped = { ...env, MAX_SHARE_LINKS: "1" };
+
+    expect((await mint(capped, pl.id)).status).toBe(201);
+    const second = await mint(capped, pl.id);
+    expect(second.status).toBe(403);
+    const { error } = (await second.json()) as { error: string };
+    expect(error).toContain("share links");
   });
 });

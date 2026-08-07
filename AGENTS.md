@@ -298,7 +298,13 @@ expect: `201` with `{"invite":{"id":"…","label":"Jimmy (drums)","token":"…"}
 
 A `403` means `MAX_COLLABORATORS` is set and you are at it — the cap counts
 people already in the locker **plus** invites still outstanding, so unredeemed
-invites hold a seat until you revoke them.
+invites hold a seat until you revoke them. Invites do not expire, so an owner
+who mints the full allowance and never has them accepted has to revoke one to
+mint another.
+
+`MAX_COLLABORATORS` is seats only. The separate per-playlist share-link ceiling
+is `MAX_SHARE_LINKS` — before 0.2.13 both were `MAX_COLLABORATORS`, so an
+operator who set it to cap share links should move that value across.
 
 ```bash
 curl -fsS "$BASE/collab/invites" -H "Authorization: Bearer $TOKEN" | jq .

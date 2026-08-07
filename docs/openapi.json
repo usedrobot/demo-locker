@@ -2307,7 +2307,7 @@
             }
           },
           "403": {
-            "description": "Collaborator limit reached (MAX_COLLABORATORS).",
+            "description": "Per-playlist share-link limit reached (MAX_SHARE_LINKS). Not MAX_COLLABORATORS — that caps collaborator seats, and the two were split in 0.2.13.",
             "content": {
               "application/json": {
                 "schema": {

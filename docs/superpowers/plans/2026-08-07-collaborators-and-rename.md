@@ -1166,7 +1166,7 @@ Expected: clean.
 
 ```bash
 git add packages/api/src/routes/shares.ts packages/api/src/routes/membership.test.ts
-git commit -m "feat(api): share management is owner-only under collaboration"
+git commit -m "feat(api): share routes are locker-scoped — collaborators may share"
 ```
 
 ---

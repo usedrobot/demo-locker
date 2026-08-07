@@ -65,8 +65,9 @@ playlistsRouter.get("/:id", async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
-  // Gate: owner session or a valid share token (see lib/playlist-access.ts).
-  // Anything else is indistinguishable from a nonexistent playlist.
+  // Gate: a session acting in the playlist's locker (owner or collaborator)
+  // or a valid share token (see lib/playlist-access.ts). Anything else is
+  // indistinguishable from a nonexistent playlist.
   if (!(await requestCanAccessPlaylist(c, id))) {
     return c.json({ error: "not found" }, 404);
   }

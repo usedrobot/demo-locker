@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { generateId } from "../lib/ids.js";
 
 const now = () => new Date();
@@ -16,7 +16,7 @@ export const users = sqliteTable("users", {
   // Null = this account owns a locker. Set = this account is a collaborator on
   // the referenced owner's locker, sharing that library rather than having one
   // of its own. Self-referential, so it is declared with an explicit callback.
-  lockerOwnerId: text("locker_owner_id").references((): any => users.id, {
+  lockerOwnerId: text("locker_owner_id").references((): AnySQLiteColumn => users.id, {
     onDelete: "cascade",
   }),
 });

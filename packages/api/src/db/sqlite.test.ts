@@ -68,6 +68,23 @@ describe("collaboration schema", () => {
     expect(playlist.createdBy).toBeNull();
   });
 
+  it("removes a collaborator's account when the owner is deleted", async () => {
+    const db = createSqliteDb();
+    const [owner] = await db
+      .insert(users)
+      .values({ email: "o4@test.dev", passwordHash: "x" })
+      .returning();
+    const [collab] = await db
+      .insert(users)
+      .values({ email: "c4@test.dev", passwordHash: "x", lockerOwnerId: owner.id })
+      .returning();
+
+    await db.delete(users).where(eq(users.id, owner.id));
+
+    const [found] = await db.select().from(users).where(eq(users.id, collab.id));
+    expect(found).toBeUndefined();
+  });
+
   it("stores an unredeemed collaborator invite", async () => {
     const db = createSqliteDb();
     const [owner] = await db

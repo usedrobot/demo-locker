@@ -843,20 +843,39 @@ or comment on one. Missed by the plan's original call-site grep."
 
 **🔴 The library-upload path also has the wrong `ownerId`** (found by review of Task 3, 2026-08-07). `requestSessionUserId` returns the *acting* user, and the code writes that straight into `ownerId`. For a collaborator that means a library upload lands in a phantom library owned by them, which the locker owner can never see, and which `GET /tracks` will not return once that route is locker-scoped. The library path must resolve the locker for ownership while still recording the acting user for attribution:
 
+**`POST /tracks/upload` is NOT behind `requireAuth`** (`tracks.ts:33` registers it bare, deliberately, so anonymous edit-share holders can upload). So `c.get("user")` is **undefined** on this route and `lockerIdOf` must not be called here — it dereferences `user.lockerOwnerId` unconditionally and would throw, 500ing every upload. Resolve from the session user id instead.
+
+Compute the acting user **once**, before the branch, and use it for both ownership and attribution:
+
 ```ts
+  // Who is acting, if anyone. Null for an anonymous edit-share holder — they
+  // are not a user and have no id to record.
+  const actingUserId = await requestSessionUserId(c);
+
+  let ownerId: string | null = null;
+  let position = 0;
+  if (playlistId) {
+    // owner session, collaborator session, or edit share token — all resolve
+    // to the locker owner's id
+    ownerId = await requestCanEditPlaylist(c, playlistId);
+    if (!ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
+    position = await nextPosition(db, playlistId);
   } else {
     // library upload — session required. ownerId is the LOCKER, not the
     // uploader: a collaborator's library upload belongs to the owner's
-    // library, same as a playlist upload does. uploadedBy carries who.
-    const actingUserId = await requestSessionUserId(c);
+    // library, exactly as a playlist upload does. actingUserId carries who.
     if (!actingUserId) {
       return c.json({ error: "unauthorized" }, 401);
     }
-    ownerId = lockerIdOf(c.get("user"));
+    ownerId = await lockerIdForUserId(db, actingUserId);
   }
 ```
 
-Note `c.get("user")` is only populated on routes behind `requireAuth`, and `POST /tracks/upload` is **not** — it is deliberately open so edit-share holders can upload. So on this path resolve the locker from the session user id instead, using the same one-select helper Task 3b adds to `playlist-access.ts` (export it, or add an equivalent `lockerIdForUserId(db, userId)` to `lib/locker.ts` and have Task 3b's helper delegate to it — do not write the query twice).
+and the track insert takes `uploadedBy: actingUserId`.
+
+`lockerIdForUserId(db, userId)` is the one-select helper Task 3b introduces. **Do not write that query twice** — export it from a shared module (`lib/locker.ts` is the natural home even though the rest of that file is pure; keep the pure `lockerIdOf` alongside it) and have Task 3b's `playlist-access.ts` use the same function. If Task 3b has already landed with it module-local, promote it here and update Task 3b's call site.
 
 Add a test: a collaborator uploads with no `playlistId`, and the row must come back with `ownerId === ownerId` (the locker owner) and `uploadedBy === collabId`. Then assert it appears in the owner's `GET /tracks`.
 

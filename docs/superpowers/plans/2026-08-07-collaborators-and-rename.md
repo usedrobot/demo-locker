@@ -880,6 +880,27 @@ and the track insert takes `uploadedBy: actingUserId`.
 
 Add a test: a collaborator uploads with no `playlistId`, and the row must come back with `ownerId === ownerId` (the locker owner) and `uploadedBy === collabId`. Then assert it appears in the owner's `GET /tracks`.
 
+**Also in this task: two library-track gates in `comments.ts`** (found by review of Task 3b, 2026-08-07). `comments.ts:85` and `comments.ts:126` both read:
+
+```ts
+allowed = (await requestSessionUserId(c)) === track.ownerId;
+```
+
+That is the library-track branch — a track in no playlist. Tracks inside a playlist go through `requestCanAccessPlaylist`, which Task 3b already fixed, so today a collaborator can read and post comments on a playlist track but is 404'd on a library track in the same locker.
+
+**Do NOT "fix" this by changing `requestSessionUserId`.** It must keep returning the *acting* user — that is exactly what this task needs for `uploadedBy`, and what an earlier review suggested changing. Fix the two call sites instead:
+
+```ts
+const actingUserId = await requestSessionUserId(c);
+allowed =
+  !!actingUserId &&
+  (await lockerIdForUserId(getDb(c.env.DB), actingUserId)) === track.ownerId;
+```
+
+Add a test that a collaborator can read and post a comment on a **library** track in the owner's locker, and that a stranger still cannot.
+
+**One invariant for Task 8 to enforce, recorded here so it is not lost:** setting `lockerOwnerId` on a user who **already owns playlists or tracks** would make their own library 404 to them — `lockerIdOf` would start returning someone else's id while their rows still carry their own. Task 8's invite redemption creates a brand-new account, so this is unreachable as designed; the invariant exists so a future "convert an existing account to a collaborator" feature cannot introduce it silently.
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `packages/api/src/routes/membership.test.ts`:

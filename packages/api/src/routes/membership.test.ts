@@ -301,3 +301,166 @@ describe("the shared playlist-access gates resolve the locker", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("tracks under collaboration", () => {
+  it("shows the owner's library to a collaborator", async () => {
+    await db.insert(tracks).values({
+      ownerId,
+      title: "owner riff",
+      position: 0,
+      originalKey: "lib/owner-riff",
+      uploadedBy: ownerId,
+    });
+
+    const res = await app.request("/tracks", { headers: auth(collabToken) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tracks: { title: string }[] };
+    expect(body.tracks.map((t) => t.title)).toContain("owner riff");
+  });
+
+  it("hides it from a stranger", async () => {
+    const res = await app.request("/tracks", { headers: auth(strangerToken) }, env);
+    const body = (await res.json()) as { tracks: unknown[] };
+    expect(body.tracks).toHaveLength(0);
+  });
+
+  it("lets a collaborator move an owner's track between playlists", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "movable",
+        position: 0,
+        originalKey: "lib/movable",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: ownerPlaylistId }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("404s a stranger moving the same track", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "not yours",
+        position: 0,
+        originalKey: "lib/not-yours",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: null }),
+      },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("attributes a collaborator's upload to them, in the owner's locker", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([1, 2, 3])], "demo.wav"), "demo.wav");
+    form.append("title", "collab upload");
+
+    const res = await app.request(
+      "/tracks/upload",
+      { method: "POST", headers: auth(collabToken), body: form },
+      env
+    );
+    expect(res.status).toBe(201);
+
+    const [row] = await db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.title, "collab upload"));
+    expect(row.ownerId).toBe(ownerId);
+    expect(row.uploadedBy).toBe(collabId);
+  });
+});
+
+describe("comments on a library track under collaboration", () => {
+  it("lets a collaborator read and post a comment on a library track", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "library comment target",
+        position: 0,
+        originalKey: "lib/comment-target",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const getRes = await app.request(
+      `/comments/track/${tr.id}`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(getRes.status).toBe(200);
+
+    const postRes = await app.request(
+      "/comments",
+      {
+        method: "POST",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trackId: tr.id,
+          authorName: "Collab",
+          body: "sounds great",
+        }),
+      },
+      env
+    );
+    expect(postRes.status).toBe(201);
+  });
+
+  it("still refuses a stranger reading or posting on the same library track", async () => {
+    const [tr] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "library comment target for stranger",
+        position: 0,
+        originalKey: "lib/comment-target-stranger",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const getRes = await app.request(
+      `/comments/track/${tr.id}`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(getRes.status).toBe(404);
+
+    const postRes = await app.request(
+      "/comments",
+      {
+        method: "POST",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trackId: tr.id,
+          authorName: "Stranger",
+          body: "not yours",
+        }),
+      },
+      env
+    );
+    expect(postRes.status).toBe(404);
+  });
+});

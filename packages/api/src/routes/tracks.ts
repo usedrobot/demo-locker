@@ -8,6 +8,7 @@ import {
   requestCanEditPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
+import { lockerIdOf, lockerIdForUserId } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { publicTrack } from "../lib/public-track.js";
 import { getLimits, isLimited } from "../lib/limits.js";
@@ -57,21 +58,28 @@ tracksRouter.post("/upload", async (c) => {
     );
   }
 
+  // Who is acting, if anyone. Null for an anonymous edit-share holder — they
+  // are not a user and have no id to record.
+  const actingUserId = await requestSessionUserId(c);
+
   let ownerId: string | null = null;
   let position = 0;
   if (playlistId) {
-    // owner session or edit share token — either resolves to the owner id
+    // owner session, collaborator session, or edit share token — all resolve
+    // to the locker owner's id
     ownerId = await requestCanEditPlaylist(c, playlistId);
     if (!ownerId) {
       return c.json({ error: "not found" }, 404);
     }
     position = await nextPosition(db, playlistId);
   } else {
-    // library upload — session required
-    ownerId = await requestSessionUserId(c);
-    if (!ownerId) {
+    // library upload — session required. ownerId is the LOCKER, not the
+    // uploader: a collaborator's library upload belongs to the owner's
+    // library, exactly as a playlist upload does. actingUserId carries who.
+    if (!actingUserId) {
       return c.json({ error: "unauthorized" }, 401);
     }
+    ownerId = await lockerIdForUserId(db, actingUserId);
   }
 
   // Enforced here rather than trusted from config: MAX_STORAGE_BYTES was read
@@ -125,19 +133,21 @@ tracksRouter.post("/upload", async (c) => {
       waveformData: waveformData || null,
       duration: duration && isFinite(duration) ? duration : null,
       sizeBytes: uploadBytes,
+      uploadedBy: actingUserId,
     })
     .returning();
 
   return c.json({ track: publicTrack(track) }, 201);
 });
 
-// List the user's whole track library (every upload, in or out of playlists)
+// List the locker's whole track library (every upload, in or out of
+// playlists) — the owner's own uploads plus any collaborator's.
 tracksRouter.get("/", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const rows = await db
     .select()
     .from(tracks)
-    .where(eq(tracks.ownerId, c.get("user").id))
+    .where(eq(tracks.ownerId, lockerIdOf(c.get("user"))))
     .orderBy(desc(tracks.uploadedAt));
   return c.json({ tracks: rows.map(publicTrack) });
 });
@@ -249,14 +259,14 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");
   const { playlistId } = await c.req.json<{ playlistId: string | null }>();
   const db = getDb(c.env.DB);
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
 
   const [track] = await db
     .select()
     .from(tracks)
     .where(eq(tracks.id, trackId))
     .limit(1);
-  if (!track || track.ownerId !== userId) {
+  if (!track || track.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 
@@ -267,7 +277,7 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
       .from(playlists)
       .where(eq(playlists.id, playlistId))
       .limit(1);
-    if (!playlist || playlist.ownerId !== userId) {
+    if (!playlist || playlist.ownerId !== lockerId) {
       return c.json({ error: "not found" }, 404);
     }
     position = await nextPosition(db, playlistId);

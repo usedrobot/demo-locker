@@ -12,6 +12,7 @@ import {
   requestCanAccessPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
+import { lockerIdForUserId } from "../lib/locker.js";
 import type { Env } from "../types.js";
 
 const commentsRouter = new Hono<Env>();
@@ -67,10 +68,11 @@ commentsRouter.post("/", async (c) => {
 
   const db = getDb(c.env.DB);
 
-  // Resolve the playlist this comment targets, then gate on it: only the
-  // owner's session or a valid share token may comment (the invite-listener
-  // flow). Anonymous without a token is indistinguishable from a nonexistent
-  // target -> the same non-enumerable 404.
+  // Resolve the playlist this comment targets, then gate on it: only a
+  // session acting in the locker (the owner, or a collaborator) or a valid
+  // share token may comment (the invite-listener flow). Anonymous without a
+  // token is indistinguishable from a nonexistent target -> the same
+  // non-enumerable 404.
   let allowed = false;
   if (trackId) {
     const [track] = await db
@@ -81,8 +83,11 @@ commentsRouter.post("/", async (c) => {
     if (track?.playlistId) {
       allowed = await requestCanAccessPlaylist(c, track.playlistId);
     } else if (track) {
-      // library track outside any playlist — owner only
-      allowed = (await requestSessionUserId(c)) === track.ownerId;
+      // library track outside any playlist — locker only (owner or collaborator)
+      const actingUserId = await requestSessionUserId(c);
+      allowed =
+        !!actingUserId &&
+        (await lockerIdForUserId(db, actingUserId)) === track.ownerId;
     }
   } else if (playlistId) {
     allowed = await requestCanAccessPlaylist(c, playlistId);
@@ -121,9 +126,16 @@ commentsRouter.get("/track/:trackId", async (c) => {
     .from(tracks)
     .where(eq(tracks.id, trackId))
     .limit(1);
-  const canAccess = track?.playlistId
-    ? await requestCanAccessPlaylist(c, track.playlistId)
-    : !!track && (await requestSessionUserId(c)) === track.ownerId;
+  let canAccess = false;
+  if (track?.playlistId) {
+    canAccess = await requestCanAccessPlaylist(c, track.playlistId);
+  } else if (track) {
+    // library track outside any playlist — locker only (owner or collaborator)
+    const actingUserId = await requestSessionUserId(c);
+    canAccess =
+      !!actingUserId &&
+      (await lockerIdForUserId(db, actingUserId)) === track.ownerId;
+  }
   if (!canAccess) {
     return c.json({ error: "not found" }, 404);
   }

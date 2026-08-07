@@ -197,9 +197,10 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
   return c.json({ playlist: updated });
 });
 
-// Stream playlist artwork — gated to owner session or a valid share token.
-// <img> can't send an Authorization header, so a `?token=` query param
-// (session OR share token) is also accepted.
+// Stream playlist artwork — gated to a session acting in the locker (owner
+// or collaborator) or a valid share token. <img> can't send an Authorization
+// header, so a `?token=` query param (session OR share token) is also
+// accepted.
 playlistsRouter.get("/:id/artwork", async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
@@ -250,7 +251,8 @@ playlistsRouter.delete("/:id", requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-// Reorder: owner session OR an "edit" share token for this playlist.
+// Reorder: a locker session (owner or collaborator) OR an "edit" share token
+// for this playlist.
 playlistsRouter.patch("/:id/reorder", async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");

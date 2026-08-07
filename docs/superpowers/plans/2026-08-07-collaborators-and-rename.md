@@ -2484,7 +2484,9 @@ export const collab = {
 };
 ```
 
-`User` in `lib/api.ts` also gains `lockerOwnerId: string | null` so the UI can hide owner-only controls from a signed-in collaborator.
+`User` in `lib/api.ts` also gains `lockerOwnerId: string | null` so the UI can hide owner-only controls from a signed-in collaborator. **Check `me()`'s declared return type too** — it currently omits the field, so the client cannot read it even though `/auth/me` returns it (found by review of Task 6).
+
+**Delete controls must follow the per-row rule.** `Home.tsx`'s `handleTrackDelete` / `handleDelete` call the API with **no `catch`**, and `request()` throws on any non-2xx — so today a collaborator clicking delete on the owner's row gets an unhandled promise rejection and a list that silently does not change. Before this branch that was at least uniform (every collaborator delete failed); now it is per-row, which is worse to experience. Gate the control on `track.uploadedByMe || isLockerOwner` for tracks and `playlist.createdByMe || isLockerOwner` for playlists, **and** add a `catch` that surfaces a visible error rather than failing silently. Both computed fields exist for exactly this.
 
 - [ ] **Step 1: Write the failing test**
 

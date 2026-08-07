@@ -8,6 +8,7 @@ import {
   requestCanEditPlaylist,
 } from "../lib/playlist-access.js";
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
+import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
 import { publicTrack } from "../lib/public-track.js";
 import {
   INERT_CONTENT_HEADERS,
@@ -20,11 +21,11 @@ const playlistsRouter = new Hono<Env>();
 
 playlistsRouter.get("/", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
   const result = await db
     .select()
     .from(playlists)
-    .where(eq(playlists.ownerId, userId))
+    .where(eq(playlists.ownerId, lockerId))
     .orderBy(playlists.createdAt);
 
   return c.json({ playlists: result });
@@ -35,14 +36,15 @@ playlistsRouter.post("/", requireAuth, async (c) => {
   if (!name) return c.json({ error: "name required" }, 400);
 
   const db = getDb(c.env.DB);
-  const userId = c.get("user").id;
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
   const limits = getLimits(c.env);
 
   if (isLimited(limits.maxPlaylists)) {
     const existing = await db
       .select({ id: playlists.id })
       .from(playlists)
-      .where(eq(playlists.ownerId, userId));
+      .where(eq(playlists.ownerId, lockerId));
     if (existing.length >= limits.maxPlaylists) {
       return c.json(
         { error: `free tier limited to ${limits.maxPlaylists} playlist(s)` },
@@ -53,7 +55,7 @@ playlistsRouter.post("/", requireAuth, async (c) => {
 
   const [playlist] = await db
     .insert(playlists)
-    .values({ name, ownerId: userId })
+    .values({ name, ownerId: lockerId, createdBy: user.id })
     .returning();
 
   return c.json({ playlist }, 201);
@@ -89,7 +91,8 @@ playlistsRouter.get("/:id", async (c) => {
 playlistsRouter.patch("/:id", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
-  const userId = c.get("user").id;
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
   const body = await c.req.json();
 
   const [playlist] = await db
@@ -98,13 +101,19 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .limit(1);
 
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name) updates.name = body.name;
-  if (typeof body.isPublic === "boolean") updates.isPublic = body.isPublic;
+  // Publishing is a locker-level decision, not library work: it puts the
+  // playlist on the open web via /public/v1. Collaborators may organise the
+  // library; only the owner may publish from it.
+  if (typeof body.isPublic === "boolean") {
+    if (!isLockerOwner(user)) return c.json({ error: "not found" }, 404);
+    updates.isPublic = body.isPublic;
+  }
   // artworkKey is deliberately NOT patchable. It is a pointer into the shared
   // bucket, so accepting it from a client let any authenticated user aim their
   // own artwork route at another account's object and read it — including the
@@ -125,7 +134,7 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
 playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
 
   const [playlist] = await db
     .select()
@@ -133,7 +142,7 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .limit(1);
 
-  if (!playlist || playlist.ownerId !== userId) {
+  if (!playlist || playlist.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 

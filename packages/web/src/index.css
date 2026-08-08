@@ -233,10 +233,16 @@ button:active {
   font-size: 12px;
   padding: 0.2rem 0.4rem;
   flex: none;
-  /* Wide enough that the "who is this for?" placeholder — the field's only
-     visible affordance, since it's otherwise labelled by aria-label alone —
-     isn't clipped. 14ch cut it off; measured with room to spare. */
-  width: 18ch;
+  /* Wide enough that the "who is this for?" placeholder (16 chars) — the
+     field's only visible affordance, since it's otherwise labelled by
+     aria-label alone — isn't clipped. `* { box-sizing: border-box }` (top of
+     this file) means `width` includes the padding and border set above, so
+     the usable content box is smaller than the declared width: 14ch clipped
+     it outright, and an initial pass at 18ch still clipped by a hair once
+     padding/border were subtracted. 20ch leaves real headroom; re-measure
+     (input.scrollWidth <= input.clientWidth) if this value or the padding
+     changes. */
+  width: 20ch;
 }
 .share-perm {
   display: flex;

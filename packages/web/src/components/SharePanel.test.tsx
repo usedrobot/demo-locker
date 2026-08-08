@@ -209,6 +209,84 @@ describe("SharePanel", () => {
 
     expect(createMock).toHaveBeenCalledWith("pl-1", "listen", "Jimmy");
   });
+
+  // COVERAGE CAVEAT: happy-dom does not implement a real IME composition
+  // pipeline, so this doesn't reproduce an actual composition session — it
+  // constructs a KeyboardEvent with isComposing set per the KeyboardEventInit
+  // spec (the same property a real browser sets on the keydown that commits
+  // an IME candidate) and checks the handler respects it. It cannot catch a
+  // regression in how a *real* IME's compositionend/keydown ordering
+  // interacts with this handler, only whether the isComposing check itself
+  // is present and wired up.
+  it("does not mint on the Enter that commits an IME composition", async () => {
+    render();
+    await flush();
+
+    const input = labelInput();
+    act(() => typeValue(input!, "日本"));
+    act(() => {
+      input!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          isComposing: true,
+          bubbles: true,
+        })
+      );
+    });
+    await flush();
+
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mint again for a held-Enter repeat once the first mint has resolved", async () => {
+    render();
+    await flush();
+
+    const input = labelInput();
+    act(() => typeValue(input!, "Jimmy"));
+    act(() => {
+      input!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
+    await flush();
+    expect(createMock).toHaveBeenCalledTimes(1);
+
+    // creatingRef has already cleared by now (the first mint resolved), so
+    // only the `repeat` check — not the in-flight guard — can stop this one.
+    act(() => {
+      input!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true })
+      );
+    });
+    await flush();
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the label input while a mint is in flight", async () => {
+    const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
+    createMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+
+    const input = labelInput();
+    expect(input!.disabled).toBe(false);
+
+    act(() => shareButton()!.click());
+    // A render is expected between the click and this check — unlike the
+    // dedupe test, this one is about the rendered `disabled` attribute
+    // itself, not about beating a render to the punch.
+    await flush();
+
+    expect(input!.disabled).toBe(true);
+
+    await act(async () => {
+      gate.resolve({ share: {} as never });
+      await Promise.resolve();
+    });
+  });
 });
 
 // COVERAGE CAVEAT: the 320px `.share-actions` overflow check is NOT covered

@@ -120,8 +120,24 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           aria-label="who is this for?"
           placeholder="who is this for?"
           value={label}
+          // Disabled while a mint is in flight — the same shape as the Task 9
+          // rename field. That control started out leaving itself editable
+          // mid-request and letting a slow response clobber whatever the user
+          // typed next; after several rounds the fix was to close the window
+          // entirely (disable) rather than try to reconcile a draft against
+          // the eventual response. Doing the same here up front.
+          disabled={creating}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => {
+            // A held Enter key repeats keydown after the first mint has
+            // already resolved and creatingRef has cleared, so the ref guard
+            // alone doesn't stop it — each repeat is a fresh, ungated call.
+            if (e.repeat) return;
+            // The Enter that commits an IME composition (e.g. selecting a
+            // kanji candidate) also fires keydown with key "Enter". Treating
+            // it as "submit" would mint a link from whatever partial text was
+            // mid-composition, with no confirmation step.
+            if (e.nativeEvent.isComposing) return;
             if (e.key === "Enter") handleCreate();
           }}
           className="share-label-input"
@@ -138,6 +154,14 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
         <button onClick={handleCreate} disabled={creating} className="tui-btn">
           [+ share link]
         </button>
+        {creating && (
+          <span
+            className="dots"
+            style={{ color: "var(--fg-dim)", fontSize: "11px", flex: "none" }}
+          >
+            minting
+          </span>
+        )}
         {extraAction}
       </div>
       {error && (

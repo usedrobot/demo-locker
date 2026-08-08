@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
-import { getDb } from "../db/index.js";
+import { getDb, type Database } from "../db/index.js";
 import { users, sessions, collaboratorInvites } from "../db/schema.js";
 import {
   hashPassword,
@@ -20,13 +20,29 @@ import {
   signupAllowed,
   resolveInvite,
   claimInvite,
-  bindToLocker,
+  releaseInvite,
+  countLockerMembers,
   type ClaimedInvite,
 } from "../lib/signup.js";
+import { getLimits, isLimited } from "../lib/limits.js";
 import { rateLimit, LOGIN_RULE, SIGNUP_RULE } from "../lib/rate-limit.js";
 import type { Env } from "../types.js";
 
 const auth = new Hono<Env>();
+
+// Hand a claimed invite back after the account it was claimed for failed to
+// materialise. Best-effort on purpose: the error that triggered this is the one
+// worth reporting, and a release that cannot land leaves a spent invite — the
+// safe direction, since nobody got in.
+async function release(db: Database, inviteId: string): Promise<void> {
+  try {
+    if (!(await releaseInvite(db, inviteId))) {
+      console.error("invite", inviteId, "was not released — it may already be redeemed");
+    }
+  } catch (err) {
+    console.error("failed to release invite", inviteId, err);
+  }
+}
 
 auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   const { email, password, inviteToken } = await c.req.json();
@@ -65,8 +81,25 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   }
 
   if (inviteToken) {
-    if (!(await resolveInvite(db, inviteToken))) {
+    const pending = await resolveInvite(db, inviteToken);
+    if (!pending) {
       return c.json({ error: "this invite is not valid" }, 403);
+    }
+
+    // Re-check the seat cap here, not only where the invite was minted.
+    // getLimits reads the env per request, so an operator who lowers
+    // MAX_COLLABORATORS while invites are outstanding would otherwise see
+    // every one of them redeemed anyway and end up permanently over the cap
+    // they just set. Redemption is where a seat is actually taken.
+    const limits = getLimits(c.env);
+    if (isLimited(limits.maxCollaborators)) {
+      const seated = await countLockerMembers(db, pending.ownerId);
+      if (seated >= limits.maxCollaborators) {
+        return c.json(
+          { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
+          403
+        );
+      }
     }
   } else if (!(await signupAllowed(db, c.env))) {
     return c.json({ error: "registration is closed on this instance" }, 403);
@@ -82,14 +115,22 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     return c.json({ error: "email already registered" }, 409);
   }
 
-  // Hash before claiming: PBKDF2 is the slowest thing on this path, and an
-  // invite spent on a request that then fails is spent forever.
+  // Hash before claiming: PBKDF2 is the slowest thing on this path, and every
+  // step taken after the claim is a step that can burn the invite.
   const passwordHash = await hashPassword(password);
 
   // Now take the invite. This is the atomic conditional update — the winner of
   // two concurrent redemptions, not merely a caller who read the row while it
   // was still open. The loser is refused exactly like a spent invite, and
   // creates nothing.
+  //
+  // Claim before creating, not after, because the two orderings fail in very
+  // different directions. Claiming first means a failure leaves nobody in the
+  // locker and, at worst, a spent invite — which the release below undoes.
+  // Creating first would mean a lost race leaves an account already bound to
+  // someone else's locker, and if the cleanup delete then failed, that is
+  // standing access nobody granted. A lost seat is recoverable; unauthorised
+  // access is not.
   let invite: ClaimedInvite | null = null;
   if (inviteToken) {
     invite = await claimInvite(db, inviteToken);
@@ -98,26 +139,46 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     }
   }
 
-  const [created] = await db.insert(users).values({ email, passwordHash }).returning({
-    id: users.id,
-    email: users.email,
-    accent: users.accent,
-    lockerOwnerId: users.lockerOwnerId,
-  });
+  // The binding is set in the INSERT, never in a follow-up UPDATE. There is no
+  // transaction here — D1 has none to offer across a request — so an account
+  // created unbound and bound afterwards is an account that survives with
+  // locker_owner_id NULL if anything in between fails. isLockerOwner() is
+  // exactly that test, so such an orphan would be a full independent locker
+  // owner, able to log in with the password it just chose and mint invites of
+  // its own, on an instance where registration is closed.
+  let user;
+  try {
+    [user] = await db
+      .insert(users)
+      .values({ email, passwordHash, lockerOwnerId: invite?.ownerId ?? null })
+      .returning({
+        id: users.id,
+        email: users.email,
+        accent: users.accent,
+        lockerOwnerId: users.lockerOwnerId,
+      });
+  } catch (err) {
+    // The account did not happen, so the invite must not stay spent. The
+    // duplicate-email check above is a plain read with no transaction, so two
+    // concurrent signups on one address can both pass it and the loser lands
+    // here on UNIQUE(users.email) — a real path, not a theoretical one.
+    if (invite) await release(db, invite.id);
+    throw err;
+  }
 
-  // The account is created unbound and then bound through bindToLocker, which
-  // is the one sanctioned writer of locker_owner_id and asserts the binding is
-  // safe before it writes. The assertion cannot fire here — the account is
-  // milliseconds old and owns nothing — but routing the real flow through it
-  // keeps it exercised, so it is still a working guard the day something binds
-  // an account that is not brand new.
-  let user = created;
+  // From here the account exists and the claim must stand. Attribution is the
+  // only thing left, and it is not worth failing a successful signup over: the
+  // collaborator is already in the locker and shows up in GET /collab/members,
+  // which reads users.locker_owner_id rather than this column.
   if (invite) {
-    user = await bindToLocker(db, created.id, invite.ownerId);
-    await db
-      .update(collaboratorInvites)
-      .set({ acceptedBy: created.id })
-      .where(eq(collaboratorInvites.id, invite.id));
+    try {
+      await db
+        .update(collaboratorInvites)
+        .set({ acceptedBy: user.id })
+        .where(eq(collaboratorInvites.id, invite.id));
+    } catch (err) {
+      console.error("failed to record who redeemed invite", invite.id, err);
+    }
   }
 
   const token = generateToken();

@@ -6,12 +6,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
-import { bindToLocker, rowsAffected } from "../lib/signup.js";
+import { bindToLocker, releaseInvite, rowsAffected } from "../lib/signup.js";
 import {
   users,
   sessions,
@@ -700,5 +700,229 @@ describe("a non-string invite token", () => {
 
     const [none] = await db.select().from(users).where(eq(users.email, "typed@test.dev"));
     expect(none).toBeUndefined();
+  });
+});
+
+// Redemption is four writes with no transaction — D1 has none to offer across
+// a request — so what matters is what a failure between them leaves behind.
+// These tests inject the failure at each seam. The proxy fails one table's
+// inserts or updates and passes everything else through, so the rate limiter
+// (which reads and writes rate_limits on every request) still works.
+describe("a partial failure during redemption", () => {
+  const failing = (op: "insert" | "update", table: unknown) =>
+    new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === op) {
+          return (t: unknown) => {
+            if (t === table) throw new Error(`injected ${op} failure`);
+            return (target as Record<string, (t: unknown) => unknown>)[op](t);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+  const redeem = (email: string, token: string, ip: string) =>
+    app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip },
+        body: JSON.stringify({ email, password: "correct horse", inviteToken: token }),
+      },
+      env
+    );
+
+  // An account created unbound and bound by a follow-up UPDATE survives that
+  // UPDATE failing — with locker_owner_id NULL. isLockerOwner() is exactly
+  // that test, so the orphan is a full independent locker owner: it logs in
+  // with the password it just chose, gets its own library, and can mint
+  // invites, on an instance where registration is closed. The binding goes in
+  // the INSERT so there is no window to fail in.
+  it("never leaves an account that is not bound to the inviting locker", async () => {
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "no-orphan-token", label: "Bound" });
+
+    setDbFactory(() => failing("update", users));
+    let res: Response;
+    try {
+      res = await redeem("no-orphan@test.dev", "no-orphan-token", "203.0.113.13");
+    } finally {
+      setDbFactory(() => db);
+    }
+
+    expect(res.status).toBe(201);
+    const [account] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, "no-orphan@test.dev"));
+    expect(account).toBeDefined();
+    expect(account.lockerOwnerId).toBe(ownerId);
+
+    // The account must never be a locker owner, not even transiently — which
+    // is what a failed follow-up UPDATE would have left.
+    const orphans = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.email, "no-orphan@test.dev"), isNull(users.lockerOwnerId)));
+    expect(orphans).toHaveLength(0);
+  });
+
+  // The claim happens before the account is created, so a failure to create
+  // has to hand the invite back or it is spent forever: accepted_at set,
+  // nobody in the locker, and the owner has to notice and re-mint.
+  it("hands the invite back when the account cannot be created", async () => {
+    const [inv] = await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "released-token", label: "Retry" })
+      .returning();
+
+    setDbFactory(() => failing("insert", users));
+    let res: Response;
+    try {
+      res = await redeem("retry@test.dev", "released-token", "203.0.113.14");
+    } finally {
+      setDbFactory(() => db);
+    }
+    expect(res.status).toBe(500);
+
+    const [after] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.id, inv.id));
+    expect(after.acceptedAt).toBeNull();
+    expect(after.acceptedBy).toBeNull();
+
+    const [none] = await db.select().from(users).where(eq(users.email, "retry@test.dev"));
+    expect(none).toBeUndefined();
+
+    // And it is genuinely reusable, which is the point of releasing it.
+    const second = await redeem("retry@test.dev", "released-token", "203.0.113.14");
+    expect(second.status).toBe(201);
+    const { user } = (await second.json()) as { user: { id: string; lockerOwnerId: string } };
+    expect(user.lockerOwnerId).toBe(ownerId);
+  });
+});
+
+// The release is only safe because it cannot undo a redemption that worked.
+describe("releaseInvite", () => {
+  it("refuses to release an invite that someone actually redeemed", async () => {
+    const [member] = await db
+      .insert(users)
+      .values({ email: "already-in@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
+      .returning();
+    const [inv] = await db
+      .insert(collaboratorInvites)
+      .values({
+        ownerId,
+        token: "spent-token",
+        label: "Spent",
+        acceptedAt: new Date(),
+        acceptedBy: member.id,
+      })
+      .returning();
+
+    expect(await releaseInvite(db, inv.id)).toBe(false);
+
+    const [after] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.id, inv.id));
+    expect(after.acceptedAt).not.toBeNull();
+    expect(after.acceptedBy).toBe(member.id);
+  });
+});
+
+// An invite pointing at an account that is not a locker owner cannot be
+// honoured: lockerIdOf() would resolve to a user id that is not a locker, and
+// the new account's reads would land on a library nobody owns. Unreachable
+// today — POST /collab/invites is owner-gated and nothing demotes an owner —
+// so both of these plant the row directly.
+describe("an invite whose owner is not a locker owner", () => {
+  it("is refused at redemption", async () => {
+    const [notAnOwner] = await db
+      .insert(users)
+      .values({ email: "not-an-owner@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
+      .returning();
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId: notAnOwner.id, token: "chained-token", label: "Chain" });
+
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.15" },
+        body: JSON.stringify({
+          email: "chained@test.dev",
+          password: "correct horse",
+          inviteToken: "chained-token",
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+
+    const [none] = await db.select().from(users).where(eq(users.email, "chained@test.dev"));
+    expect(none).toBeUndefined();
+  });
+
+  it("is refused by bindToLocker", async () => {
+    const [target] = await db
+      .insert(users)
+      .values({ email: "bind-target@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
+      .returning();
+    const [candidate] = await db
+      .insert(users)
+      .values({ email: "bind-candidate@test.dev", passwordHash: "x" })
+      .returning();
+
+    await expect(bindToLocker(db, candidate.id, target.id)).rejects.toThrow(
+      /itself a collaborator/
+    );
+
+    const [unchanged] = await db.select().from(users).where(eq(users.id, candidate.id));
+    expect(unchanged.lockerOwnerId).toBeNull();
+  });
+});
+
+// The seat cap is enforced where the seat is taken, not only where the invite
+// was minted. getLimits reads the env per request, so an operator who lowers
+// MAX_COLLABORATORS while invites are outstanding would otherwise watch every
+// one of them redeem anyway and end up permanently over the cap they just set.
+describe("MAX_COLLABORATORS at redemption", () => {
+  it("refuses to seat a collaborator the locker no longer has room for", async () => {
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "over-cap-token", label: "Too many" });
+
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.16" },
+        body: JSON.stringify({
+          email: "over-cap@test.dev",
+          password: "correct horse",
+          inviteToken: "over-cap-token",
+        }),
+      },
+      { ...env, MAX_COLLABORATORS: "1" }
+    );
+    expect(res.status).toBe(403);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain("full");
+
+    const [none] = await db.select().from(users).where(eq(users.email, "over-cap@test.dev"));
+    expect(none).toBeUndefined();
+
+    // Refused before the claim, so the invite is still there to use once the
+    // operator makes room.
+    const [invite] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.token, "over-cap-token"));
+    expect(invite.acceptedAt).toBeNull();
   });
 });

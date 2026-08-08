@@ -71,14 +71,36 @@ export async function resolveInvite(
       id: collaboratorInvites.id,
       ownerId: collaboratorInvites.ownerId,
       expiresAt: collaboratorInvites.expiresAt,
+      // The invite is only worth anything if the account it points at still
+      // owns a locker. Redeeming one that points at a collaborator would bind
+      // the new account to a user id that is not a locker: lockerIdOf() would
+      // resolve to it, and every read would land on a library nobody owns.
+      // Unreachable today — POST /collab/invites is isLockerOwner-gated and
+      // nothing demotes an owner — so this is the same kind of tripwire as
+      // assertLockerBindingSafe, and 403 is the honest answer for an invite
+      // that cannot be honoured.
+      ownerIsLockerOwner: users.lockerOwnerId,
     })
     .from(collaboratorInvites)
+    .innerJoin(users, eq(users.id, collaboratorInvites.ownerId))
     .where(and(eq(collaboratorInvites.token, token), isNull(collaboratorInvites.acceptedAt)))
     .limit(1);
 
   if (!invite) return null;
+  if (invite.ownerIsLockerOwner !== null) return null;
   if (invite.expiresAt && invite.expiresAt <= now) return null;
   return { id: invite.id, ownerId: invite.ownerId };
+}
+
+// Members already seated in a locker. The mint-time cap in routes/collab.ts
+// counts members plus outstanding invites; this counts only who is actually
+// in, because the invite being redeemed is one of those outstanding ones.
+export async function countLockerMembers(db: Database, ownerId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(users)
+    .where(eq(users.lockerOwnerId, ownerId));
+  return Number(row?.count ?? 0);
 }
 
 // Take the invite, atomically, before creating anything.
@@ -123,6 +145,28 @@ export async function claimInvite(
   return invite ? { id: invite.id, ownerId: invite.ownerId } : null;
 }
 
+// Give a claimed invite back.
+//
+// There is no transaction anywhere in this codebase — D1 has none to offer
+// across a request — so a claim followed by a failed account creation would
+// otherwise leave the invite spent forever: accepted_at set, nobody in the
+// locker, and the owner has to notice and re-mint. Releasing is the
+// compensating action.
+//
+// `accepted_by IS NULL` is what makes it safe to call: it can only ever undo a
+// claim that never became an account, so a release arriving late can never
+// unspend an invite that someone successfully redeemed. Best-effort by design
+// — the caller logs a failure rather than raising it, because the error that
+// triggered the release is the one worth reporting.
+export async function releaseInvite(db: Database, inviteId: string): Promise<boolean> {
+  const released = await db
+    .update(collaboratorInvites)
+    .set({ acceptedAt: null })
+    .where(and(eq(collaboratorInvites.id, inviteId), isNull(collaboratorInvites.acceptedBy)));
+
+  return rowsAffected(released) === 1;
+}
+
 export type SignupUser = {
   id: string;
   email: string;
@@ -130,15 +174,23 @@ export type SignupUser = {
   lockerOwnerId: string | null;
 };
 
-// The one sanctioned way to make an account a collaborator on someone else's
-// locker. Everything that writes users.locker_owner_id should come through
-// here, so the invariant below is checked once rather than remembered.
+// Bind an *existing* account to someone else's locker.
+//
+// Signup does not use this: it sets locker_owner_id in the INSERT, because a
+// separate UPDATE means a transient failure between the two leaves an account
+// with locker_owner_id NULL — and isLockerOwner() is exactly that test, so the
+// orphan is a full independent locker owner on an instance where registration
+// is closed. One statement, no window.
+//
+// This stays as the one sanctioned way to bind an account that already exists,
+// which is what a future "convert an existing account to a collaborator"
+// feature needs. It asserts both halves of the invariant before it writes.
 export async function bindToLocker(
   db: Database,
   userId: string,
   ownerId: string
 ): Promise<SignupUser> {
-  await assertLockerBindingSafe(db, userId);
+  await assertLockerBindingSafe(db, userId, ownerId);
 
   const [user] = await db
     .update(users)
@@ -161,7 +213,30 @@ export async function bindToLocker(
 // tripwire, not a fix. It is here so a future "convert an existing account to a
 // collaborator" feature cannot introduce the bug silently. It throws rather
 // than returning a boolean because there is no sane way to continue.
-export async function assertLockerBindingSafe(db: Database, userId: string): Promise<void> {
+//
+// The target is checked too: binding to an account that is itself a
+// collaborator would point lockerIdOf() at a user id that is not a locker, and
+// the bound account's reads would land on a library nobody owns.
+export async function assertLockerBindingSafe(
+  db: Database,
+  userId: string,
+  ownerId: string
+): Promise<void> {
+  const [target] = await db
+    .select({ lockerOwnerId: users.lockerOwnerId })
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1);
+
+  if (!target) {
+    throw new Error(`refusing to bind ${userId} to ${ownerId}: no such account`);
+  }
+  if (target.lockerOwnerId !== null) {
+    throw new Error(
+      `refusing to bind ${userId} to ${ownerId}: that account is itself a collaborator, not a locker owner`
+    );
+  }
+
   const [owned] = await db
     .select({ count: sql<number>`count(*)` })
     .from(playlists)

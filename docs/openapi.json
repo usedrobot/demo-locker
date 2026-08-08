@@ -569,7 +569,7 @@
             }
           },
           "403": {
-            "description": "Registration is closed, or the supplied inviteToken is not valid. Without an invite, signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true. With one, unknown, already-redeemed and expired tokens are refused identically, and are checked before the duplicate-email 409 so signup cannot be used to confirm an address.",
+            "description": "Registration is closed, or the supplied inviteToken is not valid. Without an invite, signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true. With one, unknown, already-redeemed and expired tokens are refused identically, and are checked before the duplicate-email 409 so signup cannot be used to confirm an address. A valid invite is also refused when the locker has no seat left, since MAX_COLLABORATORS is re-checked where the seat is taken and may have been lowered since the invite was minted.",
             "content": {
               "application/json": {
                 "schema": {

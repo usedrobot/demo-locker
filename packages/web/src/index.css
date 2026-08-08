@@ -229,6 +229,25 @@ button:active {
   flex: 1 1 16rem;
   min-width: 0;
 }
+.share-label-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 0.2rem 0.4rem;
+  flex: none;
+  width: 14ch;
+}
+.share-perm {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--fg-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  flex: none;
+}
 
 /* comments
    Meta (avatar / timestamp / author / actions) sits on its own line and the body

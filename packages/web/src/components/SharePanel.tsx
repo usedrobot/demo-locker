@@ -11,6 +11,8 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   const [items, setItems] = useState<Share[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [canEdit, setCanEdit] = useState(false);
+  const [label, setLabel] = useState("");
 
   const load = useCallback(() => {
     api.forPlaylist(playlistId).then((r) => setItems(r.shares));
@@ -23,7 +25,8 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   async function handleCreate() {
     setError("");
     try {
-      await api.create(playlistId, "listen");
+      await api.create(playlistId, canEdit ? "edit" : "listen", label.trim() || undefined);
+      setLabel("");
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
@@ -96,13 +99,26 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
       </div>
 
       <div className="share-actions">
+        <input
+          aria-label="who is this for?"
+          placeholder="who is this for?"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          className="share-label-input"
+        />
+        <label className="share-perm">
+          <input
+            type="checkbox"
+            aria-label="can upload and reorder"
+            checked={canEdit}
+            onChange={(e) => setCanEdit(e.target.checked)}
+          />
+          can upload and reorder
+        </label>
         <button onClick={handleCreate} className="tui-btn">
           [+ share link]
         </button>
         {extraAction}
-        <span className="share-hint">
-          links start listen-only — grant edit from the access panel on the main page
-        </span>
       </div>
       {error && (
         <div style={{ color: "#f44", fontSize: "12px", marginTop: "0.25rem" }}>

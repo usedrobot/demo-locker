@@ -228,11 +228,13 @@ describe("SharePanel", () => {
   // an IME candidate) and checks the handler respects it. It cannot catch a
   // regression in how a *real* IME's compositionend/keydown ordering
   // interacts with this handler, only whether the isComposing check itself
-  // is present and wired up. There is no equivalent test for the `keyCode
-  // === 229` fallback in the same handler — that path exists for Safari,
-  // where isComposing is reported not to be set on the commit keydown, but
-  // that has not been verified against a real Safari and there is no
-  // browser-differentiated way to exercise it here.
+  // is present and wired up.
+  //
+  // Safari's composition-commit keydown is reported not to set isComposing at
+  // all, so this guard may not cover it there — an unverified, deliberately
+  // open gap. A `keyCode === 229` fallback previously stood in for it and was
+  // removed: see the handler's comment in SharePanel.tsx for why re-adding it
+  // (silent dead Enter on Android soft keyboards) is worse than the gap.
   it("does not mint on the Enter that commits an IME composition", async () => {
     render();
     await flush();
@@ -303,28 +305,58 @@ describe("SharePanel", () => {
     });
   });
 
-  it("announces the in-flight mint to assistive tech via role=status", async () => {
+  it("keeps the role=status region mounted and toggles its text", async () => {
     const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
     createMock.mockReturnValueOnce(gate.promise);
 
     render();
     await flush();
 
-    expect(container.querySelector('[role="status"]')).toBeNull();
+    // The region must already exist, empty, BEFORE the mint. Screen readers
+    // commonly drop the announcement when a live region and its content are
+    // inserted in the same commit, so a test asserting this is null at rest
+    // (as an earlier version of this test did) pins the broken pattern.
+    const idle = container.querySelector('[role="status"]');
+    expect(idle).not.toBeNull();
+    expect(idle!.textContent).toBe("");
 
     act(() => shareButton()!.click());
     await flush();
 
-    // Finding 4: without this, a keyboard/screen-reader user pressing Enter
-    // has focus yanked away by the disable (see the refocus tests below) at
-    // the same moment the only progress signal appears, with no
-    // announcement that anything started.
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    // Same node, new text — that transition is what gets announced.
+    expect(container.querySelector('[role="status"]')).toBe(idle);
+    expect(idle!.textContent).toBe("minting");
 
     await act(async () => {
       gate.resolve({ share: {} as never });
       await Promise.resolve();
     });
+    await flush();
+
+    // And completion is observable too: the region empties rather than being
+    // removed, so "the mint finished" is an announceable change, not a
+    // silent unmount.
+    expect(container.querySelector('[role="status"]')).toBe(idle);
+    expect(idle!.textContent).toBe("");
+  });
+
+  it("announces a failed mint via role=alert", async () => {
+    createMock.mockRejectedValueOnce(new Error("nope"));
+
+    render();
+    await flush();
+
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    act(() => shareButton()!.click());
+    await flush();
+
+    // Without role=alert the error is a plain <div>: focus has already been
+    // taken by the disable and silently handed back, so a screen-reader user
+    // gets no signal at all that the mint failed.
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert!.textContent).toContain("nope");
   });
 
   it("does not steal focus into the label input merely by mounting", async () => {
@@ -350,7 +382,14 @@ describe("SharePanel", () => {
     expect(document.activeElement).toBe(input);
 
     act(() => typeValue(input, "Jimmy"));
-    act(() => shareButton()!.click());
+    // Enter in the field, not a button click: this test's premise is that the
+    // user was *in the label input* when the mint started, which is the only
+    // case the refocus effect is allowed to act on. Driving it by Enter keeps
+    // that premise true in the DOM rather than relying on happy-dom happening
+    // not to move focus on .click().
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
     await flush();
     expect(input.disabled).toBe(true);
 
@@ -362,14 +401,51 @@ describe("SharePanel", () => {
 
     await act(async () => {
       gate.reject(new Error("nope"));
-      await Promise.resolve().catch(() => {});
+      await gate.promise.catch(() => {});
     });
     await flush();
 
     expect(input.disabled).toBe(false);
-    // The refocus effect fires because focus was still unclaimed (on <body>)
-    // when `creating` flipped back to false.
+    // The refocus effect fires because focus started in the label input and
+    // was still unclaimed (on <body>) when `creating` flipped back to false.
     expect(document.activeElement).toBe(input);
+  });
+
+  // COVERAGE CAVEAT: the premise here is "a real browser blurs the mint button
+  // to <body> when it becomes disabled, exactly as it does the label input."
+  // happy-dom models neither half — it keeps activeElement on a disabled
+  // element — so the test states that premise explicitly: it focuses the
+  // button, then calls browserBlurOnDisable() at the point the browser would
+  // already have blurred it. What is genuinely verified is that the effect
+  // keys off *where focus was when the mint started*, not merely off "focus is
+  // now unclaimed" — under the latter, clicking the button (the common path,
+  // since it is `disabled={creating}` too) would dump focus into the label
+  // input, the very failure the effect exists to avoid.
+  it("does not pull focus into the label input when the mint started from the button", async () => {
+    const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
+    createMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+
+    const input = labelInput()!;
+    const btn = shareButton()!;
+    act(() => btn.focus());
+    expect(document.activeElement).toBe(btn);
+
+    act(() => btn.click());
+    await flush();
+
+    act(() => browserBlurOnDisable());
+    expect(document.activeElement).toBe(document.body);
+
+    await act(async () => {
+      gate.resolve({ share: {} as never });
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(document.activeElement).not.toBe(input);
   });
 
   it("does not steal focus back if the user moved it elsewhere during the mint", async () => {

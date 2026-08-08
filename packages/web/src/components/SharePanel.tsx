@@ -26,6 +26,11 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   // render" (false -> false) — see that effect for why the distinction
   // matters.
   const wasCreatingRef = useRef(false);
+  // Whether focus was in the label input at the moment a mint started. Captured
+  // synchronously in handleCreate, NOT in the refocus effect: by the time that
+  // effect runs, the render carrying `disabled` has already committed and a real
+  // browser has already moved focus to <body>, so there is nothing left to read.
+  const focusWasInLabelRef = useRef(false);
 
   const load = useCallback(() => {
     api.forPlaylist(playlistId).then((r) => setItems(r.shares));
@@ -43,13 +48,19 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   // (PlaylistView.tsx:53-63) and fixed it by refocusing in an effect — but
   // that version refocuses unconditionally, which was later found to steal
   // focus from wherever the user had since moved (parked for a future fix
-  // there). This version only acts on the true -> false transition (so it
-  // never fires on mount, when nothing was ever disabled) and only refocuses
-  // when focus is still unclaimed (activeElement is <body> or null) — if the
-  // user clicked something else while the mint was in flight, this leaves it
-  // alone.
+  // there). Three conditions gate this one:
+  //   1. the true -> false transition only, so it never fires on mount, when
+  //      nothing was ever disabled;
+  //   2. focus was in the LABEL INPUT when the mint started. The mint button
+  //      is `disabled={creating}` too, so clicking it — the more common path —
+  //      also blurs to <body>; without this check the effect would yank focus
+  //      into the label input, which is not the control the user was on. The
+  //      button case is deliberately left to the browser's own behaviour after
+  //      re-enable.
+  //   3. focus is still unclaimed (activeElement is <body> or null) — if the
+  //      user clicked something else while the mint was in flight, leave it.
   useEffect(() => {
-    if (wasCreatingRef.current && !creating) {
+    if (wasCreatingRef.current && !creating && focusWasInLabelRef.current) {
       if (document.activeElement === document.body || document.activeElement === null) {
         labelInputRef.current?.focus();
       }
@@ -60,6 +71,10 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   async function handleCreate() {
     if (creatingRef.current) return;
     creatingRef.current = true;
+    // Read focus before setCreating, while the input is still enabled and
+    // still holds it. See focusWasInLabelRef.
+    focusWasInLabelRef.current =
+      labelInputRef.current !== null && document.activeElement === labelInputRef.current;
     setCreating(true);
     setError("");
     try {
@@ -175,13 +190,23 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
             // it as "submit" would mint a link from whatever partial text was
             // mid-composition, with no confirmation step. Verified against
             // Chrome/Firefox's `isComposing` behavior (both set it on that
-            // keydown). Safari is reported to omit `isComposing` on the
-            // commit keydown and instead leave the legacy `keyCode` at 229 —
-            // the fallback below follows that common workaround, but this has
-            // NOT been measured against real Safari, only reasoned about; if
-            // that turns out wrong, the IME bug this guard exists for still
-            // reproduces there.
-            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            // keydown).
+            //
+            // KNOWN GAP, deliberately left open: Safari's composition-commit
+            // keydown is *reported* to omit `isComposing`, so the IME bug may
+            // still reproduce there. That is unverified — nobody has measured
+            // it — and it stays unhandled on purpose.
+            //
+            // DO NOT re-add a `keyCode === 229` fallback without measuring
+            // first. It was tried and reverted: the check has to run before
+            // the `key === "Enter"` test, so it swallows *every* keydown
+            // reporting 229 on *every* browser — and Android soft keyboards
+            // (GBoard among others) report keyCode 229 with `isComposing`
+            // false while predictive text is active. That turned Enter in this
+            // field into a silent dead key on a common platform: no mint, no
+            // feedback. Unmeasured defence that causes a known regression is
+            // worse than the gap it was covering.
+            if (e.nativeEvent.isComposing) return;
             if (e.key === "Enter") handleCreate();
           }}
           className="share-label-input"
@@ -198,19 +223,30 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
         <button onClick={handleCreate} disabled={creating} className="tui-btn">
           [+ share link]
         </button>
-        {creating && (
-          <span
-            role="status"
-            className="dots"
-            style={{ color: "var(--fg-dim)", fontSize: "11px", flex: "none" }}
-          >
-            minting
-          </span>
-        )}
+        {/* Always rendered, text toggled — never mounted alongside its own
+            content. A role="status" region has to be in the accessibility tree
+            *before* its text changes; NVDA, JAWS and VoiceOver commonly drop
+            the announcement when the node and its text arrive in the same
+            commit. Keeping the node also means the mint's *completion* is
+            observable: the text empties rather than the region vanishing.
+            When idle this is a zero-width flex item (one extra 0.5rem gap in
+            `.share-actions`; re-measured at 320px, still no overflow). */}
+        <span
+          role="status"
+          className={creating ? "dots" : undefined}
+          style={{ color: "var(--fg-dim)", fontSize: "11px", flex: "none" }}
+        >
+          {creating ? "minting" : ""}
+        </span>
         {extraAction}
       </div>
       {error && (
-        <div style={{ color: "#f44", fontSize: "12px", marginTop: "0.25rem" }}>
+        // role="alert" (assertive), the companion to the role="status" above:
+        // on the Enter path the disable takes focus away and the refocus effect
+        // silently hands it back, so without an announcement a screen-reader
+        // user's only signal that the mint failed is that nothing happened —
+        // and they retype and resubmit into the same error.
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginTop: "0.25rem" }}>
           {error}
         </div>
       )}

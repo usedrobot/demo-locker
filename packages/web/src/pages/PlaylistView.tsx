@@ -340,7 +340,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
           </h3>
           <Comments
             trackId={selectedTrack.id}
-            isOwner={isOwner}
+            canModerate={canManage}
             currentTime={
               playerState.track?.id === selectedTrack.id
                 ? playerState.currentTime
@@ -404,7 +404,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
       {/* Playlist-level comments */}
       <div style={{ marginTop: "2.5rem" }}>
-        <Comments playlistId={playlistId} isOwner={isOwner} />
+        <Comments playlistId={playlistId} canModerate={canManage} />
       </div>
     </div>
   );

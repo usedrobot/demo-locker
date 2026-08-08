@@ -11,7 +11,7 @@ import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
-import { users, playlists, sessions, tracks, shares } from "../db/schema.js";
+import { users, playlists, sessions, tracks, shares, comments } from "../db/schema.js";
 
 let db: Database;
 let root: string;
@@ -1252,6 +1252,193 @@ describe("delete is limited to what you created", () => {
     );
     expect(res.status).toBe(200);
     const [gone] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(gone).toBeUndefined();
+  });
+});
+
+// DL's ruling, 2026-08-08: moderation is band work, not administration — a
+// collaborator who can post a comment can resolve and delete one. Both guards
+// here compared against the acting user's id while `playlists.ownerId` holds
+// the LOCKER id, so they passed for the owner by coincidence and never for a
+// collaborator.
+describe("comment moderation under collaboration", () => {
+  async function commentOnOwnerPlaylist(body = "needs a louder snare") {
+    const [row] = await db
+      .insert(comments)
+      .values({ playlistId: ownerPlaylistId, authorName: "Listener", body })
+      .returning();
+    return row;
+  }
+
+  it("lets a collaborator resolve a comment in their locker, crediting them personally", async () => {
+    const comment = await commentOnOwnerPlaylist();
+    const res = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const { comment: updated } = (await res.json()) as {
+      comment: { resolvedAt: unknown };
+    };
+    expect(updated.resolvedAt).not.toBeNull();
+
+    // resolvedBy is an audit field about a PERSON, so it records the acting
+    // collaborator — not the locker id the guard compares against.
+    const [row] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(row.resolvedBy).toBe(collabId);
+    expect(row.resolvedBy).not.toBe(ownerId);
+  });
+
+  it("lets a collaborator un-resolve one again (the route is a toggle)", async () => {
+    const comment = await commentOnOwnerPlaylist();
+    const first = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(collabToken) },
+      env
+    );
+    expect(first.status).toBe(200);
+    const second = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(collabToken) },
+      env
+    );
+    expect(second.status).toBe(200);
+    const [row] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(row.resolvedAt).toBeNull();
+    expect(row.resolvedBy).toBeNull();
+  });
+
+  it("lets a collaborator delete a comment in their locker, taking its replies with it", async () => {
+    const parent = await commentOnOwnerPlaylist("mix note");
+    const [reply] = await db
+      .insert(comments)
+      .values({
+        playlistId: ownerPlaylistId,
+        authorName: "Listener",
+        body: "agreed",
+        parentId: parent.id,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/comments/${parent.id}`,
+      { method: "DELETE", headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const rows = await db.select().from(comments).where(eq(comments.playlistId, ownerPlaylistId));
+    const ids = rows.map((r: { id: string }) => r.id);
+    expect(ids).not.toContain(parent.id);
+    expect(ids).not.toContain(reply.id);
+  });
+
+  // The test that proves the guard still guards: a member of a DIFFERENT
+  // locker is refused, and refused non-enumerably.
+  it("refuses a member of a different locker, without confirming the comment exists", async () => {
+    const comment = await commentOnOwnerPlaylist("not yours to close");
+
+    const resolveRes = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(strangerToken) },
+      env
+    );
+    expect(resolveRes.status).toBe(404);
+
+    const deleteRes = await app.request(
+      `/comments/${comment.id}`,
+      { method: "DELETE", headers: auth(strangerToken) },
+      env
+    );
+    expect(deleteRes.status).toBe(404);
+
+    const [still] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(still).toBeDefined();
+    expect(still.resolvedAt).toBeNull();
+  });
+
+  // The documented exception to the non-enumerable 404: a share holder has
+  // already read this playlist's comments, so 404 would only mislead them.
+  it("tells a share holder they are forbidden rather than pretending the comment is gone", async () => {
+    const comment = await commentOnOwnerPlaylist("from a listener");
+    const shareToken = "member-comment-share-token";
+    await db
+      .insert(shares)
+      .values({ playlistId: ownerPlaylistId, token: shareToken, permission: "listen" })
+      .returning();
+
+    const res = await app.request(
+      `/comments/${comment.id}?token=${shareToken}`,
+      { method: "DELETE" },
+      env
+    );
+    expect(res.status).toBe(403);
+    const [still] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(still).toBeDefined();
+  });
+
+  it("still lets an anonymous author delete their own comment with X-Delete-Token", async () => {
+    const [comment] = await db
+      .insert(comments)
+      .values({
+        playlistId: ownerPlaylistId,
+        authorName: "Anon",
+        body: "my own words",
+        deleteToken: "member-anon-delete-token",
+      })
+      .returning();
+
+    const res = await app.request(
+      `/comments/${comment.id}`,
+      { method: "DELETE", headers: { "X-Delete-Token": "member-anon-delete-token" } },
+      env
+    );
+    expect(res.status).toBe(200);
+    const [gone] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(gone).toBeUndefined();
+  });
+
+  // POST /comments already supports commenting on a library track (one in no
+  // playlist), so the product could create comments nobody — not even the
+  // owner — could ever moderate. Both routes now fall back to the track's
+  // locker the same way POST does.
+  it("lets a locker member moderate a comment on a library track in no playlist", async () => {
+    const [track] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        title: "library moderation target",
+        position: 0,
+        originalKey: "lib/moderation-target",
+        uploadedBy: ownerId,
+      })
+      .returning();
+    const [comment] = await db
+      .insert(comments)
+      .values({ trackId: track.id, authorName: "Listener", body: "library note" })
+      .returning();
+
+    const strangerRes = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(strangerToken) },
+      env
+    );
+    expect(strangerRes.status).toBe(404);
+
+    const resolveRes = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(collabToken) },
+      env
+    );
+    expect(resolveRes.status).toBe(200);
+
+    const deleteRes = await app.request(
+      `/comments/${comment.id}`,
+      { method: "DELETE", headers: auth(ownerToken) },
+      env
+    );
+    expect(deleteRes.status).toBe(200);
+    const [gone] = await db.select().from(comments).where(eq(comments.id, comment.id));
     expect(gone).toBeUndefined();
   });
 });

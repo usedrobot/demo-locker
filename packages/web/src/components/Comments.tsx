@@ -5,7 +5,12 @@ import { avatarColor } from "../lib/avatar";
 type Props = {
   trackId?: string;
   playlistId?: string;
-  isOwner?: boolean;
+  // May resolve and delete anyone's comment here — a member of the locker
+  // (owner or collaborator), matching what the API enforces. NOT "owns the
+  // locker": publishing is the only thing that narrow. An anonymous author
+  // deleting their own comment is a separate path (a stored delete token) and
+  // does not need this.
+  canModerate?: boolean;
   currentTime?: number;
   onSeek?: (time: number) => void;
 };
@@ -43,7 +48,7 @@ function formatTime(s: number): string {
 export default function Comments({
   trackId,
   playlistId,
-  isOwner = false,
+  canModerate = false,
   currentTime,
   onSeek,
 }: Props) {
@@ -113,7 +118,7 @@ export default function Comments({
   async function handleDelete(comment: Comment) {
     const tokens = loadDeleteTokens();
     const token = tokens[comment.id];
-    if (!isOwner && !token) return;
+    if (!canModerate && !token) return;
     if (!confirm("Delete this comment?")) return;
     try {
       await api.remove(comment.id, token);
@@ -172,7 +177,7 @@ export default function Comments({
           <CommentThread
             key={comment.id}
             comment={comment}
-            isOwner={isOwner}
+            canModerate={canModerate}
             ownDeleteTokens={loadDeleteTokens()}
             onReply={(id) => setReplyTo(id)}
             onSeek={onSeek}
@@ -258,7 +263,7 @@ function FilterChip({
 
 function CommentThread({
   comment,
-  isOwner,
+  canModerate,
   ownDeleteTokens,
   onReply,
   onSeek,
@@ -267,7 +272,7 @@ function CommentThread({
   isTrack,
 }: {
   comment: Comment;
-  isOwner: boolean;
+  canModerate: boolean;
   ownDeleteTokens: Record<string, string>;
   onReply: (id: string) => void;
   onSeek?: (time: number) => void;
@@ -278,7 +283,7 @@ function CommentThread({
   const initial = (comment.authorName?.trim()?.[0] ?? "?").toUpperCase();
   const color = avatarColor(comment.authorName || "?");
   const resolved = comment.resolvedAt != null;
-  const canDelete = isOwner || !!ownDeleteTokens[comment.id];
+  const canDelete = canModerate || !!ownDeleteTokens[comment.id];
 
   return (
     <div className="comment" style={{ opacity: resolved ? 0.5 : 1 }}>
@@ -338,7 +343,7 @@ function CommentThread({
         )}
         <span className="comment-author">{comment.authorName}</span>
         <span className="comment-actions">
-          {isOwner && (
+          {canModerate && (
             <button
               onClick={() => onResolve(comment)}
               style={{

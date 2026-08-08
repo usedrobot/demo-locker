@@ -975,7 +975,16 @@ describe("MAX_COLLABORATORS at redemption", () => {
   // compensated would leave accepted_at null on a good day and spent forever
   // on a bad one, since the release is best-effort and swallows throws. The
   // only way to show the invite really survived is to redeem it.
+  //
+  // "Making room" has to mean a cap that is still ENFORCED and merely large
+  // enough — passing bare env would disable the check entirely and this would
+  // pass with the seat logic deleted. The ceiling is computed from who is
+  // actually seated, because several members join over the course of this file
+  // and a literal would rot into another vacuous assertion.
   it("leaves the invite redeemable once the operator makes room", async () => {
+    const seated = await db.select().from(users).where(eq(users.lockerOwnerId, ownerId));
+    const roomForOneMore = { ...env, MAX_COLLABORATORS: String(seated.length + 1) };
+
     const res = await app.request(
       "/auth/signup",
       {
@@ -987,7 +996,7 @@ describe("MAX_COLLABORATORS at redemption", () => {
           inviteToken: "over-cap-token",
         }),
       },
-      env
+      roomForOneMore
     );
     expect(res.status).toBe(201);
     const { user } = (await res.json()) as { user: { id: string; lockerOwnerId: string } };
@@ -1107,5 +1116,91 @@ describe("two signups racing the same email", () => {
     expect(spent).toHaveLength(1);
     expect(returned).toHaveLength(1);
     expect(spent[0].acceptedBy).toBe(created[0].id);
+  });
+});
+
+// The seat count is read twice: once before the duplicate-email 409, which is
+// what keeps a full locker from confirming an address, and again immediately
+// before the claim, which is what keeps PBKDF2 out of the interval between the
+// last count and the INSERT that consumes the seat. Only the second one can
+// catch a locker that fills up mid-request.
+//
+// Testing that deterministically means filling the locker at a known point
+// rather than racing two requests and hoping for an interleaving — a test that
+// depended on timing would be flaky, and a flaky test here would be worse than
+// none. The proxy fires when the duplicate-email lookup goes past, which is
+// after the first count and before the hash, and seats one more member
+// synchronously.
+describe("a locker that fills up mid-request", () => {
+  it("is caught by the second seat count, before anything is claimed", async () => {
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "filled-up-token", label: "Late" });
+
+    const seated = await db.select().from(users).where(eq(users.lockerOwnerId, ownerId));
+    const roomForOneMore = { ...env, MAX_COLLABORATORS: String(seated.length + 1) };
+
+    let filled = false;
+    const fillsUpDuringTheRequest = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "select") {
+          return (fields?: Record<string, unknown>) => {
+            // The duplicate-email lookup is the only single-column select of
+            // users.id on this route; the seat counts select a count().
+            const isDuplicateEmailLookup =
+              fields && Object.keys(fields).length === 1 && fields.id === users.id;
+            if (isDuplicateEmailLookup && !filled) {
+              filled = true;
+              db.insert(users)
+                .values({
+                  email: "took-the-last-seat@test.dev",
+                  passwordHash: "x",
+                  lockerOwnerId: ownerId,
+                })
+                .run();
+            }
+            return (target as { select: (f?: Record<string, unknown>) => unknown }).select(fields);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    setDbFactory(() => fillsUpDuringTheRequest);
+    let res: Response;
+    try {
+      res = await app.request(
+        "/auth/signup",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.19" },
+          body: JSON.stringify({
+            email: "too-late@test.dev",
+            password: "correct horse",
+            inviteToken: "filled-up-token",
+          }),
+        },
+        roomForOneMore
+      );
+    } finally {
+      setDbFactory(() => db);
+    }
+
+    // Precondition: the first count really did see room, or this proves nothing.
+    expect(filled).toBe(true);
+
+    expect(res.status).toBe(403);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain("full");
+
+    const [none] = await db.select().from(users).where(eq(users.email, "too-late@test.dev"));
+    expect(none).toBeUndefined();
+
+    // Refused before the claim, so the invite survives to be redeemed later.
+    const [invite] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.token, "filled-up-token"));
+    expect(invite.acceptedAt).toBeNull();
   });
 });

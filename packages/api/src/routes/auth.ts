@@ -24,6 +24,7 @@ import {
   countLockerMembers,
   isDuplicateEmailError,
   type ClaimedInvite,
+  type PendingInvite,
 } from "../lib/signup.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { rateLimit, LOGIN_RULE, SIGNUP_RULE } from "../lib/rate-limit.js";
@@ -81,52 +82,58 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     return c.json({ error: "this invite is not valid" }, 403);
   }
 
+  // Re-check the seat cap at redemption, not only where the invite was minted.
+  // getLimits reads the env per request, so an operator who lowers
+  // MAX_COLLABORATORS while invites are outstanding would otherwise see every
+  // one of them redeemed anyway and end up permanently over the cap they just
+  // set. Redemption is where a seat is actually taken.
+  //
+  // The count is read TWICE, at two positions, because they buy different
+  // things and neither alone is enough:
+  //
+  //   - Here, before the duplicate-email 409, so a caller holding a valid
+  //     invite to a full locker gets the same 403 whatever address they send.
+  //     Only here does that hold: after the 409, signup becomes a free,
+  //     repeatable registered/not-registered oracle for anyone with an invite,
+  //     since a refusal never spends the invite and can be run all day.
+  //   - Again below, immediately before claimInvite, so the interval between
+  //     the last count and the INSERT that consumes the seat does not span
+  //     PBKDF2 — which is by far the slowest thing on this route, and which
+  //     made "two invitees redeem at once" reliably reproducible rather than a
+  //     sub-millisecond race.
+  //
+  // Both sit BEFORE the claim, which is what keeps refusing free: nothing has
+  // been claimed, so nothing needs releasing, and release() is best-effort by
+  // design — a transient failure there would leave accepted_at set and
+  // accepted_by NULL, which resolveInvite refuses forever. An operator
+  // lowering a cap must not thereby void the invites already out.
+  //
+  // It remains a SOFT cap. Redemptions of DIFFERENT tokens interleaved between
+  // the second count and the INSERT can still both get in; claimInvite's
+  // conditional update does not help, being per-token. The mint-time check in
+  // routes/collab.ts has the same character. Closing it entirely would need a
+  // conditional INSERT ... SELECT ... WHERE (count) < n — which SQLite can in
+  // fact express — but a zero-row insert then has to release the claim it just
+  // made, putting the fragile compensation back on the path for the sake of an
+  // advisory limit. Two cheap counts get most of the benefit and none of that.
+  const limits = getLimits(c.env);
+  const capped = isLimited(limits.maxCollaborators);
+  const lockerFull = async (ownerId: string) =>
+    capped && (await countLockerMembers(db, ownerId)) >= limits.maxCollaborators;
+  const fullResponse = () =>
+    c.json(
+      { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
+      403
+    );
+
+  let pending: PendingInvite | null = null;
   if (inviteToken) {
-    const pending = await resolveInvite(db, inviteToken);
+    pending = await resolveInvite(db, inviteToken);
     if (!pending) {
       return c.json({ error: "this invite is not valid" }, 403);
     }
-
-    // Re-check the seat cap here, not only where the invite was minted.
-    // getLimits reads the env per request, so an operator who lowers
-    // MAX_COLLABORATORS while invites are outstanding would otherwise see
-    // every one of them redeemed anyway and end up permanently over the cap
-    // they just set. Redemption is where a seat is actually taken.
-    //
-    // This is a SOFT cap and the check is NOT tight. The count runs here, the
-    // row that consumes the seat is not inserted until after the password
-    // hash, and PBKDF2 is by far the slowest thing on this route — so two
-    // invitees redeeming DIFFERENT tokens at once can both read the same count
-    // and both get in. claimInvite's conditional update does not help; it is
-    // per-token and these are different tokens. The mint-time check in
-    // routes/collab.ts has exactly the same character.
-    //
-    // That window is the price of the two properties that matter more, and
-    // both of them come from this check sitting *here*:
-    //
-    //   - It precedes the duplicate-email 409 below, so a caller holding a
-    //     valid invite to a full locker gets the same 403 whatever address
-    //     they send. Move it after, and signup becomes a free, repeatable
-    //     registered/not-registered oracle for anyone with an invite.
-    //   - It precedes claimInvite, so refusing costs nothing and needs no
-    //     compensation. Move it after, and the refusal has to release a claim
-    //     it just made — and release() is best-effort by design, so a
-    //     transient failure there destroys the invite permanently, which is
-    //     precisely what an operator lowering a cap must not do.
-    //
-    // Closing the window would need a conditional write against a count in
-    // another table, which SQLite cannot express, or create-then-roll-back,
-    // whose failed rollback leaves standing access nobody granted. A locker
-    // briefly one over an advisory limit is the smallest of these problems.
-    const limits = getLimits(c.env);
-    if (isLimited(limits.maxCollaborators)) {
-      const seated = await countLockerMembers(db, pending.ownerId);
-      if (seated >= limits.maxCollaborators) {
-        return c.json(
-          { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
-          403
-        );
-      }
+    if (await lockerFull(pending.ownerId)) {
+      return fullResponse();
     }
   } else if (!(await signupAllowed(db, c.env))) {
     return c.json({ error: "registration is closed on this instance" }, 403);
@@ -145,6 +152,13 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   // Hash before claiming: PBKDF2 is the slowest thing on this path, and every
   // step taken after the claim is a step that can burn the invite.
   const passwordHash = await hashPassword(password);
+
+  // The second seat count — see the note above. Still before the claim, so a
+  // refusal here is as free as the first one, and this is the position that
+  // keeps PBKDF2 out of the count-to-insert interval.
+  if (pending && (await lockerFull(pending.ownerId))) {
+    return fullResponse();
+  }
 
   // Now take the invite. This is the atomic conditional update — the winner of
   // two concurrent redemptions, not merely a caller who read the row while it

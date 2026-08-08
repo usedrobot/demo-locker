@@ -22,6 +22,7 @@ import {
   claimInvite,
   releaseInvite,
   countLockerMembers,
+  isDuplicateEmailError,
   type ClaimedInvite,
 } from "../lib/signup.js";
 import { getLimits, isLimited } from "../lib/limits.js";
@@ -34,13 +35,13 @@ const auth = new Hono<Env>();
 // materialise. Best-effort on purpose: the error that triggered this is the one
 // worth reporting, and a release that cannot land leaves a spent invite — the
 // safe direction, since nobody got in.
-async function release(db: Database, inviteId: string): Promise<void> {
+async function release(db: Database, invite: ClaimedInvite): Promise<void> {
   try {
-    if (!(await releaseInvite(db, inviteId))) {
-      console.error("invite", inviteId, "was not released — it may already be redeemed");
+    if (!(await releaseInvite(db, invite.id, invite.claimedAt))) {
+      console.error("invite", invite.id, "was not released — it may already be redeemed");
     }
   } catch (err) {
-    console.error("failed to release invite", inviteId, err);
+    console.error("failed to release invite", invite.id, err);
   }
 }
 
@@ -81,25 +82,8 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   }
 
   if (inviteToken) {
-    const pending = await resolveInvite(db, inviteToken);
-    if (!pending) {
+    if (!(await resolveInvite(db, inviteToken))) {
       return c.json({ error: "this invite is not valid" }, 403);
-    }
-
-    // Re-check the seat cap here, not only where the invite was minted.
-    // getLimits reads the env per request, so an operator who lowers
-    // MAX_COLLABORATORS while invites are outstanding would otherwise see
-    // every one of them redeemed anyway and end up permanently over the cap
-    // they just set. Redemption is where a seat is actually taken.
-    const limits = getLimits(c.env);
-    if (isLimited(limits.maxCollaborators)) {
-      const seated = await countLockerMembers(db, pending.ownerId);
-      if (seated >= limits.maxCollaborators) {
-        return c.json(
-          { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
-          403
-        );
-      }
     }
   } else if (!(await signupAllowed(db, c.env))) {
     return c.json({ error: "registration is closed on this instance" }, 403);
@@ -139,6 +123,41 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     }
   }
 
+  // Re-check the seat cap here, not only where the invite was minted.
+  // getLimits reads the env per request, so an operator who lowers
+  // MAX_COLLABORATORS while invites are outstanding would otherwise see every
+  // one of them redeemed anyway and end up permanently over the cap they just
+  // set. Redemption is where a seat is actually taken.
+  //
+  // This is a SOFT cap, and deliberately so. The count and the INSERT that
+  // consumes the seat are two statements, so two invitees redeeming DIFFERENT
+  // tokens at the same moment can both read the same count and both get in.
+  // claimInvite's conditional update does not help — it is per-token, and
+  // these are different tokens. The mint-time check in routes/collab.ts has
+  // exactly the same character.
+  //
+  // It sits here, immediately before the insert, rather than up with the
+  // pre-flight, because that is what makes the window narrow: up there it
+  // spanned the PBKDF2 hash, which is by far the slowest thing on this route.
+  // Closing it completely needs either a conditional write against a count —
+  // which SQLite cannot express against a different table — or creating the
+  // account and rolling it back, and a rollback that fails leaves standing
+  // access nobody granted. A soft limit briefly overshot is the better trade
+  // than a delete path that can strand a collaborator in someone's locker.
+  const limits = getLimits(c.env);
+  if (invite && isLimited(limits.maxCollaborators)) {
+    const seated = await countLockerMembers(db, invite.ownerId);
+    if (seated >= limits.maxCollaborators) {
+      // Refused after the claim, so give the invite back — the operator
+      // lowered the cap, and that should not also destroy the invite.
+      await release(db, invite);
+      return c.json(
+        { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
+        403
+      );
+    }
+  }
+
   // The binding is set in the INSERT, never in a follow-up UPDATE. There is no
   // transaction here — D1 has none to offer across a request — so an account
   // created unbound and bound afterwards is an account that survives with
@@ -158,11 +177,17 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
         lockerOwnerId: users.lockerOwnerId,
       });
   } catch (err) {
-    // The account did not happen, so the invite must not stay spent. The
-    // duplicate-email check above is a plain read with no transaction, so two
-    // concurrent signups on one address can both pass it and the loser lands
-    // here on UNIQUE(users.email) — a real path, not a theoretical one.
-    if (invite) await release(db, invite.id);
+    // The account did not happen, so the invite must not stay spent.
+    if (invite) await release(db, invite);
+
+    // The duplicate-email check above is a plain read with no transaction, so
+    // two concurrent signups on one address both pass it and the loser only
+    // finds out here. That is the same taken-address condition the check above
+    // answers with 409, and it is what the API documents, so it answers the
+    // same way rather than surfacing as an opaque 500.
+    if (isDuplicateEmailError(err)) {
+      return c.json({ error: "email already registered" }, 409);
+    }
     throw err;
   }
 

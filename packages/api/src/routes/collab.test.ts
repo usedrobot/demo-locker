@@ -805,25 +805,27 @@ describe("a partial failure during redemption", () => {
   });
 });
 
-// The release is only safe because it cannot undo a redemption that worked.
+// The release is only safe because it can undo exactly one claim: the one whose
+// accepted_at it was given. Both of these are invites it must refuse to touch.
 describe("releaseInvite", () => {
   it("refuses to release an invite that someone actually redeemed", async () => {
     const [member] = await db
       .insert(users)
       .values({ email: "already-in@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
       .returning();
+    const claimedAt = new Date();
     const [inv] = await db
       .insert(collaboratorInvites)
       .values({
         ownerId,
         token: "spent-token",
         label: "Spent",
-        acceptedAt: new Date(),
+        acceptedAt: claimedAt,
         acceptedBy: member.id,
       })
       .returning();
 
-    expect(await releaseInvite(db, inv.id)).toBe(false);
+    expect(await releaseInvite(db, inv.id, claimedAt)).toBe(false);
 
     const [after] = await db
       .select()
@@ -831,6 +833,48 @@ describe("releaseInvite", () => {
       .where(eq(collaboratorInvites.id, inv.id));
     expect(after.acceptedAt).not.toBeNull();
     expect(after.acceptedBy).toBe(member.id);
+  });
+
+  // accepted_by is ON DELETE SET NULL, so once the owner removes a redeemed
+  // collaborator the invite reads accepted_at set and accepted_by NULL —
+  // byte-for-byte identical to a claim that never became an account. Matching
+  // the claim's own timestamp is what tells them apart; `accepted_by IS NULL`
+  // on its own cannot, and a cleanup sweep built on it would quietly un-spend
+  // the invites of every removed member.
+  it("refuses to release an invite whose redeemer has since been removed", async () => {
+    const [member] = await db
+      .insert(users)
+      .values({ email: "removed-later@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
+      .returning();
+    const redeemedAt = new Date(Date.now() - 60_000);
+    const [inv] = await db
+      .insert(collaboratorInvites)
+      .values({
+        ownerId,
+        token: "redeemer-removed-token",
+        label: "Gone",
+        acceptedAt: redeemedAt,
+        acceptedBy: member.id,
+      })
+      .returning();
+
+    await db.delete(users).where(eq(users.id, member.id));
+    const [orphaned] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.id, inv.id));
+    // Precondition: it now looks exactly like an abandoned claim.
+    expect(orphaned.acceptedBy).toBeNull();
+    expect(orphaned.acceptedAt).not.toBeNull();
+
+    // Some later caller's claim, with its own timestamp.
+    expect(await releaseInvite(db, inv.id, new Date())).toBe(false);
+
+    const [after] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.id, inv.id));
+    expect(after.acceptedAt?.getTime()).toBe(redeemedAt.getTime());
   });
 });
 
@@ -917,12 +961,76 @@ describe("MAX_COLLABORATORS at redemption", () => {
     const [none] = await db.select().from(users).where(eq(users.email, "over-cap@test.dev"));
     expect(none).toBeUndefined();
 
-    // Refused before the claim, so the invite is still there to use once the
-    // operator makes room.
+    // The cap is checked after the claim (that is what keeps the window off
+    // the PBKDF2 hash), so the refusal has to hand the invite back: the
+    // operator lowered the cap, and that should not also destroy the invite.
     const [invite] = await db
       .select()
       .from(collaboratorInvites)
       .where(eq(collaboratorInvites.token, "over-cap-token"));
     expect(invite.acceptedAt).toBeNull();
+    expect(invite.acceptedBy).toBeNull();
+  });
+});
+
+// The duplicate-email check is a plain read with no transaction, so two
+// concurrent signups on one address both pass it and the loser only finds out
+// at the INSERT. That is the same taken-address condition, so it gets the same
+// documented 409 rather than an opaque 500 — and the loser's invite goes back.
+describe("two signups racing the same email", () => {
+  const RACER_IP = "203.0.113.17";
+
+  it("answers the loser with 409 and hands its invite back", async () => {
+    const tokens = ["dupe-a-token", "dupe-b-token"];
+    for (const token of tokens) {
+      await db.insert(collaboratorInvites).values({ ownerId, token, label: `Dupe ${token}` });
+    }
+
+    // Warm this client's bucket — see the same note on the token race above.
+    const warm = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": RACER_IP },
+        body: JSON.stringify({}),
+      },
+      env
+    );
+    expect(warm.status).toBe(400);
+
+    const attempt = (inviteToken: string) =>
+      app.request(
+        "/auth/signup",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "CF-Connecting-IP": RACER_IP },
+          body: JSON.stringify({
+            email: "contested@test.dev",
+            password: "correct horse",
+            inviteToken,
+          }),
+        },
+        env
+      );
+
+    const [a, b] = await Promise.all(tokens.map(attempt));
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+    const created = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, "contested@test.dev"));
+    expect(created).toHaveLength(1);
+    expect(created[0].lockerOwnerId).toBe(ownerId);
+
+    const invites = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(inArray(collaboratorInvites.token, tokens));
+    const spent = invites.filter((i: { acceptedAt: Date | null }) => i.acceptedAt !== null);
+    const returned = invites.filter((i: { acceptedAt: Date | null }) => i.acceptedAt === null);
+    expect(spent).toHaveLength(1);
+    expect(returned).toHaveLength(1);
+    expect(spent[0].acceptedBy).toBe(created[0].id);
   });
 });

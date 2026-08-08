@@ -579,7 +579,7 @@
             }
           },
           "409": {
-            "description": "Email already registered.",
+            "description": "Email already registered. Also returned when two concurrent signups contend for one address and this one loses at the insert; if it carried an invite, that invite is handed back unspent.",
             "content": {
               "application/json": {
                 "schema": {

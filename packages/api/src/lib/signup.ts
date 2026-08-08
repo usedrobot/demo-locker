@@ -37,7 +37,13 @@ export async function signupAllowed(
 // that exactly one account per invite.
 // ---------------------------------------------------------------------------
 
-export type ClaimedInvite = { id: string; ownerId: string };
+// An invite that looks redeemable. Says nothing about who gets it.
+export type PendingInvite = { id: string; ownerId: string };
+
+// An invite this request actually took, carrying the exact accepted_at it
+// wrote. That timestamp is the claim's receipt: it is what lets a release
+// prove it is undoing its own claim and nobody else's.
+export type ClaimedInvite = PendingInvite & { claimedAt: Date };
 
 // How many rows an UPDATE touched, across both SQLite drivers this codebase
 // runs on. better-sqlite3 returns a RunResult — `{ changes, lastInsertRowid }`
@@ -65,7 +71,7 @@ export async function resolveInvite(
   db: Database,
   token: string,
   now: Date = new Date()
-): Promise<ClaimedInvite | null> {
+): Promise<PendingInvite | null> {
   const [invite] = await db
     .select({
       id: collaboratorInvites.id,
@@ -142,7 +148,7 @@ export async function claimInvite(
     .where(eq(collaboratorInvites.token, token))
     .limit(1);
 
-  return invite ? { id: invite.id, ownerId: invite.ownerId } : null;
+  return invite ? { id: invite.id, ownerId: invite.ownerId, claimedAt: now } : null;
 }
 
 // Give a claimed invite back.
@@ -153,18 +159,58 @@ export async function claimInvite(
 // locker, and the owner has to notice and re-mint. Releasing is the
 // compensating action.
 //
-// `accepted_by IS NULL` is what makes it safe to call: it can only ever undo a
-// claim that never became an account, so a release arriving late can never
-// unspend an invite that someone successfully redeemed. Best-effort by design
-// — the caller logs a failure rather than raising it, because the error that
-// triggered the release is the one worth reporting.
-export async function releaseInvite(db: Database, inviteId: string): Promise<boolean> {
+// It undoes exactly one claim: the one whose accepted_at matches `claimedAt`,
+// the timestamp this request wrote. `accepted_by IS NULL` alone would not be
+// enough, and the reason is worth spelling out — accepted_by is
+// ON DELETE SET NULL, so once an owner removes a redeemed collaborator through
+// DELETE /collab/members/:id, that invite reads accepted_at set and accepted_by
+// NULL, byte-for-byte identical to a claim that never became an account. A
+// cleanup sweep or an owner-facing "reset this invite" built on that predicate
+// alone would quietly un-spend the invites of every removed member. Matching
+// the timestamp cannot make that mistake.
+//
+// Best-effort by design — the caller logs a failure rather than raising it,
+// because the error that triggered the release is the one worth reporting.
+export async function releaseInvite(
+  db: Database,
+  inviteId: string,
+  claimedAt: Date
+): Promise<boolean> {
   const released = await db
     .update(collaboratorInvites)
     .set({ acceptedAt: null })
-    .where(and(eq(collaboratorInvites.id, inviteId), isNull(collaboratorInvites.acceptedBy)));
+    .where(
+      and(
+        eq(collaboratorInvites.id, inviteId),
+        eq(collaboratorInvites.acceptedAt, claimedAt),
+        isNull(collaboratorInvites.acceptedBy)
+      )
+    );
 
   return rowsAffected(released) === 1;
+}
+
+// Did this error come from the UNIQUE index on users.email?
+//
+// The duplicate-email check on the signup path is a plain read with no
+// transaction, so two concurrent signups on one address both pass it and the
+// loser only finds out at the INSERT. Both drivers surface SQLite's own
+// constraint text — better-sqlite3 raises SqliteError, D1 wraps it — so the
+// message is the portable signal, and it is matched narrowly enough that a
+// different UNIQUE violation cannot be mistaken for this one.
+export function isDuplicateEmailError(err: unknown): boolean {
+  const messages: string[] = [];
+  let cursor: unknown = err;
+  for (let depth = 0; cursor && depth < 3; depth++) {
+    if (cursor instanceof Error) {
+      messages.push(cursor.message);
+      cursor = cursor.cause;
+    } else {
+      messages.push(String(cursor));
+      break;
+    }
+  }
+  return messages.some((m) => /unique constraint failed:\s*users\.email/i.test(m));
 }
 
 export type SignupUser = {

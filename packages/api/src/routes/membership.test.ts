@@ -882,6 +882,67 @@ describe("sharing under collaboration", () => {
     expect(body.shares).toHaveLength(0);
   });
 
+  // Attribution on share links, the same computed-boolean shape as
+  // uploadedByMe/createdByMe: anyone in the locker may mint a link, so without
+  // this the owner cannot tell their own links from a collaborator's — and
+  // removing that collaborator silently takes theirs away (created_by
+  // cascades). The minter's raw user id is never serialized.
+  it("tells each locker member which share links they minted themselves", async () => {
+    const [collabShare] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-mintedbyme-collab-token",
+        permission: "listen",
+        createdBy: collabId,
+      })
+      .returning();
+    const [ownerShare] = await db
+      .insert(shares)
+      .values({
+        playlistId: ownerPlaylistId,
+        token: "member-mintedbyme-owner-token",
+        permission: "listen",
+        createdBy: ownerId,
+      })
+      .returning();
+
+    type Row = { id: string; mintedByMe: boolean; createdBy?: string };
+    const read = async (token: string) => {
+      const res = await app.request("/shares", { headers: auth(token) }, env);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { shares: Row[] };
+      return new Map(body.shares.map((s) => [s.id, s]));
+    };
+
+    const asOwner = await read(ownerToken);
+    expect(asOwner.get(ownerShare.id)!.mintedByMe).toBe(true);
+    expect(asOwner.get(collabShare.id)!.mintedByMe).toBe(false);
+
+    const asCollab = await read(collabToken);
+    expect(asCollab.get(collabShare.id)!.mintedByMe).toBe(true);
+    expect(asCollab.get(ownerShare.id)!.mintedByMe).toBe(false);
+
+    // Attribution replaces the id — it must not be served alongside it.
+    expect(asOwner.get(collabShare.id)!.createdBy).toBeUndefined();
+  });
+
+  it("marks a freshly minted share link as the minter's own", async () => {
+    const res = await app.request(
+      "/shares",
+      {
+        method: "POST",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: ownerPlaylistId, permission: "listen" }),
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { share } = (await res.json()) as { share: { mintedByMe: boolean; createdBy?: string } };
+    expect(share.mintedByMe).toBe(true);
+    expect(share.createdBy).toBeUndefined();
+  });
+
   // The intended-but-surprising case per the task ruling: share links are
   // locker-level state, not per-creator state, so a collaborator can revoke a
   // link the owner minted.

@@ -6,17 +6,22 @@ import { requireAuth } from "../lib/session.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { publicPlaylist } from "../lib/public-playlist.js";
+import { publicShare } from "../lib/public-share.js";
 import { requestSessionUserId } from "../lib/playlist-access.js";
 import { lockerIdOf } from "../lib/locker.js";
 import type { Env } from "../types.js";
 
 const sharesRouter = new Hono<Env>();
 
-// Every field of a share that a client may see. Spelled out rather than
-// `select()` because `created_by` holds a raw internal user id, and this
-// branch has twice had to replace exactly such an id with a computed boolean
-// after it leaked (uploadedByMe, createdByMe). Nothing needs it client-side:
-// it exists so the database can cascade a departing collaborator's links away.
+// The INTERNAL projection for a share row. Spelled out rather than `select()`
+// so the columns a client may see stay an explicit list.
+//
+// `created_by` is selected here but MUST NOT be serialized: it holds a raw
+// internal user id, and this branch has three times now had to replace exactly
+// such an id with a computed boolean (uploadedByMe, createdByMe, mintedByMe).
+// It is read solely to compute `mintedByMe`, and publicShare() strips it —
+// every response below goes through that function, never through this shape
+// directly.
 const SHARE_FIELDS = {
   id: shares.id,
   playlistId: shares.playlistId,
@@ -25,6 +30,21 @@ const SHARE_FIELDS = {
   email: shares.email,
   createdAt: shares.createdAt,
   expiresAt: shares.expiresAt,
+  createdBy: shares.createdBy,
+};
+
+// The row SHARE_FIELDS produces. Needed because drizzle's select builder widens
+// to `any` at the call sites, so a `.map((r) => ...)` there has no contextual
+// type and would check nothing.
+type ShareProjection = {
+  id: string;
+  playlistId: string;
+  token: string;
+  permission: string;
+  email: string | null;
+  createdAt: Date;
+  expiresAt: Date | null;
+  createdBy: string | null;
 };
 
 sharesRouter.post("/", requireAuth, async (c) => {
@@ -84,7 +104,7 @@ sharesRouter.post("/", requireAuth, async (c) => {
     })
     .returning(SHARE_FIELDS);
 
-  return c.json({ share }, 201);
+  return c.json({ share: publicShare(share, c.get("user").id) }, 201);
 });
 
 // All share links across every playlist in the acting user's locker — the
@@ -106,12 +126,19 @@ sharesRouter.get("/", requireAuth, async (c) => {
       email: shares.email,
       createdAt: shares.createdAt,
       expiresAt: shares.expiresAt,
+      createdBy: shares.createdBy,
     })
     .from(shares)
     .innerJoin(playlists, eq(shares.playlistId, playlists.id))
     .where(eq(playlists.ownerId, lockerId));
 
-  return c.json({ shares: rows });
+  // mintedByMe is per ACTING USER, not per locker: the owner and each
+  // collaborator get different booleans on the same rows.
+  return c.json({
+    shares: rows.map((r: ShareProjection & { playlistName: string }) =>
+      publicShare(r, c.get("user").id)
+    ),
+  });
 });
 
 // Change a share's permission (grant or revoke edit). Locker-scoped: any
@@ -147,7 +174,7 @@ sharesRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(shares.id, shareId))
     .returning(SHARE_FIELDS);
 
-  return c.json({ share: updated });
+  return c.json({ share: publicShare(updated, c.get("user").id) });
 });
 
 sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
@@ -170,7 +197,12 @@ sharesRouter.get("/playlist/:playlistId", requireAuth, async (c) => {
     .from(shares)
     .where(eq(shares.playlistId, playlistId));
 
-  return c.json({ shares: result });
+  // The callback parameter is annotated because the drizzle select builder
+  // widens to `any` here, so an unannotated `r` would silently opt this row out
+  // of type checking — the same reason lib/public-track.ts exports TrackRow.
+  return c.json({
+    shares: result.map((r: ShareProjection) => publicShare(r, c.get("user").id)),
+  });
 });
 
 sharesRouter.delete("/:id", requireAuth, async (c) => {

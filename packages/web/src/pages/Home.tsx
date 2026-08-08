@@ -12,6 +12,7 @@ import {
 import { player } from "../lib/audio";
 import { cycleAccent } from "../lib/theme";
 import Logo from "../components/Logo";
+import CollabPanel from "../components/CollabPanel";
 import Upload from "../components/Upload";
 import PendingTrackRow from "../components/PendingTrackRow";
 import { useUploadQueue } from "../lib/use-upload-queue";
@@ -43,6 +44,13 @@ export default function Home({ onSelect, onLogout }: Props) {
   const [pwDone, setPwDone] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
   const [accessShares, setAccessShares] = useState<Share[]>([]);
+  // Null until the session is resolved. Owner-only surfaces render on `true`
+  // alone, never on "not false", so a collaborator never sees them flash.
+  // Resolved in the same load() as the lists, so rows are never painted before
+  // it is known which of their delete controls belong on screen.
+  const [isOwner, setIsOwner] = useState<boolean | null>(null);
+  const [playlistError, setPlaylistError] = useState("");
+  const [trackError, setTrackError] = useState("");
 
   async function openAccess() {
     const r = await sharesApi.listAll();
@@ -82,9 +90,13 @@ export default function Home({ onSelect, onLogout }: Props) {
       setLoadError("");
     }
     try {
-      const [r, lib] = await Promise.all([api.list(), tracksApi.list()]);
+      // auth.me() rides along with the lists rather than in an effect of its
+      // own: `isOwner` decides which delete controls each row may show, so
+      // learning it a tick later would paint the wrong affordances first.
+      const [r, lib, me] = await Promise.all([api.list(), tracksApi.list(), auth.me()]);
       setPlaylists(r.playlists);
       setLibrary(lib.tracks);
+      setIsOwner(me.user.lockerOwnerId === null);
       setLoadState("ready");
     } catch (err) {
       if (background) return;
@@ -129,16 +141,28 @@ export default function Home({ onSelect, onLogout }: Props) {
     player.play(id);
   }
 
+  // Both deletes catch. request() throws on any non-2xx, and the server refuses
+  // a collaborator deleting someone else's row — so without this the user gets
+  // an unhandled rejection and a list that silently does not change. The
+  // control is gated on the same rule below, which makes a refusal unlikely
+  // rather than impossible: the gate is drawn from data that can be stale by
+  // the time the click lands.
   async function handleTrackDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
     if (confirmTrackDeleteId !== id) {
       setConfirmTrackDeleteId(id);
       return;
     }
-    await tracksApi.delete(id);
+    setConfirmTrackDeleteId(null);
+    setTrackError("");
+    try {
+      await tracksApi.delete(id);
+    } catch (err) {
+      setTrackError(err instanceof Error ? err.message : "couldn't delete that track");
+      return;
+    }
     if (player.getState().track?.id === id) player.clear();
     setLibrary(library.filter((t) => t.id !== id));
-    setConfirmTrackDeleteId(null);
   }
 
   async function handleDelete(e: React.MouseEvent, id: string) {
@@ -147,9 +171,15 @@ export default function Home({ onSelect, onLogout }: Props) {
       setConfirmDeleteId(id);
       return;
     }
-    await api.delete(id);
-    setPlaylists(playlists.filter((p) => p.id !== id));
     setConfirmDeleteId(null);
+    setPlaylistError("");
+    try {
+      await api.delete(id);
+    } catch (err) {
+      setPlaylistError(err instanceof Error ? err.message : "couldn't delete that playlist");
+      return;
+    }
+    setPlaylists(playlists.filter((p) => p.id !== id));
   }
 
   function handleLogout() {
@@ -312,6 +342,17 @@ export default function Home({ onSelect, onLogout }: Props) {
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {s.email || `link …${s.token.slice(-6)}`}
                 </span>
+                {/* Which of these links are the owner's own. Anyone in the
+                    locker may mint one, so without this the owner cannot tell
+                    a link they handed out from one a collaborator did — and
+                    removing that collaborator silently takes theirs away
+                    (shares.created_by cascades). Attribution only: every
+                    control on this row works on every row regardless. */}
+                {!s.mintedByMe && (
+                  <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+                    shared by a collaborator
+                  </span>
+                )}
                 <span
                   style={{
                     color: s.permission === "edit" ? "var(--accent)" : "var(--fg-dim)",
@@ -339,6 +380,12 @@ export default function Home({ onSelect, onLogout }: Props) {
           </div>
         </div>
       )}
+
+      {/* Owner-only, and on `true` alone: a collaborator may not see who else
+          is in the locker, let alone invite anyone. Every /collab route
+          enforces the same rule with a non-enumerable 404 — this is the UI
+          half, not the guard. */}
+      {isOwner === true && <CollabPanel />}
 
       <div className="box-header">playlists</div>
       <div style={{ borderTop: "1px solid var(--border)" }}>
@@ -399,22 +446,35 @@ export default function Home({ onSelect, onLogout }: Props) {
               <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
                 {new Date(p.updatedAt).toLocaleDateString()}
               </span>
-              <button
-                onClick={(e) => handleDelete(e, p.id)}
-                onMouseLeave={() => setConfirmDeleteId(null)}
-                title={confirmDeleteId === p.id ? "Click again to delete" : "Delete playlist"}
-                aria-label={`Delete playlist ${p.name}`}
-                style={{
-                  ...linkStyle,
-                  color: confirmDeleteId === p.id ? "var(--error)" : "var(--fg-dim)",
-                }}
-              >
-                {confirmDeleteId === p.id ? "[delete?]" : "[x]"}
-              </button>
+              {/* `createdByMe || isOwner` — the client rule stated in
+                  lib/public-playlist.ts. createdByMe alone is wrong for the
+                  owner (false on every collaborator-created playlist they may
+                  nonetheless delete); isOwner alone is wrong for a
+                  collaborator (the server refuses anything they did not
+                  create, and offering the control anyway just 404s). */}
+              {(p.createdByMe || isOwner === true) && (
+                <button
+                  onClick={(e) => handleDelete(e, p.id)}
+                  onMouseLeave={() => setConfirmDeleteId(null)}
+                  title={confirmDeleteId === p.id ? "Click again to delete" : "Delete playlist"}
+                  aria-label={`Delete playlist ${p.name}`}
+                  style={{
+                    ...linkStyle,
+                    color: confirmDeleteId === p.id ? "var(--error)" : "var(--fg-dim)",
+                  }}
+                >
+                  {confirmDeleteId === p.id ? "[delete?]" : "[x]"}
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+      {playlistError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginTop: "0.5rem" }}>
+          {playlistError}
+        </div>
+      )}
 
       <form
         onSubmit={handleCreate}
@@ -501,26 +561,36 @@ export default function Home({ onSelect, onLogout }: Props) {
               <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
                 {formatDuration(t.duration)}
               </span>
-              <button
-                onClick={(e) => handleTrackDelete(e, t.id)}
-                onMouseLeave={() => setConfirmTrackDeleteId(null)}
-                title={
-                  confirmTrackDeleteId === t.id
-                    ? "Click again to delete permanently — this erases the original file"
-                    : "Delete this track and its files for good"
-                }
-                aria-label={`Delete ${t.title} permanently, including the original file`}
-                style={{
-                  ...linkStyle,
-                  color: confirmTrackDeleteId === t.id ? "var(--error)" : "var(--fg-dim)",
-                }}
-              >
-                {confirmTrackDeleteId === t.id ? "[delete?]" : "[x]"}
-              </button>
+              {/* `uploadedByMe || isOwner` — see lib/public-track.ts. The
+                  server refuses a collaborator deleting someone else's upload,
+                  so an ungated control was offered and then silently 404'd. */}
+              {(t.uploadedByMe || isOwner === true) && (
+                <button
+                  onClick={(e) => handleTrackDelete(e, t.id)}
+                  onMouseLeave={() => setConfirmTrackDeleteId(null)}
+                  title={
+                    confirmTrackDeleteId === t.id
+                      ? "Click again to delete permanently — this erases the original file"
+                      : "Delete this track and its files for good"
+                  }
+                  aria-label={`Delete ${t.title} permanently, including the original file`}
+                  style={{
+                    ...linkStyle,
+                    color: confirmTrackDeleteId === t.id ? "var(--error)" : "var(--fg-dim)",
+                  }}
+                >
+                  {confirmTrackDeleteId === t.id ? "[delete?]" : "[x]"}
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+      {trackError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginTop: "0.5rem" }}>
+          {trackError}
+        </div>
+      )}
     </div>
   );
 }

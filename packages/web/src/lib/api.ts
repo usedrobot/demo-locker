@@ -71,21 +71,36 @@ async function request<T>(
 }
 
 // Auth
+
+// The signed-in account. `lockerOwnerId` is the locker this account belongs to
+// as a COLLABORATOR; it is null for the person who owns the locker. That null
+// is what "is this the owner?" means everywhere in the UI — owner-only surfaces
+// (the collaborators panel) and the owner half of the delete rule
+// (`uploadedByMe || isOwner`) both read it. /auth/signup, /auth/login and
+// /auth/me all return it.
+export type User = {
+  id: string;
+  email: string;
+  accent: string | null;
+  lockerOwnerId: string | null;
+};
+
 export const auth = {
-  signup: (email: string, password: string) =>
-    request<{ user: { id: string; email: string; accent: string | null }; token: string }>(
-      "/auth/signup",
-      { method: "POST", body: JSON.stringify({ email, password }) }
-    ),
+  signup: (email: string, password: string, inviteToken?: string) =>
+    request<{ user: User; token: string }>("/auth/signup", {
+      method: "POST",
+      // Omitted rather than sent as undefined when absent: an invite token is
+      // its own authorisation to create an account on an instance where
+      // registration is otherwise closed, and the API distinguishes "no token"
+      // from "a token that isn't a string" (403).
+      body: JSON.stringify(inviteToken ? { email, password, inviteToken } : { email, password }),
+    }),
   login: (email: string, password: string) =>
-    request<{ user: { id: string; email: string; accent: string | null }; token: string }>(
-      "/auth/login",
-      { method: "POST", body: JSON.stringify({ email, password }) }
-    ),
-  me: () =>
-    request<{
-      user: { id: string; email: string; accent: string | null; lockerOwnerId: string | null };
-    }>("/auth/me"),
+    request<{ user: User; token: string }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  me: () => request<{ user: User }>("/auth/me"),
   setAccent: (accent: string) =>
     request<{ accent: string }>("/auth/accent", {
       method: "POST",
@@ -108,6 +123,13 @@ export type Playlist = {
   isPublic: boolean;
   createdAt: string;
   updatedAt: string;
+  // ATTRIBUTION, not permission: whether the requesting session created this
+  // playlist. The raw creator id is never serialized (a locker may hold several
+  // collaborators, and none may learn another's user id) — see
+  // packages/api/src/lib/public-playlist.ts. The client rule for a delete
+  // control is `createdByMe || isOwner`: the locker owner may delete anything
+  // in the locker and gets false on every collaborator-created row.
+  createdByMe: boolean;
 };
 
 export type Track = {
@@ -123,6 +145,12 @@ export type Track = {
   waveformData: string | null;
   duration: number | null;
   uploadedAt: string;
+  // ATTRIBUTION, not permission — the counterpart of Playlist.createdByMe. See
+  // packages/api/src/lib/public-track.ts; the client rule for a delete control
+  // is `uploadedByMe || isOwner`. False is ambiguous (no uploader recorded, or
+  // no session to compare) and must never be rendered as "someone else
+  // uploaded this".
+  uploadedByMe: boolean;
 };
 
 export const playlists = {
@@ -302,6 +330,12 @@ export type Share = {
   email: string | null;
   createdAt: string;
   expiresAt: string | null;
+  // ATTRIBUTION, not permission — the same computed-boolean shape as
+  // Track.uploadedByMe. Any member of the locker may revoke or re-permission
+  // any link regardless of this flag; it exists so the owner can tell their own
+  // links apart from ones a collaborator handed out. The minter's user id is
+  // never serialized.
+  mintedByMe: boolean;
 };
 
 export const shares = {
@@ -327,4 +361,36 @@ export const shares = {
       tracks: Track[];
       accent: string | null;
     }>(`/shares/invite/${token}`),
+};
+
+// Collaborators — the people who share this locker's library. Every route here
+// is owner-only; a collaborator gets the same non-enumerable 404 a stranger
+// does.
+export type CollabInvite = {
+  id: string;
+  // Owner-supplied name for the person invited. NOT an email — nothing is
+  // sent anywhere; the owner delivers the join link themselves.
+  label: string;
+  token: string;
+  createdAt: string;
+  // Null while the invite is still pending. A redeemed invite is spent: its
+  // person now shows up under members instead.
+  acceptedAt: string | null;
+};
+
+export type CollabMember = { id: string; email: string; createdAt: string };
+
+export const collab = {
+  listInvites: () => request<{ invites: CollabInvite[] }>("/collab/invites"),
+  invite: (label: string) =>
+    request<{ invite: CollabInvite }>("/collab/invites", {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    }),
+  revokeInvite: (id: string) => request(`/collab/invites/${id}`, { method: "DELETE" }),
+  listMembers: () => request<{ members: CollabMember[] }>("/collab/members"),
+  // Removing a collaborator deletes their account: they are signed out, and
+  // every share link they minted dies with them (the FK cascades). Their
+  // uploads stay in the library and read as the owner's.
+  removeMember: (id: string) => request(`/collab/members/${id}`, { method: "DELETE" }),
 };

@@ -339,6 +339,10 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "mintedByMe": {
+            "type": "boolean",
+            "description": "Attribution, NOT permission: whether the requesting session minted this share link. Computed per request. The raw minter id (shares.created_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id; the same rule as tracks.uploaded_by and playlists.created_by. Do not build a control gate from this field: share links are locker-level state, so any member of the locker may revoke or re-permission any link regardless of who minted it. It exists so the owner can tell their own links from a collaborator's — which matters because removing a collaborator deletes every link they minted (shares.created_by is ON DELETE CASCADE). The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous: it also means no minter is recorded (a state migration 0004 backfilled away), or that the requester has no identity to compare."
           }
         },
         "required": [
@@ -346,7 +350,8 @@
           "playlistId",
           "token",
           "permission",
-          "createdAt"
+          "createdAt",
+          "mintedByMe"
         ]
       },
       "CollaboratorInvite": {

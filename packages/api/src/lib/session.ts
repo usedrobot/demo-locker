@@ -81,6 +81,7 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
       id: users.id,
       email: users.email,
       accent: users.accent,
+      displayName: users.displayName,
       lockerOwnerId: users.lockerOwnerId,
     })
     .from(users)

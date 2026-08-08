@@ -16,6 +16,7 @@ import {
   findSession,
 } from "../lib/session.js";
 import { isValidAccent } from "../lib/accent.js";
+import { MAX_DISPLAY_NAME_CHARS } from "../lib/display-name.js";
 import {
   signupAllowed,
   resolveInvite,
@@ -207,6 +208,7 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
         id: users.id,
         email: users.email,
         accent: users.accent,
+        displayName: users.displayName,
         lockerOwnerId: users.lockerOwnerId,
       });
   } catch (err) {
@@ -286,6 +288,7 @@ auth.post("/login", rateLimit("login", LOGIN_RULE), async (c) => {
       id: user.id,
       email: user.email,
       accent: user.accent,
+      displayName: user.displayName,
       lockerOwnerId: user.lockerOwnerId,
     },
     token,
@@ -309,6 +312,59 @@ auth.post("/accent", requireAuth, async (c) => {
   await db.update(users).set({ accent }).where(eq(users.id, c.get("user").id));
 
   return c.json({ accent });
+});
+
+// Anything that would make a name occupy more than the one line the row gives
+// it, or read as more than one name: C0 and C1 controls (which include the
+// newlines and tabs), DEL, and the two Unicode line separators.
+//
+// This is NOT an escaping guard. The name is rendered as text content by React,
+// which escapes it, so markup in a name is inert — an allowlist like the
+// accent's is neither possible nor needed for free text. What is left after
+// escaping is layout and impersonation: a newline lets one person's name take
+// two rows and paint a second, fake attribution under it, and a control run can
+// hide the rest of a name in a terminal or a log. Refused rather than stripped,
+// so the value returned to the client is the value the client typed — silently
+// mangling it would show a confirmation that does not match what was saved.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+// Naming yourself. Open to ANY authenticated session, not owner-only: the owner
+// has no invite and so had no name at all (their email showed on every row they
+// uploaded, to every collaborator, permanently), and a collaborator whose name
+// the owner mistyped when inviting them can fix it here.
+auth.post("/display-name", requireAuth, async (c) => {
+  const { displayName } = await c.req.json();
+
+  // Same shape as the accent route's refusal of a value outside its palette:
+  // a non-string never reaches the query layer.
+  if (typeof displayName !== "string") {
+    return c.json({ error: "displayName must be a string" }, 400);
+  }
+  if (CONTROL_CHARS.test(displayName)) {
+    return c.json({ error: "name must not contain line breaks or control characters" }, 400);
+  }
+
+  const trimmed = displayName.trim();
+  // Measured after trimming, so padding cannot smuggle a longer name past the
+  // cap the invite label is held to.
+  if (trimmed.length > MAX_DISPLAY_NAME_CHARS) {
+    return c.json(
+      { error: `name must be ${MAX_DISPLAY_NAME_CHARS} characters or fewer` },
+      400
+    );
+  }
+
+  // Empty means UNSET, and unset is NULL. `displayName ?? email` reads NULL as
+  // "no name, fall back to the address"; an empty string is a name that renders
+  // as nothing at all, which is a blank row rather than a fallback.
+  const stored = trimmed === "" ? null : trimmed;
+
+  const db = getDb(c.env.DB);
+  await db.update(users).set({ displayName: stored }).where(eq(users.id, c.get("user").id));
+
+  // Returned so the client can show what was actually saved — trimmed, and null
+  // where it typed whitespace.
+  return c.json({ displayName: stored });
 });
 
 auth.post("/change-password", requireAuth, async (c) => {

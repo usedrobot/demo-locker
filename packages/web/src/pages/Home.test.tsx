@@ -35,6 +35,7 @@ vi.mock("../lib/api", () => ({
   auth: {
     me: vi.fn(async () => ({ user: {} })),
     setAccent: vi.fn(async () => ({})),
+    setDisplayName: vi.fn(async () => ({ displayName: null })),
   },
   setToken: vi.fn(),
 }));
@@ -82,11 +83,20 @@ const deleteTrackMock = vi.mocked(tracksApi.delete);
 const listSharesMock = vi.mocked(sharesApi.listAll);
 const meMock = vi.mocked(auth.me);
 
-const OWNER: User = { id: "u-owner", email: "o@test.dev", accent: null, lockerOwnerId: null };
+const setDisplayNameMock = vi.mocked(auth.setDisplayName);
+
+const OWNER: User = {
+  id: "u-owner",
+  email: "o@test.dev",
+  accent: null,
+  displayName: null,
+  lockerOwnerId: null,
+};
 const COLLABORATOR: User = {
   id: "u-collab",
   email: "c@test.dev",
   accent: null,
+  displayName: "Jmimy",
   lockerOwnerId: "u-owner",
 };
 
@@ -151,6 +161,28 @@ async function flush() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+  window.HTMLInputElement.prototype,
+  "value"
+)!.set!;
+
+// React tracks the DOM value it last wrote, so assigning .value directly is
+// ignored on a controlled input. Same helper as CollabPanel.test.tsx.
+function typeValue(input: HTMLInputElement, value: string) {
+  nativeInputValueSetter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// Holds a request open so behaviour that only exists while one is genuinely in
+// flight is observable. Mirrors the helper in SharePanel.test.tsx.
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 function deleteButtons(labelFragment: string): HTMLButtonElement[] {
@@ -501,5 +533,165 @@ describe("Home — attribution on rows", () => {
     // is must not have changed that in either direction.
     expect(attributions()).toEqual(["Jimmy"]);
     expect(deleteButtons("Delete their demo")).toHaveLength(0);
+  });
+});
+
+// Naming yourself, from the account row.
+//
+// The owner has no invite and therefore never had a display name, so every row
+// they uploaded showed their login address to every collaborator with no way to
+// change it. The same panel lets a collaborator correct a name the owner
+// mistyped when inviting them.
+describe("Home — the name panel", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({ playlists: [] });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({ tracks: [] });
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: OWNER });
+    setDisplayNameMock.mockReset();
+    setDisplayNameMock.mockImplementation(async (displayName: string) => ({
+      displayName: displayName.trim() || null,
+    }));
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  function nameInput(): HTMLInputElement | null {
+    return container.querySelector<HTMLInputElement>('input[aria-label="display name"]');
+  }
+
+  function saveButton(): HTMLButtonElement {
+    const form = nameInput()?.closest("form");
+    expect(form, "the name panel is not open").toBeTruthy();
+    const btn = form!.querySelector<HTMLButtonElement>('button[type="submit"]');
+    expect(btn, "the name form has no submit control").toBeTruthy();
+    return btn!;
+  }
+
+  async function openPanel() {
+    const btn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "[name]"
+    );
+    expect(btn, "no [name] control on the account row").toBeDefined();
+    act(() => btn!.click());
+    await flush();
+  }
+
+  it("pre-fills with the name the session already has", async () => {
+    meMock.mockResolvedValue({ user: { ...OWNER, displayName: "Dave" } });
+
+    render();
+    await flush();
+    await openPanel();
+
+    expect(nameInput()).not.toBeNull();
+    expect(nameInput()!.value).toBe("Dave");
+  });
+
+  it("says plainly what an empty name falls back to", async () => {
+    render();
+    await flush();
+    await openPanel();
+
+    // Unset is not "no name" — it is the email address, shown to everyone in
+    // the locker on every row. Someone deciding whether to fill this in has to
+    // be told that.
+    expect(nameInput()!.value).toBe("");
+    expect(container.textContent).toContain("o@test.dev");
+  });
+
+  it("saves the typed name and confirms what was stored", async () => {
+    render();
+    await flush();
+    await openPanel();
+
+    typeValue(nameInput()!, "Dave");
+    act(() => saveButton().click());
+    await flush();
+
+    expect(setDisplayNameMock).toHaveBeenCalledTimes(1);
+    expect(setDisplayNameMock).toHaveBeenCalledWith("Dave");
+    expect(container.textContent).toContain("saved");
+  });
+
+  it("sends an empty name to unset it", async () => {
+    meMock.mockResolvedValue({ user: { ...OWNER, displayName: "Dave" } });
+
+    render();
+    await flush();
+    await openPanel();
+
+    typeValue(nameInput()!, "");
+    act(() => saveButton().click());
+    await flush();
+
+    // Empty is how you go back to the email fallback; the server stores NULL.
+    expect(setDisplayNameMock).toHaveBeenCalledWith("");
+    expect(nameInput()!.value).toBe("");
+  });
+
+  it("surfaces a refusal instead of failing silently", async () => {
+    setDisplayNameMock.mockRejectedValueOnce(
+      new Error("name must be 100 characters or fewer")
+    );
+
+    render();
+    await flush();
+    await openPanel();
+
+    typeValue(nameInput()!, "d".repeat(101));
+    act(() => saveButton().click());
+    await flush();
+
+    expect(container.textContent).toContain("name must be 100 characters or fewer");
+    // The field is still there with what was typed, so the fix is one edit away.
+    expect(nameInput()).not.toBeNull();
+    expect(container.textContent).not.toContain("saved —");
+  });
+
+  it("sends one request for a double submit, without disabling anything", async () => {
+    const gate = deferred<{ displayName: string | null }>();
+    setDisplayNameMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+    await openPanel();
+
+    typeValue(nameInput()!, "Dave");
+    const btn = saveButton();
+    act(() => btn.click());
+    act(() => btn.click());
+
+    expect(setDisplayNameMock).toHaveBeenCalledTimes(1);
+    // Disable-and-refocus is ONE pattern, and this form takes neither half: a
+    // disabled control blurs to <body> in a real browser and nothing puts focus
+    // back. The dedupe is a synchronous ref instead (see pages/Join.tsx), so
+    // nothing here may be disabled mid-flight.
+    expect(btn.disabled).toBe(false);
+    expect(nameInput()!.disabled).toBe(false);
+
+    await act(async () => {
+      gate.resolve({ displayName: "Dave" });
+      await gate.promise;
+    });
+    await flush();
+
+    expect(container.textContent).toContain("saved");
+  });
+
+  it("is offered to a collaborator too, pre-filled with the name they were given", async () => {
+    meMock.mockResolvedValue({ user: COLLABORATOR });
+
+    render();
+    await flush();
+    await openPanel();
+
+    // The route is not owner-only on purpose: this is how someone fixes a name
+    // the owner mistyped when inviting them.
+    expect(nameInput()!.value).toBe("Jmimy");
   });
 });

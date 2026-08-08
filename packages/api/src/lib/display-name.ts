@@ -28,6 +28,12 @@ import { inArray } from "drizzle-orm";
 import type { Database } from "../db/index.js";
 import { users } from "../db/schema.js";
 
+// How long a display name may be. ONE cap for one kind of value: this column
+// is also filled from collaboratorInvites.label at redemption, so a limit that
+// differed from the label's would let a name in by one door that the other
+// refuses — and the label route already had this number.
+export const MAX_DISPLAY_NAME_CHARS = 100;
+
 // id -> the name to show for that account. An id that is absent resolves to no
 // name, which is the same "render nothing" outcome as no attribution at all.
 export type DisplayNames = ReadonlyMap<string, string>;

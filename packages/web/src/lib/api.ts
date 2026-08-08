@@ -82,6 +82,11 @@ export type User = {
   id: string;
   email: string;
   accent: string | null;
+  // The name this account's uploads and playlists are attributed to across the
+  // locker (Track.uploadedByName, Playlist.createdByName). Null means unset,
+  // and unset falls back to the email address above — which is why the settings
+  // field says so. /auth/signup, /auth/login and /auth/me all return it.
+  displayName: string | null;
   lockerOwnerId: string | null;
 };
 
@@ -105,6 +110,19 @@ export const auth = {
     request<{ accent: string }>("/auth/accent", {
       method: "POST",
       body: JSON.stringify({ accent }),
+    }),
+  // Name yourself. Open to any session, not just the owner: the owner never had
+  // a name at all (they have no invite to take one from, so every row of theirs
+  // showed their email), and a collaborator can correct a name the owner
+  // mistyped when inviting them.
+  //
+  // Send "" to unset it — the API stores NULL and everything falls back to the
+  // email again. The stored value comes back so the caller can show what was
+  // actually saved, which is the trimmed string or null.
+  setDisplayName: (displayName: string) =>
+    request<{ displayName: string | null }>("/auth/display-name", {
+      method: "POST",
+      body: JSON.stringify({ displayName }),
     }),
   logout: () => request("/auth/logout", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>

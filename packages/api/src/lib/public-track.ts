@@ -59,9 +59,23 @@
 // address a user, and it does not vary per row the way a UUID does.
 //
 // Null when there is no attribution to show, and it must render as NOTHING —
-// never "null", never "unknown". That covers a row predating the column, an
-// uploader since removed (the FK is ON DELETE SET NULL), and a reader with no
-// locker session, who is given no names at all (see resolveDisplayNames).
+// never "null", never "unknown". That covers a row predating the column and a
+// reader with no locker session, who is given no names at all (see
+// resolveDisplayNames).
+//
+// An uploader since REMOVED no longer falls in that hole. Removing a
+// collaborator deletes their account, so uploaded_by goes SET NULL and the live
+// lookup has nothing to find — which used to blank the name off every demo they
+// left in the locker. `tracks.uploaded_by_name` is the name as it read at the
+// moment they were removed, written there by DELETE /collab/members/:id, and it
+// is the fallback for exactly that case. Live account first: while the person
+// is still here their current name wins, so a rename propagates and the
+// snapshot can never go stale behind it.
+//
+// The snapshot column is stripped from the response like uploadedBy is, and the
+// field below is computed — so the fallback goes through the same session gate
+// as the live name rather than around it. A reader with no locker session gets
+// nothing by either path.
 //
 // It is attribution exactly as `uploadedByMe` is, with the same warning
 // attached: it is not delete authority, and a client must not derive one from
@@ -83,7 +97,7 @@ export type TrackRow = typeof tracks.$inferSelect;
 
 export type PublicTrack = Omit<
   TrackRow,
-  "originalKey" | "streamKey" | "uploadedBy"
+  "originalKey" | "streamKey" | "uploadedBy" | "uploadedByName"
 > & {
   hasStream: boolean;
   uploadedByMe: boolean;
@@ -99,6 +113,7 @@ export function publicTrack(
     originalKey: _originalKey,
     streamKey,
     uploadedBy,
+    uploadedByName: departedName,
     ...rest
   } = row;
   return {
@@ -112,6 +127,10 @@ export function publicTrack(
     // session cannot do so by accident. Absent from the map — an id the lookup
     // did not cover — reads as no attribution rather than as a stale name.
     uploadedByName:
-      actingUserId != null && uploadedBy != null ? names.get(uploadedBy) ?? null : null,
+      actingUserId == null
+        ? null
+        : uploadedBy != null
+          ? names.get(uploadedBy) ?? null
+          : departedName,
   };
 }

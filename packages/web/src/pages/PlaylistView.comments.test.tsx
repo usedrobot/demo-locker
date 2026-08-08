@@ -148,7 +148,7 @@ describe("who may moderate comments in PlaylistView", () => {
   it("gives a collaborator the resolve control on the locker's playlist", async () => {
     // A collaborator: their own id is never the locker's id.
     meMock.mockResolvedValue({
-      user: { id: "u-collab", email: "c@t.dev", accent: null, lockerOwnerId: OWNER_ID },
+      user: { id: "u-collab", email: "c@t.dev", accent: null, displayName: null, lockerOwnerId: OWNER_ID },
     });
     render();
     await flush();
@@ -159,7 +159,7 @@ describe("who may moderate comments in PlaylistView", () => {
 
   it("gives the owner the same control", async () => {
     meMock.mockResolvedValue({
-      user: { id: OWNER_ID, email: "o@t.dev", accent: null, lockerOwnerId: null },
+      user: { id: OWNER_ID, email: "o@t.dev", accent: null, displayName: null, lockerOwnerId: null },
     });
     render();
     await flush();
@@ -173,7 +173,7 @@ describe("who may moderate comments in PlaylistView", () => {
   it("gives a collaborator the same control on the track panel", async () => {
     forTrackMock.mockResolvedValue({ comments: [{ ...comment, id: "c-2", trackId: "tr-1" }] });
     meMock.mockResolvedValue({
-      user: { id: "u-collab", email: "c@t.dev", accent: null, lockerOwnerId: OWNER_ID },
+      user: { id: "u-collab", email: "c@t.dev", accent: null, displayName: null, lockerOwnerId: OWNER_ID },
     });
     render();
     await flush();
@@ -192,7 +192,7 @@ describe("who may moderate comments in PlaylistView", () => {
 
   it("withholds it from a viewer outside the locker, with the comment on screen", async () => {
     meMock.mockResolvedValue({
-      user: { id: "u-other", email: "x@t.dev", accent: null, lockerOwnerId: null },
+      user: { id: "u-other", email: "x@t.dev", accent: null, displayName: null, lockerOwnerId: null },
     });
     render();
     await flush();

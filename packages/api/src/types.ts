@@ -4,6 +4,11 @@ export type User = {
   id: string;
   email: string;
   accent: string | null;
+  // The name this account's uploads and playlists are attributed to, or null
+  // for an account that has never set one — in which case the email is the
+  // fallback (see lib/display-name.ts). Loaded with the session because the
+  // settings field has to render the current value.
+  displayName: string | null;
   // Null = owns this locker. Set = collaborator on that owner's locker.
   lockerOwnerId: string | null;
 };

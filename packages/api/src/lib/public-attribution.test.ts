@@ -30,6 +30,7 @@ const trackRow = (over: Partial<TrackRow> = {}): TrackRow =>
     sizeBytes: null,
     uploadedAt: new Date(0),
     uploadedBy: "u-jimmy",
+    uploadedByName: null,
     ...over,
   }) as TrackRow;
 
@@ -43,6 +44,7 @@ const playlistRow = (over: Partial<PlaylistRow> = {}): PlaylistRow =>
     createdAt: new Date(0),
     updatedAt: new Date(0),
     createdBy: "u-jimmy",
+    createdByName: null,
     ...over,
   }) as PlaylistRow;
 
@@ -91,5 +93,57 @@ describe("publicPlaylist attribution", () => {
     expect(
       publicPlaylist(playlistRow({ createdBy: null }), "u-owner", NAMES).createdByName
     ).toBeNull();
+  });
+});
+
+// The snapshot columns: the name of a member who has since been removed,
+// written onto their rows at removal so the demos they left do not go blank.
+// Live account first, snapshot only as the fallback — while the person is here
+// their current name wins and a rename propagates for free.
+describe("attribution after the uploader's account is gone", () => {
+  const departed = (over = {}) =>
+    trackRow({ uploadedBy: null, uploadedByName: "Departing", ...over });
+
+  it("falls back to the snapshot when the uploader row is gone", () => {
+    expect(publicTrack(departed(), "u-owner", NAMES).uploadedByName).toBe("Departing");
+  });
+
+  it("prefers the live name over a stale snapshot while the account exists", () => {
+    const t = publicTrack(
+      trackRow({ uploadedBy: "u-jimmy", uploadedByName: "Jim from before" }),
+      "u-owner",
+      NAMES
+    );
+    expect(t.uploadedByName).toBe("Jimmy");
+  });
+
+  it("refuses the snapshot to a reader with no locker session", () => {
+    const t = publicTrack(departed(), null, NAMES);
+    // Pins the row that WOULD have been named — a null here must mean refused,
+    // not "there was nothing to say".
+    expect(t.title).toBe("a demo");
+    expect(t.uploadedByName).toBeNull();
+    // and the raw column does not travel under its own name either
+    expect(JSON.stringify(t)).not.toContain("Departing");
+  });
+
+  it("serves null when neither an uploader nor a snapshot is recorded", () => {
+    expect(publicTrack(departed({ uploadedByName: null }), "u-owner", NAMES).uploadedByName)
+      .toBeNull();
+  });
+
+  it("does the same for a playlist whose creator is gone", () => {
+    const row = playlistRow({ createdBy: null, createdByName: "Departing" });
+    expect(publicPlaylist(row, "u-owner", NAMES).createdByName).toBe("Departing");
+
+    const anon = publicPlaylist(row, null, NAMES);
+    expect(anon.name).toBe("a set");
+    expect(anon.createdByName).toBeNull();
+    expect(JSON.stringify(anon)).not.toContain("Departing");
+  });
+
+  it("prefers a playlist's live creator name over its snapshot", () => {
+    const row = playlistRow({ createdBy: "u-jimmy", createdByName: "Jim from before" });
+    expect(publicPlaylist(row, "u-owner", NAMES).createdByName).toBe("Jimmy");
   });
 });

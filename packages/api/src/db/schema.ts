@@ -54,6 +54,15 @@ export const playlists = sqliteTable("playlists", {
   createdBy: text("created_by").references(() => users.id, {
     onDelete: "set null",
   }),
+  // The creator's name as it read at the moment they were removed from the
+  // locker. Written ONCE, by DELETE /collab/members/:id, immediately before the
+  // account is deleted and createdBy goes SET NULL — a tombstone, never a
+  // second source of truth, so while the account exists the live name wins and
+  // a rename propagates for free. Written at removal rather than at creation
+  // for two reasons: a name written at creation goes stale the moment someone
+  // renames themselves, and this way playlists made long before the column
+  // existed are covered too, with no backfill.
+  createdByName: text("created_by_name"),
 });
 
 export const tracks = sqliteTable("tracks", {
@@ -84,6 +93,12 @@ export const tracks = sqliteTable("tracks", {
   uploadedBy: text("uploaded_by").references(() => users.id, {
     onDelete: "set null",
   }),
+  // The uploader's name as it read when they were removed from the locker —
+  // the counterpart of playlists.created_by_name, with the same reasoning.
+  // Removing a collaborator deletes their account, so uploaded_by goes SET NULL
+  // and every demo they left behind used to render with no name at all. DL's
+  // ruling: the music stays, and so does whose it is.
+  uploadedByName: text("uploaded_by_name"),
 });
 
 // Fixed-window counters for the auth routes. A table rather than a Workers

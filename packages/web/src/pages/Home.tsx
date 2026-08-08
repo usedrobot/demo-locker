@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   playlists as api,
   tracks as tracksApi,
@@ -44,6 +44,23 @@ export default function Home({ onSelect, onLogout }: Props) {
   const [pwError, setPwError] = useState("");
   const [pwDone, setPwDone] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
+  const [showName, setShowName] = useState(false);
+  // What the field holds while the panel is open, kept apart from `savedName`
+  // so a background refetch (the tab regaining focus) cannot overwrite what
+  // someone is halfway through typing.
+  const [nameDraft, setNameDraft] = useState("");
+  const [savedName, setSavedName] = useState<string | null>(null);
+  const [accountEmail, setAccountEmail] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [nameDone, setNameDone] = useState(false);
+  const [nameBusy, setNameBusy] = useState(false);
+  // Dedupes a double submit synchronously, since `nameBusy` is not visible
+  // until the next render. Deliberately NOT a `disabled`: a disabled control
+  // blurs to <body> in a real browser and nothing puts focus back, so disabling
+  // would owe a refocus effect (SharePanel.tsx has one) — disable-and-refocus
+  // is one pattern, and this form has no other reason to need either half.
+  // Same choice, for the same reason, as pages/Join.tsx.
+  const nameBusyRef = useRef(false);
   const [accessShares, setAccessShares] = useState<Share[]>([]);
   // Null until the session is resolved. Owner-only surfaces render on `true`
   // alone, never on "not false", so a collaborator never sees them flash.
@@ -98,6 +115,8 @@ export default function Home({ onSelect, onLogout }: Props) {
       setPlaylists(r.playlists);
       setLibrary(lib.tracks);
       setIsOwner(me.user.lockerOwnerId === null);
+      setSavedName(me.user.displayName);
+      setAccountEmail(me.user.email);
       setLoadState("ready");
     } catch (err) {
       if (background) return;
@@ -140,6 +159,29 @@ export default function Home({ onSelect, onLogout }: Props) {
     }
     player.setPlaylist(library);
     player.play(id);
+  }
+
+  async function handleNameSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (nameBusyRef.current) return;
+    nameBusyRef.current = true;
+    setNameBusy(true);
+    setNameError("");
+    setNameDone(false);
+    try {
+      // The server trims, and stores NULL for an empty name — so the response
+      // is what was actually saved, and the field adopts it rather than what
+      // was typed.
+      const { displayName } = await auth.setDisplayName(nameDraft);
+      setSavedName(displayName);
+      setNameDraft(displayName ?? "");
+      setNameDone(true);
+    } catch (err) {
+      setNameError(err instanceof Error ? err.message : "couldn't save that name");
+    } finally {
+      nameBusyRef.current = false;
+      setNameBusy(false);
+    }
   }
 
   // Both deletes catch. request() throws on any non-2xx, and the server refuses
@@ -216,6 +258,22 @@ export default function Home({ onSelect, onLogout }: Props) {
             style={{ ...linkStyle, color: showPassword ? "var(--accent)" : "var(--fg-dim)" }}
           >
             [password]
+          </button>
+          <button
+            onClick={() => {
+              if (showName) {
+                setShowName(false);
+                return;
+              }
+              // Seeded on open, from the last value the session reported.
+              setNameDraft(savedName ?? "");
+              setNameError("");
+              setNameDone(false);
+              setShowName(true);
+            }}
+            style={{ ...linkStyle, color: showName ? "var(--accent)" : "var(--fg-dim)" }}
+          >
+            [name]
           </button>
           <button
             onClick={() => {
@@ -312,6 +370,46 @@ export default function Home({ onSelect, onLogout }: Props) {
                   saved — other devices signed out
                 </span>
               )}
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showName && (
+        <div style={{ marginBottom: "2rem" }}>
+          <div className="box-header">your name</div>
+          <form
+            onSubmit={handleNameSubmit}
+            style={{
+              borderTop: "1px solid var(--border)",
+              paddingTop: "0.75rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
+              maxWidth: "22rem",
+            }}
+          >
+            <input
+              aria-label="display name"
+              placeholder="your name"
+              style={fieldStyle}
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+            />
+            {/* Unset is not "no name": it is the login address, on every row
+                this account uploaded, to everyone in the locker. Someone
+                deciding whether to fill this in has to be told which address
+                they are otherwise showing. */}
+            <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+              shown on your uploads and playlists — leave it empty to show{" "}
+              {accountEmail} instead
+            </span>
+            <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+              <button type="submit" style={linkStyle}>
+                {nameBusy ? "[saving...]" : "[save]"}
+              </button>
+              {nameError && <span style={{ color: "var(--error)" }}>{nameError}</span>}
+              {nameDone && <span style={{ color: "var(--fg-dim)" }}>saved</span>}
             </div>
           </form>
         </div>

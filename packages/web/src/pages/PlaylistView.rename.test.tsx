@@ -13,7 +13,7 @@ import type { Playlist } from "../lib/api";
 vi.mock("../lib/api", () => ({
   auth: {
     me: vi.fn(async () => ({
-      user: { id: "u-1", email: "o@t.dev", accent: null, lockerOwnerId: null },
+      user: { id: "u-1", email: "o@t.dev", accent: null, displayName: null, lockerOwnerId: null },
     })),
   },
   playlists: {
@@ -593,7 +593,7 @@ describe("playlist rename — collaborator access", () => {
   // locker the same way the API does: lockerOwnerId ?? own id.
   it("grants library controls to a collaborator, but not publishing", async () => {
     meMock.mockResolvedValue({
-      user: { id: "u-collab", email: "c@t.dev", accent: null, lockerOwnerId: "u-owner" },
+      user: { id: "u-collab", email: "c@t.dev", accent: null, displayName: null, lockerOwnerId: "u-owner" },
     });
 
     render();

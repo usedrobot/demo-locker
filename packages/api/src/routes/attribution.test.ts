@@ -280,3 +280,134 @@ describe("POST /auth/signup with an invite", () => {
     expect(nina.displayName).toBe("Nina");
   });
 });
+
+// Removing a collaborator deletes their account, so uploaded_by / created_by
+// go SET NULL and the name that was resolved from the live row vanishes — every
+// demo they left behind went blank. DL's ruling: keep the name on the demos.
+//
+// The name is snapshotted at REMOVAL, not at upload. It is written once, at the
+// only moment it is needed; it stays correct while the person is still here and
+// renames themselves; and it needs no backfill, because demos uploaded long
+// before this column existed are covered too.
+describe("a departed collaborator keeps their name on the work they left", () => {
+  let departedId: string;
+  let departedPlaylistId: string;
+  const DEPARTED_EMAIL = "attr-departed@test.dev";
+  const DEPARTED_SHARE = "attr-departed-share";
+
+  beforeAll(async () => {
+    const [departed] = await db
+      .insert(users)
+      .values({
+        email: DEPARTED_EMAIL,
+        passwordHash: "x",
+        lockerOwnerId: ownerId,
+        displayName: "Departing",
+      })
+      .returning();
+    departedId = departed.id;
+
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "departed set", createdBy: departedId })
+      .returning();
+    departedPlaylistId = pl.id;
+
+    await db.insert(tracks).values({
+      ownerId,
+      playlistId: departedPlaylistId,
+      title: "departed demo",
+      position: 1,
+      originalKey: "k-departed",
+      uploadedBy: departedId,
+    });
+
+    await db
+      .insert(shares)
+      .values({ playlistId: departedPlaylistId, token: DEPARTED_SHARE, permission: "listen" });
+
+    const res = await app.request(
+      `/collab/members/${departedId}`,
+      { method: "DELETE", headers: auth(ownerToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+
+    // The account really is gone — otherwise every assertion below would pass
+    // on the live-name path and prove nothing about the snapshot.
+    const rows = await db.select().from(users).where(eq(users.id, departedId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("still names them on a track they uploaded", async () => {
+    const res = await app.request("/tracks", { headers: auth(ownerToken) }, env);
+    expect(res.status).toBe(200);
+    const { tracks: rows } = (await res.json()) as { tracks: PublicTrack[] };
+
+    expect(byTitle(rows, "departed demo").uploadedByName).toBe("Departing");
+  });
+
+  it("still names them on a playlist they created", async () => {
+    const res = await app.request("/playlists", { headers: auth(ownerToken) }, env);
+    const { playlists: rows } = (await res.json()) as { playlists: PublicPlaylist[] };
+
+    const pl = rows.find((p) => p.id === departedPlaylistId);
+    expect(pl, "the departed member's playlist is missing from the response").toBeDefined();
+    expect(pl!.createdByName).toBe("Departing");
+  });
+
+  it("leaves a still-present member resolving from their live account", async () => {
+    // The snapshot is a tombstone, never a second source of truth: while the
+    // account exists the live name wins, so a rename still propagates.
+    await db
+      .update(users)
+      .set({ displayName: "Jim" })
+      .where(eq(users.id, collabId));
+
+    const res = await app.request("/tracks", { headers: auth(ownerToken) }, env);
+    const { tracks: rows } = (await res.json()) as { tracks: PublicTrack[] };
+    expect(byTitle(rows, "jimmys demo").uploadedByName).toBe("Jim");
+
+    await db
+      .update(users)
+      .set({ displayName: "Jimmy" })
+      .where(eq(users.id, collabId));
+  });
+
+  it("gives an anonymous share holder no name from the snapshot either", async () => {
+    // The new fallback is a NEW path to a name, and the ruling it must not
+    // route around is that a reader with no locker session is served none at
+    // all — TrackList is shared with the invite page, so a forwarded listen
+    // link would otherwise disclose the band's names.
+    const res = await app.request(
+      `/playlists/${departedPlaylistId}?token=${DEPARTED_SHARE}`,
+      {},
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: PublicPlaylist; tracks: PublicTrack[] };
+
+    // Pins that this is the row that WOULD have been named: the same request
+    // with a locker session gets "Departing" in the test below.
+    expect(byTitle(body.tracks, "departed demo").uploadedByName).toBeNull();
+    expect(body.playlist.createdByName).toBeNull();
+    // Not under any other key either.
+    expect(await (await app.request(
+      `/playlists/${departedPlaylistId}?token=${DEPARTED_SHARE}`,
+      {},
+      env
+    )).text()).not.toContain("Departing");
+  });
+
+  it("gives a locker session reading that same route the snapshot name", async () => {
+    const res = await app.request(
+      `/playlists/${departedPlaylistId}`,
+      { headers: auth(ownerToken) },
+      env
+    );
+    const body = (await res.json()) as { playlist: PublicPlaylist; tracks: PublicTrack[] };
+
+    expect(byTitle(body.tracks, "departed demo").uploadedByName).toBe("Departing");
+    expect(body.playlist.createdByName).toBe("Departing");
+  });
+});

@@ -7,15 +7,14 @@
 import { Hono } from "hono";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { users, collaboratorInvites, comments } from "../db/schema.js";
+import { users, collaboratorInvites, comments, tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { isLockerOwner } from "../lib/locker.js";
+import { MAX_DISPLAY_NAME_CHARS } from "../lib/display-name.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
 const collabRouter = new Hono<Env>();
-
-const MAX_LABEL_CHARS = 100;
 
 collabRouter.post("/invites", requireAuth, async (c) => {
   const user = c.get("user");
@@ -25,8 +24,13 @@ collabRouter.post("/invites", requireAuth, async (c) => {
   if (!label || typeof label !== "string" || !label.trim()) {
     return c.json({ error: "label required" }, 400);
   }
-  if (label.length > MAX_LABEL_CHARS) {
-    return c.json({ error: `label must be ${MAX_LABEL_CHARS} characters or fewer` }, 400);
+  // The label becomes the collaborator's display name at redemption, so it is
+  // capped by the same constant the name route uses — see lib/display-name.ts.
+  if (label.length > MAX_DISPLAY_NAME_CHARS) {
+    return c.json(
+      { error: `label must be ${MAX_DISPLAY_NAME_CHARS} characters or fewer` },
+      400
+    );
   }
 
   const db = getDb(c.env.DB);
@@ -130,8 +134,17 @@ collabRouter.get("/members", requireAuth, async (c) => {
 
 // Removing a collaborator deletes their account: sessions cascade so they are
 // signed out, while uploaded_by / created_by go SET NULL. Their music stays in
-// the library and reads as the owner's — the files belong to the locker, not
-// to the person who happened to upload them.
+// the library — the files belong to the locker, not to the person who happened
+// to upload them — and so does WHOSE it is: the name they were going by is
+// copied onto their tracks and playlists just before the account goes, so the
+// demos do not go blank the moment they leave.
+//
+// The snapshot is written HERE and nowhere else. Writing it at upload time
+// would go stale the instant that person renamed themselves (POST
+// /auth/display-name makes that possible), and it would only cover rows created
+// after the column existed; written at removal it is always the name that was
+// current, and demos uploaded long before this shipped are covered with no
+// backfill.
 //
 // The one thing that does NOT survive is what they handed out: shares.created_by
 // is ON DELETE CASCADE, so every link they minted — listen as well as edit —
@@ -143,11 +156,28 @@ collabRouter.delete("/members/:id", requireAuth, async (c) => {
 
   const db = getDb(c.env.DB);
   const [member] = await db
-    .select({ id: users.id })
+    // displayName and email because the name this person is leaving behind is
+    // the one everything else resolves for them: displayName if set, otherwise
+    // the address (lib/display-name.ts).
+    .select({ id: users.id, email: users.email, displayName: users.displayName })
     .from(users)
     .where(and(eq(users.id, c.req.param("id")), eq(users.lockerOwnerId, user.id)))
     .limit(1);
   if (!member) return c.json({ error: "not found" }, 404);
+
+  // Before the delete, not after: once the account is gone so is the name, and
+  // uploaded_by / created_by are already NULL with nothing left to match on.
+  // Scoped to this locker as well as this member, so the write can only ever
+  // touch rows the owner making the request can already see.
+  const departedName = member.displayName ?? member.email;
+  await db
+    .update(tracks)
+    .set({ uploadedByName: departedName })
+    .where(and(eq(tracks.uploadedBy, member.id), eq(tracks.ownerId, user.id)));
+  await db
+    .update(playlists)
+    .set({ createdByName: departedName })
+    .where(and(eq(playlists.createdBy, member.id), eq(playlists.ownerId, user.id)));
 
   // comments.resolved_by is the one FK to users with no ON DELETE action, and
   // it cannot get one: changing a column's FK on SQLite needs a full table

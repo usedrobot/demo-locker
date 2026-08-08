@@ -301,7 +301,6 @@ export type Comment = {
   timestampSec: number | null;
   createdAt: string;
   resolvedAt: string | null;
-  resolvedBy: string | null;
   replies?: Comment[];
 };
 

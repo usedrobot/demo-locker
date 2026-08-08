@@ -41,7 +41,6 @@ const comment: Comment = {
   timestampSec: null,
   createdAt: "",
   resolvedAt: null,
-  resolvedBy: null,
   replies: [],
 };
 

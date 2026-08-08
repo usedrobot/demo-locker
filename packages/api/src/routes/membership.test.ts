@@ -1377,6 +1377,75 @@ describe("comment moderation under collaboration", () => {
     expect(still).toBeDefined();
   });
 
+  // The same exception on the OTHER route. Both call refuseModeration, but a
+  // mutation that made only this callsite unconditional would survive a test
+  // of the delete path alone.
+  it("tells a share holder the same thing on the resolve route", async () => {
+    const comment = await commentOnOwnerPlaylist("resolve me if you can");
+    const shareToken = "member-resolve-share-token";
+    await db
+      .insert(shares)
+      .values({ playlistId: ownerPlaylistId, token: shareToken, permission: "listen" })
+      .returning();
+
+    const res = await app.request(
+      `/comments/${comment.id}/resolve?token=${shareToken}`,
+      { method: "PATCH", headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(403);
+    const [still] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(still.resolvedAt).toBeNull();
+  });
+
+  // resolvedBy is a raw internal user id. Before this task only the locker
+  // owner's could ever be written there — a value already on the wire as
+  // playlists.ownerId. Letting collaborators resolve means it can now hold a
+  // COLLABORATOR's id, which has never been serialized anywhere, and this list
+  // is readable with a share token. So the field stops leaving the server; the
+  // column stays, because the audit record is real.
+  it("never puts the resolver's raw user id on the wire, not even to a share holder", async () => {
+    const comment = await commentOnOwnerPlaylist("who closed this?");
+    const shareToken = "member-resolvedby-share-token";
+    await db
+      .insert(shares)
+      .values({ playlistId: ownerPlaylistId, token: shareToken, permission: "listen" })
+      .returning();
+
+    const resolved = await app.request(
+      `/comments/${comment.id}/resolve`,
+      { method: "PATCH", headers: auth(collabToken) },
+      env
+    );
+    expect(resolved.status).toBe(200);
+    // The row really did record them — this is what must not reach a client.
+    const [row] = await db.select().from(comments).where(eq(comments.id, comment.id));
+    expect(row.resolvedBy).toBe(collabId);
+
+    // The acting collaborator's own response does not carry it either.
+    const resolvedBody = await resolved.text();
+    expect(resolvedBody).not.toContain(collabId);
+    expect(JSON.parse(resolvedBody).comment).not.toHaveProperty("resolvedBy");
+
+    const list = await app.request(
+      `/comments/playlist/${ownerPlaylistId}?token=${shareToken}`,
+      {},
+      env
+    );
+    expect(list.status).toBe(200);
+    const listBody = await list.text();
+    // Pin that the resolved comment is actually in this response, so the
+    // absence below is about the field and not about an empty list.
+    const { comments: listed } = JSON.parse(listBody) as {
+      comments: { id: string; resolvedAt: string | null }[];
+    };
+    const found = listed.find((row) => row.id === comment.id);
+    expect(found).toBeDefined();
+    expect(found!.resolvedAt).not.toBeNull();
+    expect(found).not.toHaveProperty("resolvedBy");
+    expect(listBody).not.toContain(collabId);
+  });
+
   it("still lets an anonymous author delete their own comment with X-Delete-Token", async () => {
     const [comment] = await db
       .insert(comments)

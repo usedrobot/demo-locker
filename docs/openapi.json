@@ -279,14 +279,8 @@
               "string",
               "null"
             ],
-            "format": "date-time"
-          },
-          "resolvedBy": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
+            "format": "date-time",
+            "description": "When the comment was resolved, or null if open. WHO resolved it is recorded in the database (comments.resolved_by) as an audit field but is deliberately never serialized: it is a raw internal user id, and any locker member may resolve, so putting it on the wire would disclose collaborator ids to share holders. comments.ts strips it via publicComment()."
           },
           "deleteToken": {
             "type": "string",
@@ -2099,7 +2093,7 @@
     "/comments/{id}/resolve": {
       "patch": {
         "summary": "Toggle a comment's resolved state",
-        "description": "Bearer session required, and the caller must be a member of the comment's locker — the owner, or a collaborator whose `users.lockerOwnerId` points at them. Moderation is library work, not locker administration (DL, 2026-08-08). The locker is resolved from the comment's playlist, or — for a comment on a library track in no playlist — from the track itself, the same fallback POST /comments uses. Not accessible via share token: it returns 401 if unauthenticated. A refusal is a non-enumerable 404 unless the caller has already demonstrated read access to the comment's playlist (e.g. by also presenting a valid share token), in which case it is 403 — for them the comment's existence is not a secret and a 404 would only mislead. `resolvedBy` records the acting user, not the locker.",
+        "description": "Bearer session required, and the caller must be a member of the comment's locker — the owner, or a collaborator whose `users.lockerOwnerId` points at them. Moderation is library work, not locker administration (DL, 2026-08-08). The locker is resolved from the comment's playlist, or — for a comment on a library track in no playlist — from the track itself, the same fallback POST /comments uses. Not accessible via share token: it returns 401 if unauthenticated. A refusal is a non-enumerable 404 unless the caller has already demonstrated read access to the comment's playlist (e.g. by also presenting a valid share token), in which case it is 403 — for them the comment's existence is not a secret and a 404 would only mislead. The database records the acting USER (not the locker) as the resolver, but that id is never returned — see the Comment schema's resolvedAt.",
         "operationId": "resolveComment",
         "security": [
           {

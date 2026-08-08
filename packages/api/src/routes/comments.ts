@@ -33,8 +33,18 @@ async function resolveAuthedUser(c: any) {
 }
 
 // Strip server-only fields from a comment row before returning to clients.
+//
+// `resolvedBy` is one of them. It is a real audit record and the column stays,
+// but it holds a RAW internal user id — and once collaborators could resolve
+// (Task 11c), that id stopped being the locker owner's (already on the wire as
+// `playlists.ownerId`) and became any member's, which has never been
+// serialized anywhere. These lists are readable with a share token, so it must
+// not leave the server. Nothing renders it; `resolvedAt` is what the UI shows.
+// If who-resolved-it is ever wanted on the wire, this branch's own precedent
+// (`uploadedByMe`, `createdByMe`, `createdByName`) is how to add it: a
+// computed value, never the id.
 function publicComment(row: any) {
-  const { deleteToken, ...rest } = row;
+  const { deleteToken, resolvedBy, ...rest } = row;
   return rest;
 }
 

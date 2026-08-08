@@ -82,8 +82,51 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   }
 
   if (inviteToken) {
-    if (!(await resolveInvite(db, inviteToken))) {
+    const pending = await resolveInvite(db, inviteToken);
+    if (!pending) {
       return c.json({ error: "this invite is not valid" }, 403);
+    }
+
+    // Re-check the seat cap here, not only where the invite was minted.
+    // getLimits reads the env per request, so an operator who lowers
+    // MAX_COLLABORATORS while invites are outstanding would otherwise see
+    // every one of them redeemed anyway and end up permanently over the cap
+    // they just set. Redemption is where a seat is actually taken.
+    //
+    // This is a SOFT cap and the check is NOT tight. The count runs here, the
+    // row that consumes the seat is not inserted until after the password
+    // hash, and PBKDF2 is by far the slowest thing on this route — so two
+    // invitees redeeming DIFFERENT tokens at once can both read the same count
+    // and both get in. claimInvite's conditional update does not help; it is
+    // per-token and these are different tokens. The mint-time check in
+    // routes/collab.ts has exactly the same character.
+    //
+    // That window is the price of the two properties that matter more, and
+    // both of them come from this check sitting *here*:
+    //
+    //   - It precedes the duplicate-email 409 below, so a caller holding a
+    //     valid invite to a full locker gets the same 403 whatever address
+    //     they send. Move it after, and signup becomes a free, repeatable
+    //     registered/not-registered oracle for anyone with an invite.
+    //   - It precedes claimInvite, so refusing costs nothing and needs no
+    //     compensation. Move it after, and the refusal has to release a claim
+    //     it just made — and release() is best-effort by design, so a
+    //     transient failure there destroys the invite permanently, which is
+    //     precisely what an operator lowering a cap must not do.
+    //
+    // Closing the window would need a conditional write against a count in
+    // another table, which SQLite cannot express, or create-then-roll-back,
+    // whose failed rollback leaves standing access nobody granted. A locker
+    // briefly one over an advisory limit is the smallest of these problems.
+    const limits = getLimits(c.env);
+    if (isLimited(limits.maxCollaborators)) {
+      const seated = await countLockerMembers(db, pending.ownerId);
+      if (seated >= limits.maxCollaborators) {
+        return c.json(
+          { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
+          403
+        );
+      }
     }
   } else if (!(await signupAllowed(db, c.env))) {
     return c.json({ error: "registration is closed on this instance" }, 403);
@@ -120,41 +163,6 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     invite = await claimInvite(db, inviteToken);
     if (!invite) {
       return c.json({ error: "this invite is not valid" }, 403);
-    }
-  }
-
-  // Re-check the seat cap here, not only where the invite was minted.
-  // getLimits reads the env per request, so an operator who lowers
-  // MAX_COLLABORATORS while invites are outstanding would otherwise see every
-  // one of them redeemed anyway and end up permanently over the cap they just
-  // set. Redemption is where a seat is actually taken.
-  //
-  // This is a SOFT cap, and deliberately so. The count and the INSERT that
-  // consumes the seat are two statements, so two invitees redeeming DIFFERENT
-  // tokens at the same moment can both read the same count and both get in.
-  // claimInvite's conditional update does not help — it is per-token, and
-  // these are different tokens. The mint-time check in routes/collab.ts has
-  // exactly the same character.
-  //
-  // It sits here, immediately before the insert, rather than up with the
-  // pre-flight, because that is what makes the window narrow: up there it
-  // spanned the PBKDF2 hash, which is by far the slowest thing on this route.
-  // Closing it completely needs either a conditional write against a count —
-  // which SQLite cannot express against a different table — or creating the
-  // account and rolling it back, and a rollback that fails leaves standing
-  // access nobody granted. A soft limit briefly overshot is the better trade
-  // than a delete path that can strand a collaborator in someone's locker.
-  const limits = getLimits(c.env);
-  if (invite && isLimited(limits.maxCollaborators)) {
-    const seated = await countLockerMembers(db, invite.ownerId);
-    if (seated >= limits.maxCollaborators) {
-      // Refused after the claim, so give the invite back — the operator
-      // lowered the cap, and that should not also destroy the invite.
-      await release(db, invite);
-      return c.json(
-        { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
-        403
-      );
     }
   }
 

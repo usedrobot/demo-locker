@@ -961,15 +961,90 @@ describe("MAX_COLLABORATORS at redemption", () => {
     const [none] = await db.select().from(users).where(eq(users.email, "over-cap@test.dev"));
     expect(none).toBeUndefined();
 
-    // The cap is checked after the claim (that is what keeps the window off
-    // the PBKDF2 hash), so the refusal has to hand the invite back: the
-    // operator lowered the cap, and that should not also destroy the invite.
+    // Refused before anything was claimed, so the invite is untouched — an
+    // operator lowering the cap must not also destroy the invites already out.
     const [invite] = await db
       .select()
       .from(collaboratorInvites)
       .where(eq(collaboratorInvites.token, "over-cap-token"));
     expect(invite.acceptedAt).toBeNull();
     expect(invite.acceptedBy).toBeNull();
+  });
+
+  // Untouched is not the same as usable. A refusal that claimed and then
+  // compensated would leave accepted_at null on a good day and spent forever
+  // on a bad one, since the release is best-effort and swallows throws. The
+  // only way to show the invite really survived is to redeem it.
+  it("leaves the invite redeemable once the operator makes room", async () => {
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.16" },
+        body: JSON.stringify({
+          email: "over-cap@test.dev",
+          password: "correct horse",
+          inviteToken: "over-cap-token",
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { user } = (await res.json()) as { user: { id: string; lockerOwnerId: string } };
+    expect(user.lockerOwnerId).toBe(ownerId);
+
+    const [invite] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.token, "over-cap-token"));
+    expect(invite.acceptedBy).toBe(user.id);
+  });
+});
+
+// Every invite-related refusal has to come before the duplicate-email 409, or
+// signup becomes an account-enumeration oracle: a caller holding one valid
+// invite to a full locker could tell a registered address from an unregistered
+// one, free and repeatably, because the refusal never spends the invite. The
+// full-locker check is the one that has to be watched — it is the only invite
+// refusal that depends on state other than the token.
+describe("a full locker refuses identically whatever the address", () => {
+  const PROBER_IP = "203.0.113.18";
+
+  const probe = (email: string) =>
+    app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": PROBER_IP },
+        body: JSON.stringify({
+          email,
+          password: "correct horse",
+          inviteToken: "full-locker-token",
+        }),
+      },
+      { ...env, MAX_COLLABORATORS: "1" }
+    );
+
+  it("cannot be used to tell a registered address from an unregistered one", async () => {
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "full-locker-token", label: "Prober" });
+
+    // dana@test.dev was registered by the redemption suite above.
+    const registered = await probe("dana@test.dev");
+    const unknown = await probe("nobody-at-all@test.dev");
+
+    expect(registered.status).toBe(403);
+    expect(unknown.status).toBe(403);
+    expect(await registered.json()).toEqual(await unknown.json());
+
+    // And probing cost the prober nothing — the invite is still unspent, so
+    // this is repeatable rather than self-limiting.
+    const [invite] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.token, "full-locker-token"));
+    expect(invite.acceptedAt).toBeNull();
   });
 });
 

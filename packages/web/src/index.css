@@ -214,20 +214,16 @@ button:active {
   flex: none;
 }
 
-/* Sharing action row: buttons first, hint text allowed to drop to its own line
-   rather than squeezing the buttons. */
+/* Sharing action row: a label input, a permission checkbox, and the mint
+   button. All three are `flex: none` (see .tui-btn above) so none of them
+   wraps mid-label into a different row height; the row itself wraps as a
+   whole at narrow widths instead. */
 .share-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.75rem;
-}
-.share-hint {
-  color: var(--fg-dim);
-  font-size: 11px;
-  flex: 1 1 16rem;
-  min-width: 0;
 }
 .share-label-input {
   background: var(--bg);
@@ -237,7 +233,10 @@ button:active {
   font-size: 12px;
   padding: 0.2rem 0.4rem;
   flex: none;
-  width: 14ch;
+  /* Wide enough that the "who is this for?" placeholder — the field's only
+     visible affordance, since it's otherwise labelled by aria-label alone —
+     isn't clipped. 14ch cut it off; measured with room to spare. */
+  width: 18ch;
 }
 .share-perm {
   display: flex;

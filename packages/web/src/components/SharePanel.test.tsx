@@ -66,6 +66,19 @@ function typeValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+// Lets a test hold `create` open indefinitely and resolve it on cue, to
+// exercise behavior that only matters while a mint is genuinely in flight
+// (as opposed to `mockResolvedValue`, which settles on the same microtask
+// turn and never leaves an observable in-flight window). Mirrors the
+// `deferred` helper in PlaylistView.rename.test.tsx.
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
@@ -122,7 +135,79 @@ describe("SharePanel", () => {
     render();
     await flush();
 
+    // Positive assertion alongside the negative one: without this, the test
+    // would pass just as well if SharePanel rendered nothing at all, which
+    // wouldn't verify the hint was removed so much as that some regression
+    // happened to also remove it. The row and its controls have to actually
+    // be there for the absence of .share-hint to mean what this test claims.
     expect(container.querySelector(".share-hint")).toBeNull();
+    expect(container.querySelector(".share-actions")).not.toBeNull();
+    expect(shareButton()).not.toBeNull();
+    expect(editCheckbox()).not.toBeNull();
+    expect(labelInput()).not.toBeNull();
+  });
+
+  it("resets the edit checkbox after a successful mint, like the label", async () => {
+    render();
+    await flush();
+
+    const checkbox = editCheckbox();
+    act(() => checkbox!.click());
+    expect(checkbox!.checked).toBe(true);
+
+    act(() => shareButton()!.click());
+    await flush();
+
+    // The label box clearing is the only visible "this form reset" signal.
+    // If the checkbox stayed checked, that signal would be a lie: the next
+    // link minted from this same row would silently inherit edit rights
+    // nobody re-selected for it.
+    expect(checkbox!.checked).toBe(false);
+  });
+
+  it("ignores a second click while a mint is still in flight", async () => {
+    const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
+    createMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+
+    const btn = shareButton()!;
+    // Both clicks happen inside one act() — i.e. in the same tick, before
+    // React has re-rendered `disabled={creating}` into the DOM. That's the
+    // scenario the disabled attribute alone can't cover: a fast double-click
+    // lands both events before any render occurs, so only the synchronous
+    // `creatingRef` guard (not the disabled prop) can dedupe it. Splitting
+    // these into two separate act() calls would let a render land in between
+    // and make the disabled attribute do the deduping instead, which would
+    // pass even if creatingRef's own check were deleted.
+    act(() => {
+      btn.click();
+      btn.click();
+    });
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      gate.resolve({ share: {} as never });
+      await Promise.resolve();
+    });
+  });
+
+  it("mints on Enter in the label input, not just on click", async () => {
+    render();
+    await flush();
+
+    const input = labelInput();
+    act(() => typeValue(input!, "Jimmy"));
+    act(() => {
+      input!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
+    await flush();
+
+    expect(createMock).toHaveBeenCalledWith("pl-1", "listen", "Jimmy");
   });
 });
 

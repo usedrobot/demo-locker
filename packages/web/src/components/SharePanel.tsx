@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { shares as api, type Share } from "../lib/api";
 import { copyText } from "../lib/copy-text";
 
@@ -13,6 +13,13 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   const [error, setError] = useState("");
   const [canEdit, setCanEdit] = useState(false);
   const [label, setLabel] = useState("");
+  const [creating, setCreating] = useState(false);
+  // Belt-and-suspenders with `creating`: state updates aren't visible until
+  // the next render, so two clicks inside the same tick (a fast double-click,
+  // or Enter immediately followed by a click) can both pass a `creating`
+  // check that hasn't re-rendered yet. The ref is synchronous and closes that
+  // window; `creating` still drives the disabled button for the UI.
+  const creatingRef = useRef(false);
 
   const load = useCallback(() => {
     api.forPlaylist(playlistId).then((r) => setItems(r.shares));
@@ -23,13 +30,23 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   }, [load]);
 
   async function handleCreate() {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
     setError("");
     try {
+      // shares.email is a display label, not an address — nothing is ever
+      // sent to it. See SharePanel's "who is this for?" input below; do not
+      // build an email-gated invite flow on top of this argument.
       await api.create(playlistId, canEdit ? "edit" : "listen", label.trim() || undefined);
       setLabel("");
+      setCanEdit(false);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
     }
   }
 
@@ -104,6 +121,9 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           placeholder="who is this for?"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleCreate();
+          }}
           className="share-label-input"
         />
         <label className="share-perm">
@@ -115,7 +135,7 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           />
           can upload and reorder
         </label>
-        <button onClick={handleCreate} className="tui-btn">
+        <button onClick={handleCreate} disabled={creating} className="tui-btn">
           [+ share link]
         </button>
         {extraAction}

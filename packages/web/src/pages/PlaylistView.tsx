@@ -30,6 +30,12 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [renameError, setRenameError] = useState("");
+  // Escape sets this before it blurs the input (removing it from the DOM
+  // unmounts the focused element, which blurs it) so the blur handler below
+  // knows to skip its own commit. A ref survives that render without waiting
+  // on state to flush, which matters because the unmount happens synchronously
+  // inside the same event.
+  const skipBlurCommitRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,11 +66,20 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     if (!playlist) return;
     const next = draftName.trim();
     if (!next || next === playlist.name) {
+      // Closing here (no-op or unchanged) unmounts the input, which blurs
+      // it — skip the blur handler's own commitRename() so it doesn't fire
+      // a second time against a closure that's already been resolved. Also
+      // clear any error from an earlier failed attempt in this same session
+      // — the error <div> below isn't gated on `renaming`, so leaving it set
+      // here would pin it on screen with no editor left open to dismiss it.
+      skipBlurCommitRef.current = true;
       setRenaming(false);
+      setRenameError("");
       return;
     }
     try {
       const r = await api.update(playlist.id, { name: next });
+      skipBlurCommitRef.current = true;
       setPlaylist(r.playlist);
       setRenaming(false);
       setRenameError("");
@@ -152,11 +167,24 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRename();
                 if (e.key === "Escape") {
+                  skipBlurCommitRef.current = true;
                   setRenaming(false);
                   setRenameError("");
                 }
               }}
-              onBlur={() => setRenaming(false)}
+              onBlur={() => {
+                // Escape already handled discarding — don't also commit.
+                if (skipBlurCommitRef.current) {
+                  skipBlurCommitRef.current = false;
+                  return;
+                }
+                // Clicking away used to discard silently: setRenaming(false)
+                // ran on mousedown, before the click's mouseup, so the
+                // control the user meant to hit (e.g. [make public]) moved
+                // out from under the pointer AND the typed name was lost.
+                // Committing here preserves the edit either way.
+                commitRename();
+              }}
               className="rename-input"
             />
           ) : (
@@ -167,6 +195,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
               <button
                 onClick={() => {
                   setDraftName(playlist.name);
+                  setRenameError("");
                   setRenaming(true);
                 }}
                 style={{ ...linkStyle, color: "var(--accent)" }}

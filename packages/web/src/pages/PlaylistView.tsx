@@ -48,6 +48,19 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // being disabled out from under the focus) before that request resolves,
   // which would otherwise re-enter commitRename and fire a duplicate PATCH.
   const renameInFlightRef = useRef(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // Disabling a focused input moves focus to <body>, and `autoFocus` cannot
+  // re-fire on an element that was never unmounted — so when a failed rename
+  // re-enables the field, it comes back editable but *unfocused*: the draft
+  // is sitting there, the error is on screen, and the user's correction goes
+  // to the document and is lost. Enter and Escape do nothing, and [rename] is
+  // hidden while renaming, so there is no visible way back in. Restoring
+  // focus is also what re-arms the blur-commit safety net, which would
+  // otherwise be permanently dead for the rest of this editing session.
+  useEffect(() => {
+    if (renaming && !renameSaving) renameInputRef.current?.focus();
+  }, [renaming, renameSaving]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +195,10 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <input
                 aria-label="playlist name"
-                autoFocus
+                // No `autoFocus`: the effect above owns focus for both cases
+                // (opening the editor, and coming back from a failed save),
+                // and one mechanism is easier to reason about than two.
+                ref={renameInputRef}
                 value={draftName}
                 // Uneditable for the length of the request. That window used
                 // to stay live, which meant a correction typed into it either

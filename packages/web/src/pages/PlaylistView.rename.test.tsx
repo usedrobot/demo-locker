@@ -4,7 +4,7 @@
 // on Escape, and refuse to submit a blank/whitespace name. Follows the house
 // test pattern (createRoot + act, no @testing-library/react — not a
 // dependency of this project).
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import PlaylistView from "./PlaylistView";
@@ -110,15 +110,52 @@ function typeValue(input: HTMLInputElement, value: string) {
 // microtask turn and never leaves an observable in-flight window).
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
+
+// Real browsers move focus to <body> when a focused control is disabled.
+// happy-dom does NOT: after `.disabled = true`, `document.activeElement` is
+// still the input. Both quirks below were verified directly in this
+// environment rather than assumed:
+//   1. disabling a focused input leaves it as document.activeElement;
+//   2. calling .blur() on an already-disabled input is a no-op, so the
+//      obvious way to model quirk 1 doesn't work either — moving focus
+//      explicitly (document.body.focus()) is what actually shifts it.
+// Any test that cares about focus across the in-flight window has to do this
+// itself, or it asserts against a focus state no browser is ever in. Named
+// for the browser behaviour it stands in for, not for its mechanism.
+function browserBlurOnDisable() {
+  document.body.focus();
+}
+
+// Each test mounts into a fresh container. Without this teardown the previous
+// container stays in document.body with its React tree still mounted, so state
+// that lives on the *document* — notably document.activeElement — leaks into
+// later tests. That leak is invisible in a green run but makes full-file
+// mutation runs lie: killing one guard appears to break three unrelated tests.
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+});
 
 describe("playlist rename", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks clears recorded calls but NOT queued *Once values. Several
+    // tests below queue one with mockReturnValueOnce/mockRejectedValueOnce; if
+    // such a test aborts on a failed assertion before consuming it, the queued
+    // value survives into the next test — which then gets, say, a promise that
+    // never settles, and fails for a reason that has nothing to do with what it
+    // asserts. mockReset drains the queue; the defaults are re-stubbed on the
+    // next two lines. (Only these two: resetting the mocks whose implementation
+    // comes from the vi.mock factory would wipe it and leave them undefined.)
+    getMock.mockReset();
+    updateMock.mockReset();
     getMock.mockResolvedValue({ playlist, tracks: [] });
     updateMock.mockResolvedValue({ playlist: { ...playlist, name: "new name" } });
     container = document.createElement("div");
@@ -290,6 +327,13 @@ describe("playlist rename", () => {
   // uneditable, so there is nothing to drop and nothing to reconcile. It
   // also makes the in-flight Escape no-op below legible rather than
   // mysterious: the user can see the field is not accepting input.
+  //
+  // COVERAGE CAVEAT: this asserts the rendered `disabled` attribute and the
+  // affordance, nothing about focus. happy-dom leaves a disabled input as
+  // document.activeElement, where a real browser moves focus to <body> — so
+  // the focus state during this test is not the one a user is ever in. The
+  // focus consequences are covered by the refocus test below, which models
+  // that blur explicitly.
   it("disables the input and shows a pending affordance while the rename is in flight", async () => {
     const first = deferred<{ playlist: Playlist }>();
     updateMock.mockReturnValueOnce(first.promise);
@@ -326,10 +370,75 @@ describe("playlist rename", () => {
     expect(container.textContent).not.toContain("saving");
   });
 
+  // The re-enabled field has to be reachable from the keyboard, which is a
+  // stronger claim than "not disabled". Disabling a focused input moves focus
+  // to <body>, and autoFocus cannot re-fire on an element that never
+  // unmounted — so without an explicit refocus the user sees their draft and
+  // the error, types the correction, and the keystrokes go to the document.
+  // Enter does nothing, Escape does nothing, and [rename] is hidden while
+  // renaming, so there is no visible way back in.
+  //
+  // COVERAGE CAVEAT: happy-dom does not blur on disable (see
+  // browserBlurOnDisable above), so this test performs that blur itself. It
+  // proves the refocus happens given the browser's focus behaviour; it cannot
+  // prove happy-dom reproduces that behaviour, because it doesn't.
+  it("returns focus to the input after a failed rename, and re-arms blur-commit", async () => {
+    const first = deferred<{ playlist: Playlist }>();
+    updateMock.mockReturnValueOnce(first.promise);
+
+    render();
+    await flush();
+
+    act(() => renameButton()!.click());
+    const input = nameInput()!;
+    // Opening the editor focuses it — the same effect that restores focus later.
+    expect(document.activeElement).toBe(input);
+
+    act(() => typeValue(input, "taken name"));
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
+    await flush();
+    expect(input.disabled).toBe(true);
+
+    act(() => browserBlurOnDisable());
+    expect(document.activeElement).not.toBe(input);
+
+    act(() => first.reject(new Error("name already taken")));
+    await flush();
+
+    // Same node (never unmounted), enabled again — and actually focused, so a
+    // typed correction lands in the field rather than on <body>.
+    expect(nameInput()).toBe(input);
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input);
+
+    // Focus being back is also what re-arms the blur-commit safety net: with
+    // the field blurred and never refocused, no further blur could fire from
+    // it, so clicking [make public] (still rendered during renaming) or
+    // [< back] after a failure would take the draft to the grave.
+    act(() => typeValue(input, "free name"));
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+
+    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(updateMock).toHaveBeenNthCalledWith(2, "pl-1", { name: "free name" });
+  });
+
   // The property this whole task has been protecting: a failed rename must
   // never cost the user their typed name. On failure the field comes back to
   // life with the draft still in it and the error visible, so the fix is a
   // correction-and-retry rather than a retype from scratch.
+  //
+  // COVERAGE CAVEAT: the retry below is driven by a dispatched keydown, which
+  // reaches React's handler regardless of where focus actually is. In a real
+  // browser the field would have been blurred by the disable, so this test on
+  // its own would pass even with the correction going nowhere — the focus
+  // half of the claim is the refocus test's job, not this one's.
   it("re-enables the input with the draft intact when the rename fails", async () => {
     updateMock.mockRejectedValueOnce(new Error("name already taken"));
 
@@ -461,6 +570,8 @@ describe("playlist rename — collaborator access", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    getMock.mockReset();
+    updateMock.mockReset();
     getMock.mockResolvedValue({ playlist: ownerPlaylist, tracks: [] });
     updateMock.mockResolvedValue({ playlist: { ...ownerPlaylist, name: "new name" } });
     container = document.createElement("div");

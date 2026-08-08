@@ -418,7 +418,7 @@ button:active {
 
 /* The ascii title is a size container; the rename input stands in for it
    rather than wrapping it, so the container never sizes itself from an
-   editable child. width:100% keeps it inside the flex:1 column. */
+   editable child. */
 .rename-input {
   /* flex:1 + min-width:0 rather than width:100%: the input now shares a flex
      row with the "saving" affordance, and a 100%-wide item would push that
@@ -438,6 +438,13 @@ button:active {
    user can see why. */
 .rename-input:disabled {
   color: var(--fg-dim);
+  /* iOS Safari overrides `color` on disabled controls with its own
+     -webkit-text-fill-color and knocks the opacity down, so `color` alone
+     renders nothing like this on a phone — and font-size:16px above says
+     mobile is in scope. Setting both explicitly is what actually makes the
+     in-flight window legible there. */
+  -webkit-text-fill-color: var(--fg-dim);
+  opacity: 1;
   cursor: not-allowed;
 }
 

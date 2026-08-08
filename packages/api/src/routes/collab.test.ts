@@ -1132,6 +1132,17 @@ describe("two signups racing the same email", () => {
 // after the first count and before the hash, and seats one more member
 // synchronously.
 describe("a locker that fills up mid-request", () => {
+  // This test seats a member from inside a request that is expected to fail, so
+  // it is the one place in this file that changes locker membership as a side
+  // effect. Clean it up: anything appended later that asserts on
+  // GET /collab/members or a literal seat count would otherwise be off by one
+  // for reasons invisible from its own body.
+  afterAll(async () => {
+    await db
+      .delete(users)
+      .where(inArray(users.email, ["took-the-last-seat@test.dev", "too-late@test.dev"]));
+  });
+
   it("is caught by the second seat count, before anything is claimed", async () => {
     await db
       .insert(collaboratorInvites)
@@ -1140,15 +1151,32 @@ describe("a locker that fills up mid-request", () => {
     const seated = await db.select().from(users).where(eq(users.lockerOwnerId, ownerId));
     const roomForOneMore = { ...env, MAX_COLLABORATORS: String(seated.length + 1) };
 
+    // What each seat count is about to see, recorded in order. This is the
+    // assertion that keeps the test honest: the hook below fires on a query
+    // shape, so if a future change puts another single-column users.id select
+    // earlier on the route, the member would be seated BEFORE the first count
+    // and the request would 403 at the first check instead of the second. Every
+    // other assertion here would still pass, and the test would silently stop
+    // exercising the thing it exists for. Comparing the observed counts fails
+    // loudly instead.
+    const seenByEachSeatCount: number[] = [];
+    const currentlySeated = () =>
+      db.select().from(users).where(eq(users.lockerOwnerId, ownerId)).all().length;
+
     let filled = false;
     const fillsUpDuringTheRequest = new Proxy(db, {
       get(target, prop, receiver) {
         if (prop === "select") {
           return (fields?: Record<string, unknown>) => {
+            const keys = fields ? Object.keys(fields) : [];
+            // countLockerMembers is the only count() select reached on this
+            // path — signupAllowed's is on the open-registration branch.
+            if (keys.length === 1 && keys[0] === "count") {
+              seenByEachSeatCount.push(currentlySeated());
+            }
             // The duplicate-email lookup is the only single-column select of
-            // users.id on this route; the seat counts select a count().
-            const isDuplicateEmailLookup =
-              fields && Object.keys(fields).length === 1 && fields.id === users.id;
+            // users.id on this route, and it sits between the two seat counts.
+            const isDuplicateEmailLookup = keys.length === 1 && fields!.id === users.id;
             if (isDuplicateEmailLookup && !filled) {
               filled = true;
               db.insert(users)
@@ -1186,8 +1214,11 @@ describe("a locker that fills up mid-request", () => {
       setDbFactory(() => db);
     }
 
-    // Precondition: the first count really did see room, or this proves nothing.
     expect(filled).toBe(true);
+    // The first count saw room; the second saw the locker full. Both ran, in
+    // that order, around the fill — which is what makes the 403 below
+    // attributable to the second check and nothing else.
+    expect(seenByEachSeatCount).toEqual([seated.length, seated.length + 1]);
 
     expect(res.status).toBe(403);
     const { error } = (await res.json()) as { error: string };

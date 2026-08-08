@@ -20,6 +20,12 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   // check that hasn't re-rendered yet. The ref is synchronous and closes that
   // window; `creating` still drives the disabled button for the UI.
   const creatingRef = useRef(false);
+  const labelInputRef = useRef<HTMLInputElement>(null);
+  // Tracks the previous `creating` value so the refocus effect below can tell
+  // "a mint just finished" (true -> false) apart from "this is the initial
+  // render" (false -> false) — see that effect for why the distinction
+  // matters.
+  const wasCreatingRef = useRef(false);
 
   const load = useCallback(() => {
     api.forPlaylist(playlistId).then((r) => setItems(r.shares));
@@ -28,6 +34,28 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Disabling a focused input moves focus to <body>, and the label input is
+  // never unmounted, so nothing brings focus back on its own once `creating`
+  // flips false: the field comes back editable but unfocused, a correction
+  // goes to the document instead of the input, and repeat mints need a
+  // re-click. Task 9 hit the identical bug on the rename field
+  // (PlaylistView.tsx:53-63) and fixed it by refocusing in an effect — but
+  // that version refocuses unconditionally, which was later found to steal
+  // focus from wherever the user had since moved (parked for a future fix
+  // there). This version only acts on the true -> false transition (so it
+  // never fires on mount, when nothing was ever disabled) and only refocuses
+  // when focus is still unclaimed (activeElement is <body> or null) — if the
+  // user clicked something else while the mint was in flight, this leaves it
+  // alone.
+  useEffect(() => {
+    if (wasCreatingRef.current && !creating) {
+      if (document.activeElement === document.body || document.activeElement === null) {
+        labelInputRef.current?.focus();
+      }
+    }
+    wasCreatingRef.current = creating;
+  }, [creating]);
 
   async function handleCreate() {
     if (creatingRef.current) return;
@@ -117,6 +145,7 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
 
       <div className="share-actions">
         <input
+          ref={labelInputRef}
           aria-label="who is this for?"
           placeholder="who is this for?"
           value={label}
@@ -125,19 +154,34 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           // mid-request and letting a slow response clobber whatever the user
           // typed next; after several rounds the fix was to close the window
           // entirely (disable) rather than try to reconcile a draft against
-          // the eventual response. Doing the same here up front.
+          // the eventual response. Doing the same here up front. (The refocus
+          // effect above is the other half of that pattern — disabling alone
+          // reproduces the bug it fixed.)
           disabled={creating}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => {
-            // A held Enter key repeats keydown after the first mint has
-            // already resolved and creatingRef has cleared, so the ref guard
-            // alone doesn't stop it — each repeat is a fresh, ungated call.
+            // In practice, disabling the input on the first Enter (above)
+            // blurs it before the browser's key-repeat can deliver a second
+            // keydown here, so this guard is not what stops a held Enter from
+            // minting twice — the focus loss described above already does
+            // that (indirectly, as a side effect, not as a guarantee). This
+            // is defence for whatever path gets a repeat keydown to an
+            // enabled field regardless (this is exactly how the unit test
+            // exercises it, dispatching directly at the element) and for if
+            // the disable-blur behavior above ever changes.
             if (e.repeat) return;
             // The Enter that commits an IME composition (e.g. selecting a
             // kanji candidate) also fires keydown with key "Enter". Treating
             // it as "submit" would mint a link from whatever partial text was
-            // mid-composition, with no confirmation step.
-            if (e.nativeEvent.isComposing) return;
+            // mid-composition, with no confirmation step. Verified against
+            // Chrome/Firefox's `isComposing` behavior (both set it on that
+            // keydown). Safari is reported to omit `isComposing` on the
+            // commit keydown and instead leave the legacy `keyCode` at 229 —
+            // the fallback below follows that common workaround, but this has
+            // NOT been measured against real Safari, only reasoned about; if
+            // that turns out wrong, the IME bug this guard exists for still
+            // reproduces there.
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
             if (e.key === "Enter") handleCreate();
           }}
           className="share-label-input"
@@ -156,6 +200,7 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
         </button>
         {creating && (
           <span
+            role="status"
             className="dots"
             style={{ color: "var(--fg-dim)", fontSize: "11px", flex: "none" }}
           >

@@ -66,17 +66,28 @@ function typeValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-// Lets a test hold `create` open indefinitely and resolve it on cue, to
-// exercise behavior that only matters while a mint is genuinely in flight
-// (as opposed to `mockResolvedValue`, which settles on the same microtask
-// turn and never leaves an observable in-flight window). Mirrors the
-// `deferred` helper in PlaylistView.rename.test.tsx.
+// Lets a test hold `create` open indefinitely and resolve (or reject) it on
+// cue, to exercise behavior that only matters while a mint is genuinely in
+// flight (as opposed to `mockResolvedValue`, which settles on the same
+// microtask turn and never leaves an observable in-flight window). Mirrors
+// the `deferred` helper in PlaylistView.rename.test.tsx.
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
+}
+
+// Real browsers move focus to <body> when a focused control is disabled.
+// happy-dom does NOT (verified directly in this environment, same as
+// PlaylistView.rename.test.tsx's browserBlurOnDisable): after `.disabled =
+// true`, `document.activeElement` is still the input. Tests that care about
+// the refocus-after-disable behavior have to model that blur themselves.
+function browserBlurOnDisable() {
+  document.body.focus();
 }
 
 afterEach(() => {
@@ -217,7 +228,11 @@ describe("SharePanel", () => {
   // an IME candidate) and checks the handler respects it. It cannot catch a
   // regression in how a *real* IME's compositionend/keydown ordering
   // interacts with this handler, only whether the isComposing check itself
-  // is present and wired up.
+  // is present and wired up. There is no equivalent test for the `keyCode
+  // === 229` fallback in the same handler — that path exists for Safari,
+  // where isComposing is reported not to be set on the commit keydown, but
+  // that has not been verified against a real Safari and there is no
+  // browser-differentiated way to exercise it here.
   it("does not mint on the Enter that commits an IME composition", async () => {
     render();
     await flush();
@@ -286,6 +301,106 @@ describe("SharePanel", () => {
       gate.resolve({ share: {} as never });
       await Promise.resolve();
     });
+  });
+
+  it("announces the in-flight mint to assistive tech via role=status", async () => {
+    const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
+    createMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+
+    expect(container.querySelector('[role="status"]')).toBeNull();
+
+    act(() => shareButton()!.click());
+    await flush();
+
+    // Finding 4: without this, a keyboard/screen-reader user pressing Enter
+    // has focus yanked away by the disable (see the refocus tests below) at
+    // the same moment the only progress signal appears, with no
+    // announcement that anything started.
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+
+    await act(async () => {
+      gate.resolve({ share: {} as never });
+      await Promise.resolve();
+    });
+  });
+
+  it("does not steal focus into the label input merely by mounting", async () => {
+    render();
+    await flush();
+
+    // Nothing disabled anything yet — `creating` has only ever been false —
+    // so the refocus effect must not fire. Without the true -> false
+    // transition guard, "focus is unclaimed" alone would be enough to grab
+    // it the moment the component mounts.
+    expect(document.activeElement).not.toBe(labelInput());
+  });
+
+  it("returns focus to the label input after a mint fails, so the correction isn't lost", async () => {
+    const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
+    createMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+
+    const input = labelInput()!;
+    act(() => input.focus());
+    expect(document.activeElement).toBe(input);
+
+    act(() => typeValue(input, "Jimmy"));
+    act(() => shareButton()!.click());
+    await flush();
+    expect(input.disabled).toBe(true);
+
+    // See browserBlurOnDisable: happy-dom doesn't blur a disabled input on
+    // its own, so this stands in for what a real browser does the instant
+    // `disabled` becomes true.
+    act(() => browserBlurOnDisable());
+    expect(document.activeElement).toBe(document.body);
+
+    await act(async () => {
+      gate.reject(new Error("nope"));
+      await Promise.resolve().catch(() => {});
+    });
+    await flush();
+
+    expect(input.disabled).toBe(false);
+    // The refocus effect fires because focus was still unclaimed (on <body>)
+    // when `creating` flipped back to false.
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("does not steal focus back if the user moved it elsewhere during the mint", async () => {
+    const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
+    createMock.mockReturnValueOnce(gate.promise);
+
+    render();
+    await flush();
+
+    const input = labelInput()!;
+    act(() => input.focus());
+    act(() => typeValue(input, "Jimmy"));
+    act(() => shareButton()!.click());
+    await flush();
+
+    // Unlike the previous test: the user clicks something else (the
+    // permission checkbox) while the mint is still in flight, instead of
+    // focus merely reverting to <body> on its own.
+    const checkbox = editCheckbox()!;
+    act(() => checkbox.focus());
+    expect(document.activeElement).toBe(checkbox);
+
+    await act(async () => {
+      gate.resolve({ share: {} as never });
+      await Promise.resolve();
+    });
+    await flush();
+
+    // Focus was claimed by something else, so the refocus effect must leave
+    // it alone rather than yanking it back into the label input.
+    expect(document.activeElement).toBe(checkbox);
   });
 });
 

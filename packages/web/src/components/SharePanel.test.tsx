@@ -305,7 +305,7 @@ describe("SharePanel", () => {
     });
   });
 
-  it("keeps the role=status region mounted and toggles its text", async () => {
+  it("announces the start and the completion of a mint as live-region text", async () => {
     const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
     createMock.mockReturnValueOnce(gate.promise);
 
@@ -323,7 +323,7 @@ describe("SharePanel", () => {
     act(() => shareButton()!.click());
     await flush();
 
-    // Same node, new text — that transition is what gets announced.
+    // Same node, new text — a text CHANGE is what a live region announces.
     expect(container.querySelector('[role="status"]')).toBe(idle);
     expect(idle!.textContent).toBe("minting");
 
@@ -333,11 +333,13 @@ describe("SharePanel", () => {
     });
     await flush();
 
-    // And completion is observable too: the region empties rather than being
-    // removed, so "the mint finished" is an announceable change, not a
-    // silent unmount.
+    // Completion must be its own text, not an emptied region. Emptying a
+    // polite region announces NOTHING in NVDA/JAWS/VoiceOver, so a previous
+    // version of this test — which asserted the node persisted and its text
+    // went back to "" — could not tell "announced" from "silent" and passed
+    // on the silent behaviour. Assert on what is actually said.
     expect(container.querySelector('[role="status"]')).toBe(idle);
-    expect(idle!.textContent).toBe("");
+    expect(idle!.textContent).toBe("share link created");
   });
 
   it("announces a failed mint via role=alert", async () => {
@@ -417,11 +419,16 @@ describe("SharePanel", () => {
   // element — so the test states that premise explicitly: it focuses the
   // button, then calls browserBlurOnDisable() at the point the browser would
   // already have blurred it. What is genuinely verified is that the effect
-  // keys off *where focus was when the mint started*, not merely off "focus is
-  // now unclaimed" — under the latter, clicking the button (the common path,
-  // since it is `disabled={creating}` too) would dump focus into the label
-  // input, the very failure the effect exists to avoid.
-  it("does not pull focus into the label input when the mint started from the button", async () => {
+  // restores focus to *the control that had it when the mint started*.
+  //
+  // Note the assertion is `toBe(btn)`, not `not.toBe(input)`. The negative
+  // form is what an earlier version asserted, and it passed for three
+  // different outcomes — focus on the button (wanted), focus stranded on
+  // <body> (the bug), or the refocus effect deleted outright — so it ratified
+  // the stranded state as acceptable. Browsers do not restore focus to a
+  // re-enabled element, so "stranded on <body>" is a real, permanent loss of
+  // the user's tab position, not a transient.
+  it("returns focus to the mint button when the mint started from the button", async () => {
     const gate = deferred<Awaited<ReturnType<typeof sharesApi.create>>>();
     createMock.mockReturnValueOnce(gate.promise);
 
@@ -445,6 +452,7 @@ describe("SharePanel", () => {
     });
     await flush();
 
+    expect(document.activeElement).toBe(btn);
     expect(document.activeElement).not.toBe(input);
   });
 

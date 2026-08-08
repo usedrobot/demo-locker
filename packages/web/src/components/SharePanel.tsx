@@ -14,6 +14,11 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   const [canEdit, setCanEdit] = useState(false);
   const [label, setLabel] = useState("");
   const [creating, setCreating] = useState(false);
+  // Text of the polite live region: "" at rest, "minting" in flight, then a
+  // completion message. Kept separate from `creating` precisely because the two
+  // don't coincide — the completion text has to outlive the in-flight state.
+  const [status, setStatus] = useState("");
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Belt-and-suspenders with `creating`: state updates aren't visible until
   // the next render, so two clicks inside the same tick (a fast double-click,
   // or Enter immediately followed by a click) can both pass a `creating`
@@ -26,11 +31,45 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   // render" (false -> false) — see that effect for why the distinction
   // matters.
   const wasCreatingRef = useRef(false);
-  // Whether focus was in the label input at the moment a mint started. Captured
-  // synchronously in handleCreate, NOT in the refocus effect: by the time that
-  // effect runs, the render carrying `disabled` has already committed and a real
-  // browser has already moved focus to <body>, so there is nothing left to read.
-  const focusWasInLabelRef = useRef(false);
+  const mintButtonRef = useRef<HTMLButtonElement>(null);
+  // WHICH control had focus at the moment a mint started — the label input, the
+  // mint button, or neither (null). Captured synchronously in handleCreate, NOT
+  // in the refocus effect: by the time that effect runs, the render carrying
+  // `disabled` has already committed and a real browser has already moved focus
+  // to <body>, so there is nothing left to read.
+  //
+  // This deliberately stores an identity rather than a boolean. An earlier
+  // version recorded only "was it the label input?" on the theory that the
+  // button could be left to the browser's own post-re-enable behaviour. There is
+  // no such behaviour: browsers do not restore focus to a re-enabled element.
+  // That version therefore moved the original bug from the input to the button —
+  // a keyboard user who tabs to [+ share link] and presses Enter is stranded on
+  // <body>, losing their tab position, and in Chrome the mouse path lands there
+  // too (mousedown focuses the button).
+  const focusTargetRef = useRef<HTMLElement | null>(null);
+
+  const clearStatusTimer = useCallback(() => {
+    if (statusTimerRef.current !== null) {
+      clearTimeout(statusTimerRef.current);
+      statusTimerRef.current = null;
+    }
+  }, []);
+
+  // Announce, then retire the message so it doesn't linger as stale UI. Any new
+  // announcement (or the next mint) supersedes a pending clear.
+  const announce = useCallback(
+    (message: string) => {
+      clearStatusTimer();
+      setStatus(message);
+      statusTimerRef.current = setTimeout(() => {
+        statusTimerRef.current = null;
+        setStatus("");
+      }, 5000);
+    },
+    [clearStatusTimer]
+  );
+
+  useEffect(() => clearStatusTimer, [clearStatusTimer]);
 
   const load = useCallback(() => {
     api.forPlaylist(playlistId).then((r) => setItems(r.shares));
@@ -48,22 +87,21 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   // (PlaylistView.tsx:53-63) and fixed it by refocusing in an effect — but
   // that version refocuses unconditionally, which was later found to steal
   // focus from wherever the user had since moved (parked for a future fix
-  // there). Three conditions gate this one:
+  // there). Both controls in this row are `disabled={creating}`, so either can
+  // be the one that got blurred; the fix is to put focus back on whichever it
+  // was. Three conditions gate it:
   //   1. the true -> false transition only, so it never fires on mount, when
   //      nothing was ever disabled;
-  //   2. focus was in the LABEL INPUT when the mint started. The mint button
-  //      is `disabled={creating}` too, so clicking it — the more common path —
-  //      also blurs to <body>; without this check the effect would yank focus
-  //      into the label input, which is not the control the user was on. The
-  //      button case is deliberately left to the browser's own behaviour after
-  //      re-enable.
+  //   2. a control we disabled actually held focus when the mint started
+  //      (focusTargetRef) — restoring to a specific element, not to a default;
   //   3. focus is still unclaimed (activeElement is <body> or null) — if the
   //      user clicked something else while the mint was in flight, leave it.
   useEffect(() => {
-    if (wasCreatingRef.current && !creating && focusWasInLabelRef.current) {
+    if (wasCreatingRef.current && !creating && focusTargetRef.current) {
       if (document.activeElement === document.body || document.activeElement === null) {
-        labelInputRef.current?.focus();
+        focusTargetRef.current.focus();
       }
+      focusTargetRef.current = null;
     }
     wasCreatingRef.current = creating;
   }, [creating]);
@@ -71,11 +109,19 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
   async function handleCreate() {
     if (creatingRef.current) return;
     creatingRef.current = true;
-    // Read focus before setCreating, while the input is still enabled and
-    // still holds it. See focusWasInLabelRef.
-    focusWasInLabelRef.current =
-      labelInputRef.current !== null && document.activeElement === labelInputRef.current;
+    // Read focus before setCreating, while both controls are still enabled and
+    // whichever one holds focus still holds it. See focusTargetRef.
+    const active = document.activeElement;
+    focusTargetRef.current =
+      active !== null && (active === labelInputRef.current || active === mintButtonRef.current)
+        ? (active as HTMLElement)
+        : null;
     setCreating(true);
+    // Supersedes any lingering completion message from a previous mint (and
+    // its pending clear) — this is the "or on the next interaction" half of
+    // retiring that text.
+    clearStatusTimer();
+    setStatus("minting");
     setError("");
     try {
       // shares.email is a display label, not an address — nothing is ever
@@ -84,9 +130,19 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
       await api.create(playlistId, canEdit ? "edit" : "listen", label.trim() || undefined);
       setLabel("");
       setCanEdit(false);
+      // Completion needs its own TEXT, not an empty region. Live regions
+      // announce added or changed content; emptying a polite region is silent
+      // in NVDA, JAWS and VoiceOver, so "minting" -> "" left the user who heard
+      // the start with no signal that it ever ended. The success path has no
+      // other non-visual cue — the new row appears, but nothing says so.
+      announce("share link created");
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
+      // The failure is announced assertively by the role="alert" below, so
+      // clear the polite region rather than announcing twice.
+      setStatus("");
+      clearStatusTimer();
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -220,23 +276,30 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           />
           can upload and reorder
         </label>
-        <button onClick={handleCreate} disabled={creating} className="tui-btn">
+        <button
+          ref={mintButtonRef}
+          onClick={handleCreate}
+          disabled={creating}
+          className="tui-btn"
+        >
           [+ share link]
         </button>
-        {/* Always rendered, text toggled — never mounted alongside its own
+        {/* Always rendered, text swapped — never mounted alongside its own
             content. A role="status" region has to be in the accessibility tree
             *before* its text changes; NVDA, JAWS and VoiceOver commonly drop
             the announcement when the node and its text arrive in the same
-            commit. Keeping the node also means the mint's *completion* is
-            observable: the text empties rather than the region vanishing.
-            When idle this is a zero-width flex item (one extra 0.5rem gap in
-            `.share-actions`; re-measured at 320px, still no overflow). */}
+            commit. Both transitions here are text CHANGES ("" -> "minting" ->
+            "share link created"), which is what a live region actually
+            announces — an earlier version emptied the region to signal
+            completion, which announces nothing at all. When idle this is a
+            zero-width flex item (one extra 0.5rem gap in `.share-actions`;
+            re-measured at 320px in every state, still no overflow). */}
         <span
           role="status"
           className={creating ? "dots" : undefined}
           style={{ color: "var(--fg-dim)", fontSize: "11px", flex: "none" }}
         >
-          {creating ? "minting" : ""}
+          {status}
         </span>
         {extraAction}
       </div>
@@ -246,6 +309,17 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
         // silently hands it back, so without an announcement a screen-reader
         // user's only signal that the mint failed is that nothing happened —
         // and they retype and resubmit into the same error.
+        //
+        // DELIBERATE ASYMMETRY with that region, recorded rather than removed:
+        // this container is conditionally mounted ({error && ...}), i.e. node
+        // and text arrive in the same commit — exactly the pattern the status
+        // region above was rebuilt to avoid. The rules genuinely differ by
+        // politeness: assertive regions are reliably announced on insertion,
+        // polite ones frequently are not. Neither claim has been measured with
+        // a real screen reader here; this is the documented convention, not an
+        // observation. If a reader is ever seen to miss this alert, mounting
+        // the container permanently and toggling its text (as above) is the
+        // known fix — do that rather than assume the role is wrong.
         <div role="alert" style={{ color: "#f44", fontSize: "12px", marginTop: "0.25rem" }}>
           {error}
         </div>

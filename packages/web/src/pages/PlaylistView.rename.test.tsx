@@ -177,7 +177,11 @@ describe("playlist rename", () => {
 
   // React implements onBlur via a delegated "focusout" listener (native
   // blur/focus don't bubble), so that's what a test has to dispatch to
-  // exercise the handler — a bare .blur() call alone won't reach it.
+  // exercise the handler — a bare .blur() call alone won't reach it. This
+  // dispatch happens while `input` is still attached to `container` and
+  // still the rendered node (nothing has committed or unmounted it yet), so
+  // the delegated listener on the root actually receives it — a genuine
+  // exercise of onBlur, not just a same-named event fired into a void.
   it("commits the edit when focus leaves the input instead of discarding it", async () => {
     render();
     await flush();
@@ -195,7 +199,17 @@ describe("playlist rename", () => {
     expect(updateMock).toHaveBeenCalledWith("pl-1", { name: "clicked away" });
   });
 
-  it("does not double-commit when Enter's own unmount triggers a blur", async () => {
+  // Regression for a real browser sequence: Chrome/Safari do NOT fire
+  // blur/focusout when a focused element is removed from the DOM, so a
+  // blur dispatched against an already-unmounted input (as an earlier
+  // version of this test did) never reaches React's delegated listener —
+  // it proves nothing either way. The real risk is a blur that arrives
+  // *before* the in-flight commit resolves (the input is still mounted
+  // then): the user hits Enter, then clicks something else before the PATCH
+  // response lands. Both events are dispatched inside one `act` so the
+  // mocked PATCH's promise has no chance to resolve in between — the input
+  // is provably still mounted when the second commitRename() call is made.
+  it("does not fire a duplicate PATCH when a blur arrives before an in-flight commit resolves", async () => {
     render();
     await flush();
 
@@ -208,16 +222,53 @@ describe("playlist rename", () => {
       input!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
       );
-    });
-    await flush();
-    // The input has unmounted; fire the focusout a real browser would emit
-    // when a focused node is removed from the DOM, same as Escape's path.
-    act(() => {
+      // Still synchronous with the Enter above — commitRename has only run
+      // as far as its `await api.update(...)` line, so the input has not
+      // unmounted and this focusout reaches a live, mounted node.
+      expect(nameInput()).toBe(input);
       input!.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     });
     await flush();
 
     expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateMock).toHaveBeenCalledWith("pl-1", { name: "new name" });
+  });
+
+  // Regression for the bug this exact guard reintroduced once already:
+  // Escape sets a one-shot ref telling the next blur "discard, don't
+  // commit" — but real browsers (Chrome, Safari) never fire that blur when
+  // Escape's own setRenaming(false) unmounts the input, so nothing ever
+  // consumed it. A later, unrelated rename session's legitimate blur-commit
+  // would see the stale flag and be silently discarded. The fix resets the
+  // flag when the editor opens; this test never dispatches a blur after
+  // Escape (deliberately — a real browser wouldn't either) so it can only
+  // pass if that open-time reset is doing the work.
+  it("does not let a stale Escape-cancel from a prior session swallow a later commit", async () => {
+    render();
+    await flush();
+
+    // First session: type something, then Escape. No blur is dispatched —
+    // this mirrors a real browser, which would not fire one here.
+    act(() => renameButton()!.click());
+    act(() => typeValue(nameInput()!, "abandoned"));
+    act(() => {
+      nameInput()!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+      );
+    });
+    await flush();
+    expect(updateMock).not.toHaveBeenCalled();
+
+    // Second, unrelated session: reopen, type a real edit, click away.
+    act(() => renameButton()!.click());
+    const input = nameInput();
+    act(() => typeValue(input!, "second session name"));
+    act(() => {
+      input!.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+
+    expect(updateMock).toHaveBeenCalledWith("pl-1", { name: "second session name" });
   });
 
   it("does not pin a stale rename error once the editor closes with no change", async () => {

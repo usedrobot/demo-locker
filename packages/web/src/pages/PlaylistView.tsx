@@ -30,12 +30,19 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [renameError, setRenameError] = useState("");
-  // Escape sets this before it blurs the input (removing it from the DOM
-  // unmounts the focused element, which blurs it) so the blur handler below
-  // knows to skip its own commit. A ref survives that render without waiting
-  // on state to flush, which matters because the unmount happens synchronously
-  // inside the same event.
-  const skipBlurCommitRef = useRef(false);
+  // One-shot: Escape sets this to tell the *next* blur "discard, don't
+  // commit". It does NOT depend on that blur ever arriving — removing a
+  // focused element from the DOM does not reliably fire blur/focusout (it
+  // doesn't in Chrome or Safari), so this can't rely on being consumed to
+  // get cleared. It is reset unconditionally whenever the editor is opened,
+  // which is the only place a stale `true` could otherwise leak into and
+  // silently swallow a later, unrelated commit.
+  const cancelRenameRef = useRef(false);
+  // True only while a commitRename() network call is in flight. Guards
+  // against a blur firing (e.g. clicking another control) before that
+  // request resolves, which would otherwise re-enter commitRename with the
+  // same draft and fire a second, duplicate PATCH.
+  const renameInFlightRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,27 +71,30 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
   async function commitRename() {
     if (!playlist) return;
+    // A blur fired while an earlier call from this same session is still
+    // awaiting its PATCH — ignore it rather than firing a second, identical
+    // request against the same draft.
+    if (renameInFlightRef.current) return;
     const next = draftName.trim();
     if (!next || next === playlist.name) {
-      // Closing here (no-op or unchanged) unmounts the input, which blurs
-      // it — skip the blur handler's own commitRename() so it doesn't fire
-      // a second time against a closure that's already been resolved. Also
-      // clear any error from an earlier failed attempt in this same session
-      // — the error <div> below isn't gated on `renaming`, so leaving it set
-      // here would pin it on screen with no editor left open to dismiss it.
-      skipBlurCommitRef.current = true;
+      // Clear any error from an earlier failed attempt in this same
+      // session — the error <div> below isn't gated on `renaming`, so
+      // leaving it set here would pin it on screen with no editor left
+      // open to dismiss it.
       setRenaming(false);
       setRenameError("");
       return;
     }
+    renameInFlightRef.current = true;
     try {
       const r = await api.update(playlist.id, { name: next });
-      skipBlurCommitRef.current = true;
       setPlaylist(r.playlist);
       setRenaming(false);
       setRenameError("");
     } catch (err) {
       setRenameError(err instanceof Error ? err.message : "rename failed");
+    } finally {
+      renameInFlightRef.current = false;
     }
   }
 
@@ -167,15 +177,15 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRename();
                 if (e.key === "Escape") {
-                  skipBlurCommitRef.current = true;
+                  cancelRenameRef.current = true;
                   setRenaming(false);
                   setRenameError("");
                 }
               }}
               onBlur={() => {
                 // Escape already handled discarding — don't also commit.
-                if (skipBlurCommitRef.current) {
-                  skipBlurCommitRef.current = false;
+                if (cancelRenameRef.current) {
+                  cancelRenameRef.current = false;
                   return;
                 }
                 // Clicking away used to discard silently: setRenaming(false)
@@ -194,6 +204,9 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
             {canManage && !renaming && (
               <button
                 onClick={() => {
+                  // A prior session may have set this and never had it
+                  // consumed (see the ref's own comment) — start clean.
+                  cancelRenameRef.current = false;
                   setDraftName(playlist.name);
                   setRenameError("");
                   setRenaming(true);

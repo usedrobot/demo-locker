@@ -342,16 +342,27 @@ export default function Home({ onSelect, onLogout }: Props) {
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {s.email || `link …${s.token.slice(-6)}`}
                 </span>
-                {/* Which of these links are the owner's own. Anyone in the
-                    locker may mint one, so without this the owner cannot tell
-                    a link they handed out from one a collaborator did — and
-                    removing that collaborator silently takes theirs away
-                    (shares.created_by cascades). Attribution only: every
-                    control on this row works on every row regardless. */}
-                {!s.mintedByMe && (
-                  <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
-                    shared by a collaborator
-                  </span>
+                {/* Which of these links the viewer minted themselves. Anyone
+                    in the locker may mint one, so without this the owner
+                    cannot tell a link they handed out from one a collaborator
+                    did — and removing that collaborator silently takes theirs
+                    away (shares.created_by cascades).
+
+                    Marks the POSITIVE case only. `mintedByMe` is false for
+                    several different reasons (no minter recorded, no identity
+                    to compare, or someone else minted it), so rendering
+                    anything on false states more than the field knows — the
+                    invariant lib/public-share.ts spells out. It is also read
+                    by a collaborator: this panel is not owner-gated and
+                    GET /shares is locker-scoped, so a collaborator sees the
+                    OWNER's links here with mintedByMe false. Labelling those
+                    "shared by a collaborator" — which an earlier version of
+                    this row did — was simply wrong.
+
+                    Attribution only: every control on this row works on every
+                    row regardless of the marker. */}
+                {s.mintedByMe && (
+                  <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>yours</span>
                 )}
                 <span
                   style={{

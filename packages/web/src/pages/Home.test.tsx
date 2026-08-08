@@ -68,11 +68,18 @@ vi.mock("../lib/use-upload-queue", () => ({
   }),
 }));
 
-import { playlists as playlistsApi, tracks as tracksApi, auth } from "../lib/api";
+import {
+  playlists as playlistsApi,
+  tracks as tracksApi,
+  shares as sharesApi,
+  auth,
+} from "../lib/api";
+import type { Share } from "../lib/api";
 
 const listPlaylistsMock = vi.mocked(playlistsApi.list);
 const listTracksMock = vi.mocked(tracksApi.list);
 const deleteTrackMock = vi.mocked(tracksApi.delete);
+const listSharesMock = vi.mocked(sharesApi.listAll);
 const meMock = vi.mocked(auth.me);
 
 const OWNER: User = { id: "u-owner", email: "o@test.dev", accent: null, lockerOwnerId: null };
@@ -108,6 +115,21 @@ function playlist(over: Partial<Playlist>): Playlist {
     createdAt: "",
     updatedAt: "2026-08-07T00:00:00.000Z",
     createdByMe: false,
+    ...over,
+  };
+}
+
+function share(over: Partial<Share>): Share {
+  return {
+    id: "s-1",
+    playlistId: "p-1",
+    playlistName: "owner demos",
+    token: "abcdef123456",
+    permission: "listen",
+    email: null,
+    createdAt: "",
+    expiresAt: null,
+    mintedByMe: false,
     ...over,
   };
 }
@@ -233,6 +255,89 @@ describe("Home — delete controls under collaboration", () => {
     expect(alert!.textContent).toContain("not found");
     // The track is still listed, because it is still there.
     expect(container.textContent).toContain("someone's demo");
+  });
+});
+
+// GET /shares is locker-scoped and this panel is NOT owner-gated: [access] is
+// offered to everyone, so a collaborator opening it sees every link in the
+// locker, including the owner's. `mintedByMe` is computed per acting user, so
+// on that read the owner's links are false — which is why the marker may only
+// ever state the positive case.
+describe("Home — share attribution in the access panel", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({ playlists: [] });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({ tracks: [] });
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: OWNER });
+    listSharesMock.mockReset();
+    listSharesMock.mockResolvedValue({ shares: [] });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  async function openAccess() {
+    const btn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "[access]"
+    );
+    expect(btn).toBeDefined();
+    act(() => btn!.click());
+    await flush();
+  }
+
+  it("marks a link the viewer minted themselves", async () => {
+    listSharesMock.mockResolvedValue({ shares: [share({ mintedByMe: true })] });
+
+    render();
+    await flush();
+    await openAccess();
+
+    expect(container.textContent).toContain("yours");
+  });
+
+  it("says nothing about a link the viewer did not mint", async () => {
+    listSharesMock.mockResolvedValue({ shares: [share({ mintedByMe: false })] });
+
+    render();
+    await flush();
+    await openAccess();
+
+    // The row is there — otherwise this would pass just as well if the panel
+    // rendered nothing at all.
+    expect(container.textContent).toContain("link …123456");
+    expect(container.textContent).not.toContain("yours");
+  });
+
+  it("does not tell a collaborator that the owner's link came from a collaborator", async () => {
+    meMock.mockResolvedValue({ user: COLLABORATOR });
+    // The owner minted this one, so the collaborator's read of it is
+    // mintedByMe: false. False is ambiguous by construction — it must never be
+    // rendered as an attribution to anyone.
+    listSharesMock.mockResolvedValue({ shares: [share({ mintedByMe: false })] });
+
+    render();
+    await flush();
+    await openAccess();
+
+    expect(container.textContent).toContain("link …123456");
+    expect(container.textContent).not.toContain("collaborator");
+    expect(container.textContent).not.toContain("yours");
+  });
+
+  it("marks a collaborator's own link as theirs", async () => {
+    meMock.mockResolvedValue({ user: COLLABORATOR });
+    listSharesMock.mockResolvedValue({ shares: [share({ mintedByMe: true })] });
+
+    render();
+    await flush();
+    await openAccess();
+
+    // Same rule for both roles: the marker follows the acting user, not the
+    // locker owner.
+    expect(container.textContent).toContain("yours");
   });
 });
 

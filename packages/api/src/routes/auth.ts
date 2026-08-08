@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { users, sessions } from "../db/schema.js";
+import { users, sessions, collaboratorInvites } from "../db/schema.js";
 import {
   hashPassword,
   verifyPassword,
@@ -16,14 +16,20 @@ import {
   findSession,
 } from "../lib/session.js";
 import { isValidAccent } from "../lib/accent.js";
-import { signupAllowed } from "../lib/signup.js";
+import {
+  signupAllowed,
+  resolveInvite,
+  claimInvite,
+  bindToLocker,
+  type ClaimedInvite,
+} from "../lib/signup.js";
 import { rateLimit, LOGIN_RULE, SIGNUP_RULE } from "../lib/rate-limit.js";
 import type { Env } from "../types.js";
 
 const auth = new Hono<Env>();
 
 auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
-  const { email, password } = await c.req.json();
+  const { email, password, inviteToken } = await c.req.json();
 
   if (!email || !password) {
     return c.json({ error: "email and password required" }, 400);
@@ -34,11 +40,35 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
 
   const db = getDb(c.env.DB);
 
-  // Registration closes automatically once the instance has an owner. A Demo
-  // Locker is one person's locker — collaborators arrive by share link, not by
-  // signing up — but every deployment used to accept registrations from the
-  // open internet forever, with no flag to turn it off.
-  if (!(await signupAllowed(db, c.env))) {
+  // Two ways in, and only two.
+  //
+  // A collaborator invite is its own authorisation to create an account, so it
+  // gets past the closed-registration gate — but an invalid, spent or expired
+  // token fails outright here. It must never fall through to the ordinary
+  // path, or a spent invite would quietly become a normal registration attempt
+  // on an instance that has reopened signup via ALLOW_SIGNUP.
+  //
+  // Registration otherwise closes automatically once the instance has an
+  // owner. A Demo Locker is one person's locker; every deployment used to
+  // accept registrations from the open internet forever, with no flag to turn
+  // it off.
+  //
+  // This is only a pre-flight look at the invite. It is checked before the
+  // duplicate-email query below so a caller holding a garbage token cannot use
+  // "email already registered" as an account-enumeration oracle; the binding
+  // claim itself happens after, once nothing else can refuse the request.
+  //
+  // A non-string token is refused rather than handed to the query layer, which
+  // would bind an object as a parameter and 500.
+  if (inviteToken != null && typeof inviteToken !== "string") {
+    return c.json({ error: "this invite is not valid" }, 403);
+  }
+
+  if (inviteToken) {
+    if (!(await resolveInvite(db, inviteToken))) {
+      return c.json({ error: "this invite is not valid" }, 403);
+    }
+  } else if (!(await signupAllowed(db, c.env))) {
     return c.json({ error: "registration is closed on this instance" }, 403);
   }
 
@@ -52,16 +82,43 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     return c.json({ error: "email already registered" }, 409);
   }
 
+  // Hash before claiming: PBKDF2 is the slowest thing on this path, and an
+  // invite spent on a request that then fails is spent forever.
   const passwordHash = await hashPassword(password);
-  const [user] = await db
-    .insert(users)
-    .values({ email, passwordHash })
-    .returning({
-      id: users.id,
-      email: users.email,
-      accent: users.accent,
-      lockerOwnerId: users.lockerOwnerId,
-    });
+
+  // Now take the invite. This is the atomic conditional update — the winner of
+  // two concurrent redemptions, not merely a caller who read the row while it
+  // was still open. The loser is refused exactly like a spent invite, and
+  // creates nothing.
+  let invite: ClaimedInvite | null = null;
+  if (inviteToken) {
+    invite = await claimInvite(db, inviteToken);
+    if (!invite) {
+      return c.json({ error: "this invite is not valid" }, 403);
+    }
+  }
+
+  const [created] = await db.insert(users).values({ email, passwordHash }).returning({
+    id: users.id,
+    email: users.email,
+    accent: users.accent,
+    lockerOwnerId: users.lockerOwnerId,
+  });
+
+  // The account is created unbound and then bound through bindToLocker, which
+  // is the one sanctioned writer of locker_owner_id and asserts the binding is
+  // safe before it writes. The assertion cannot fire here — the account is
+  // milliseconds old and owns nothing — but routing the real flow through it
+  // keeps it exercised, so it is still a working guard the day something binds
+  // an account that is not brand new.
+  let user = created;
+  if (invite) {
+    user = await bindToLocker(db, created.id, invite.ownerId);
+    await db
+      .update(collaboratorInvites)
+      .set({ acceptedBy: created.id })
+      .where(eq(collaboratorInvites.id, invite.id));
+  }
 
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);

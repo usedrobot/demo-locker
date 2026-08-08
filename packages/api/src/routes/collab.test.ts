@@ -1,15 +1,17 @@
-// The owner's side of collaboration: mint an invite, see who is pending and
-// who has joined, and remove either. Redeeming an invite is not implemented at
-// this commit — that is Task 8, and its coverage lands with it.
+// Collaboration, both sides: the owner mints an invite, sees who is pending
+// and who has joined, and removes either — and the recipient redeems that
+// invite at signup, which is the only thing anywhere that writes
+// users.locker_owner_id.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
+import { bindToLocker, rowsAffected } from "../lib/signup.js";
 import {
   users,
   sessions,
@@ -387,5 +389,316 @@ describe("MAX_COLLABORATORS and MAX_SHARE_LINKS are separate caps", () => {
     expect(second.status).toBe(403);
     const { error } = (await second.json()) as { error: string };
     expect(error).toContain("share links");
+  });
+});
+
+// The recipient's side. Redeeming is the only thing in the codebase that
+// writes users.locker_owner_id, so without it GET /collab/members is
+// permanently empty on a real instance.
+//
+// Budget note: rateLimit("signup", SIGNUP_RULE) allows 5 requests per hour per
+// client, and every request in this file with no CF-Connecting-IP shares the
+// "unknown" bucket. This block spends 4 of them. A fifth signup test belongs
+// under its own CF-Connecting-IP, or it will 429 instead of asserting.
+describe("POST /auth/signup with an invite", () => {
+  it("creates a collaborator bound to the inviting owner's locker", async () => {
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "good-invite-token", label: "Dana" });
+
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "dana@test.dev",
+          password: "correct horse",
+          inviteToken: "good-invite-token",
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { user } = (await res.json()) as { user: { id: string; lockerOwnerId: string } };
+    expect(user.lockerOwnerId).toBe(ownerId);
+
+    const [invite] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.token, "good-invite-token"));
+    expect(invite.acceptedBy).toBe(user.id);
+    expect(invite.acceptedAt).not.toBeNull();
+  });
+
+  it("refuses a second redemption of the same invite", async () => {
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "second@test.dev",
+          password: "correct horse",
+          inviteToken: "good-invite-token",
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+
+    const [none] = await db.select().from(users).where(eq(users.email, "second@test.dev"));
+    expect(none).toBeUndefined();
+  });
+
+  it("refuses an unknown invite token rather than falling through to normal signup", async () => {
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "nobody@test.dev",
+          password: "correct horse",
+          inviteToken: "no-such-token",
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+
+    const [none] = await db.select().from(users).where(eq(users.email, "nobody@test.dev"));
+    expect(none).toBeUndefined();
+  });
+
+  it("still refuses an ordinary signup on a closed instance", async () => {
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "walkup@test.dev", password: "correct horse" }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+// Resolve-then-create is read-then-write with no transaction: two signups
+// carrying the same token both pass the check and both become collaborators,
+// silently exceeding MAX_COLLABORATORS. The per-IP limiter meters guessing, not
+// a two-request burst, and a unique constraint on accepted_by cannot catch it
+// either — both redemptions write the same invite row, so the second overwrites
+// the first with no violation to trip on. The fix is to claim the invite first
+// with a conditional UPDATE ... WHERE accepted_at IS NULL and check the
+// affected-row count; this test is what proves the claim is atomic.
+describe("two signups racing the same invite", () => {
+  // Its own client bucket: these two requests would otherwise push the shared
+  // "unknown" signup budget over SIGNUP_RULE's 5-per-hour and 429.
+  const RACER_IP = "203.0.113.9";
+
+  it("lets exactly one through and creates exactly one user", async () => {
+    await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "race-invite-token", label: "Race" });
+
+    const attempt = (email: string) =>
+      app.request(
+        "/auth/signup",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "CF-Connecting-IP": RACER_IP },
+          body: JSON.stringify({
+            email,
+            password: "correct horse",
+            inviteToken: "race-invite-token",
+          }),
+        },
+        env
+      );
+
+    // Warm this client's rate-limit bucket first. isRateLimited() INSERTs the
+    // row on a client's first ever hit, and rate_limits.key is the primary key,
+    // so two genuinely concurrent first hits make the loser die on a UNIQUE
+    // constraint and 500 — a pre-existing wart in the limiter, unrelated to
+    // invites, that would otherwise mask what this test is measuring.
+    const warm = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": RACER_IP },
+        body: JSON.stringify({}),
+      },
+      env
+    );
+    expect(warm.status).toBe(400);
+
+    const emails = ["racer-a@test.dev", "racer-b@test.dev"];
+    const [a, b] = await Promise.all(emails.map(attempt));
+
+    expect([a.status, b.status].sort()).toEqual([201, 403]);
+
+    const created = await db.select().from(users).where(inArray(users.email, emails));
+    expect(created).toHaveLength(1);
+    expect(created[0].lockerOwnerId).toBe(ownerId);
+
+    const [invite] = await db
+      .select()
+      .from(collaboratorInvites)
+      .where(eq(collaboratorInvites.token, "race-invite-token"));
+    expect(invite.acceptedBy).toBe(created[0].id);
+    expect(invite.acceptedAt).not.toBeNull();
+  });
+});
+
+// The claim is only atomic if the affected-row count is real, so pin the shape
+// it is read from. better-sqlite3 hands back a RunResult; D1 puts the same
+// number under meta. rowsAffected() reads both and fails closed on anything
+// else, because a driver we cannot count rows on must not hand out invites.
+describe("rowsAffected", () => {
+  it("reads the count off what the driver actually returns", async () => {
+    const [inv] = await db
+      .insert(collaboratorInvites)
+      .values({ ownerId, token: "shape-probe-token", label: "shape" })
+      .returning();
+
+    const hit = await db
+      .update(collaboratorInvites)
+      .set({ label: "shape again" })
+      .where(eq(collaboratorInvites.id, inv.id));
+    // better-sqlite3's RunResult, verified rather than assumed.
+    expect(hit).toHaveProperty("changes", 1);
+    expect(rowsAffected(hit)).toBe(1);
+
+    const miss = await db
+      .update(collaboratorInvites)
+      .set({ label: "nobody" })
+      .where(eq(collaboratorInvites.id, "no-such-invite"));
+    expect(rowsAffected(miss)).toBe(0);
+
+    // D1Response, which is what production reads.
+    expect(rowsAffected({ success: true, meta: { changes: 1 } })).toBe(1);
+    expect(rowsAffected({ success: true, meta: { changes: 0 } })).toBe(0);
+    // Anything else fails closed.
+    expect(rowsAffected({})).toBe(0);
+    expect(rowsAffected(null)).toBe(0);
+  });
+});
+
+// Binding an account that already owns library rows would hide its own library
+// from it — lockerIdOf() would answer with someone else's id while the rows
+// still carry this one's. Unreachable through signup, which binds a
+// milliseconds-old account, so this calls the guard directly. It is the
+// tripwire for a future "convert an existing account" feature.
+describe("bindToLocker", () => {
+  it("refuses an account that already owns library rows, and writes nothing", async () => {
+    const [incumbent] = await db
+      .insert(users)
+      .values({ email: "incumbent@test.dev", passwordHash: "x" })
+      .returning();
+    await db
+      .insert(tracks)
+      .values({
+        ownerId: incumbent.id,
+        title: "their own record",
+        position: 0,
+        originalKey: "lib/their-own",
+      })
+      .returning();
+
+    await expect(bindToLocker(db, incumbent.id, ownerId)).rejects.toThrow(
+      /already owns library rows/
+    );
+
+    const [unchanged] = await db.select().from(users).where(eq(users.id, incumbent.id));
+    expect(unchanged.lockerOwnerId).toBeNull();
+  });
+});
+
+// Nothing sets expiresAt today, but the column exists and the claim reads it.
+describe("an expired invite", () => {
+  it("is refused like a spent one", async () => {
+    await db.insert(collaboratorInvites).values({
+      ownerId,
+      token: "expired-invite-token",
+      label: "Late",
+      expiresAt: new Date(Date.now() - 1000),
+    });
+
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.10" },
+        body: JSON.stringify({
+          email: "late@test.dev",
+          password: "correct horse",
+          inviteToken: "expired-invite-token",
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+
+    const [none] = await db.select().from(users).where(eq(users.email, "late@test.dev"));
+    expect(none).toBeUndefined();
+  });
+});
+
+// The invite is checked before the duplicate-email query, not after. Otherwise
+// anyone could send a junk token with a guessed address and read "email
+// already registered" off a closed instance — signup would answer a question
+// only the owner is entitled to ask. Both of these must 403, never 409.
+describe("a bad invite never reaches the duplicate-email check", () => {
+  const PROBER_IP = "203.0.113.11";
+
+  const probe = (inviteToken: string) =>
+    app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": PROBER_IP },
+        body: JSON.stringify({
+          // Registered by the redemption test above.
+          email: "dana@test.dev",
+          password: "correct horse",
+          inviteToken,
+        }),
+      },
+      env
+    );
+
+  it("refuses an unknown token without confirming the address", async () => {
+    expect((await probe("still-no-such-token")).status).toBe(403);
+  });
+
+  it("refuses a spent token without confirming the address", async () => {
+    expect((await probe("good-invite-token")).status).toBe(403);
+  });
+});
+
+// A JSON body is whatever the caller says it is. A non-string token must be
+// refused, not handed to the query layer, which would bind an object as a
+// parameter and 500.
+describe("a non-string invite token", () => {
+  it("is refused rather than reaching the database", async () => {
+    const res = await app.request(
+      "/auth/signup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.12" },
+        body: JSON.stringify({
+          email: "typed@test.dev",
+          password: "correct horse",
+          inviteToken: { $ne: null },
+        }),
+      },
+      env
+    );
+    expect(res.status).toBe(403);
+
+    const [none] = await db.select().from(users).where(eq(users.email, "typed@test.dev"));
+    expect(none).toBeUndefined();
   });
 });

@@ -12,6 +12,15 @@ export const users = sqliteTable("users", {
   // than the browser because listeners on a share link should see the owner's
   // colour, and it travels with the invite response.
   accent: text("accent"),
+  // The name shown next to this person's uploads and playlists. Copied from
+  // collaboratorInvites.label at redemption — the human name the owner typed
+  // when minting the invite — rather than joined from that row at read time:
+  // DELETE /collab/invites/:id is not restricted to pending invites, so an
+  // owner deleting an accepted invite would otherwise erase an active
+  // collaborator's name. Nullable with no default and no backfill: the owner
+  // has no invite and therefore no label, and anyone who redeemed before this
+  // column existed keeps NULL. Both fall back to their email address.
+  displayName: text("display_name"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   // Null = this account owns a locker. Set = this account is a collaborator on
   // the referenced owner's locker, sharing that library rather than having one

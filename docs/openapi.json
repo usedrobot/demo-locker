@@ -100,6 +100,13 @@
             "type": "boolean",
             "description": "Attribution, NOT permission: whether the requesting session created this playlist. Computed per request. The raw creator id (playlists.created_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id; the same rule as tracks.uploaded_by. Do not build a delete control from this field alone: DELETE /playlists/{id} lets the locker owner delete any playlist, so the owner gets false on every collaborator-created playlist they are nonetheless allowed to delete. The client-side rule is createdByMe OR locker ownership. The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else created this\": it also means no creator is recorded (rows predating the column), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
           },
+          "createdByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Attribution by NAME: who created this playlist. Resolved server-side from the creator's users.display_name — the label the locker owner typed when minting that person's invite — falling back to their email address when they have none (the locker owner has no invite, and so has none). The raw creator id is still never serialized: this is a name, not the id under another key. createdByMe alone could not answer this — it says \"mine / not mine\", which in a locker holding two collaborators never identifies WHICH of them. Null when no creator is recorded (rows predating the column, or a creator since removed), and null for every reader with no locker session: an anonymous share or invite holder is outside the locker and is served no names at all. Present on the caller's own rows too — rendering those as \"you\" is the client's decision. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\"."
+          },
           "name": {
             "type": "string"
           },
@@ -128,7 +135,8 @@
           "name",
           "isPublic",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "createdByName"
         ],
         "description": "A playlist as returned by every route that serves one. created_by is never serialized: it is replaced by the per-request createdByMe boolean, so the shape is identical for a locker session and for an anonymous share/invite holder (who simply always gets false). One serializer, not two — see lib/public-playlist.ts."
       },
@@ -172,6 +180,13 @@
           "uploadedByMe": {
             "type": "boolean",
             "description": "Attribution, NOT permission: whether the requesting session uploaded this track. Computed per request. The raw uploader id (tracks.uploaded_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id. Do not build a delete control from this field alone: DELETE /tracks/{id} lets the locker owner delete any track, so the owner gets false on every collaborator upload they are nonetheless allowed to delete. The client-side rule is uploadedByMe OR locker ownership. (For a collaborator the two now coincide — they may delete exactly the tracks they uploaded — but the field is still attribution that happens to match, not the authority itself.) The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else uploaded this\": it also means no uploader is recorded (rows predating the column, or an uploader since deleted — the column is ON DELETE SET NULL), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
+          },
+          "uploadedByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Attribution by NAME: who uploaded this track. The exact counterpart of Playlist.createdByName, with the same resolution (users.display_name, copied from the uploader's invite label at redemption, falling back to their email) and the same rules. The raw uploader id is still never serialized on any route. Null when no uploader is recorded — rows predating the column, an uploader since deleted (ON DELETE SET NULL), and an anonymous edit-share upload, which has no user id to record — and null for every reader with no locker session, who is served no names at all. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\"."
           }
         },
         "required": [
@@ -181,7 +196,8 @@
           "position",
           "uploadedAt",
           "hasStream",
-          "uploadedByMe"
+          "uploadedByMe",
+          "uploadedByName"
         ]
       },
       "PublicTrackSummary": {
@@ -400,6 +416,13 @@
             "type": "string",
             "format": "email"
           },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name this member's uploads and playlists are attributed to elsewhere in the API (Track.uploadedByName, Playlist.createdByName): the label the owner typed when minting their invite, copied onto the account at redemption. Null for a member who redeemed before the column existed, in which case their attribution falls back to the email above. Attribution, not permission — every collaborator has identical rights regardless of this field."
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -408,7 +431,8 @@
         "required": [
           "id",
           "email",
-          "createdAt"
+          "createdAt",
+          "displayName"
         ]
       }
     }
@@ -912,7 +936,7 @@
     "/playlists/{id}": {
       "get": {
         "summary": "Get a playlist and its tracks",
-        "description": "Gated: requires a session acting in the playlist's locker (owner or collaborator) OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404. Because this route admits anonymous share holders as well as locker sessions, neither the playlist's created_by nor any track's uploaded_by is serialized; createdByMe and uploadedByMe are computed from the caller's session instead — both false when there is none.",
+        "description": "Gated: requires a session acting in the playlist's locker (owner or collaborator) OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404. Because this route admits anonymous share holders as well as locker sessions, neither the playlist's created_by nor any track's uploaded_by is serialized; createdByMe and uploadedByMe are computed from the caller's session instead — both false when there is none. The same applies to the attribution NAMES (createdByName, uploadedByName): a caller with no locker session is served null for every one of them — share links go to people outside the locker, and the band's names are not part of what a listen link grants.",
         "operationId": "getPlaylist",
         "security": [
           {
@@ -1394,7 +1418,7 @@
     "/tracks": {
       "get": {
         "summary": "List the locker's track library",
-        "description": "Every track in the caller's locker — in a playlist or not, uploaded by the locker owner or by any collaborator on that locker — newest first. Scoped by locker, not by uploader: a collaborator sees the owner's uploads and vice versa. Each row's uploadedByMe says whether the caller uploaded it; the uploader's user id itself is never returned.",
+        "description": "Every track in the caller's locker — in a playlist or not, uploaded by the locker owner or by any collaborator on that locker — newest first. Scoped by locker, not by uploader: a collaborator sees the owner's uploads and vice versa. Each row's uploadedByMe says whether the caller uploaded it; the uploader's user id itself is never returned. uploadedByName says WHOSE it is by name, which the boolean cannot: with two collaborators in one locker, \"not mine\" does not identify which of them.",
         "operationId": "listTracks",
         "security": [
           {
@@ -3024,7 +3048,7 @@
     "/collab/members": {
       "get": {
         "summary": "List this locker's collaborators",
-        "description": "Owner-only. The people who have redeemed an invite and now share this library. Ids are returned here because the owner needs them to remove a member; they are not exposed anywhere else.",
+        "description": "Owner-only. The people who have redeemed an invite and now share this library. Ids are returned here because the owner needs them to remove a member; they are not exposed anywhere else. Each member carries the displayName their uploads are attributed to, plus their email — the address is kept here because this is the owner's own member-management view, where it is the identifier that removes the right account.",
         "operationId": "listCollaborators",
         "security": [
           {

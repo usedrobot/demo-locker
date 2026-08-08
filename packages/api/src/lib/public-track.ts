@@ -51,11 +51,29 @@
 // which includes an anonymous edit-share holder receiving the 201 for their
 // OWN upload.
 //
+// `uploadedByName` is the same attribution said out loud, and it is what the
+// booleans above could never say: with two songwriters in one locker, "not
+// mine" does not identify whose demo it is. It is a NAME, resolved server-side
+// from users.display_name (falling back to the email) — see
+// lib/display-name.ts. It is not the id under another key: it cannot be used to
+// address a user, and it does not vary per row the way a UUID does.
+//
+// Null when there is no attribution to show, and it must render as NOTHING —
+// never "null", never "unknown". That covers a row predating the column, an
+// uploader since removed (the FK is ON DELETE SET NULL), and a reader with no
+// locker session, who is given no names at all (see resolveDisplayNames).
+//
+// It is attribution exactly as `uploadedByMe` is, with the same warning
+// attached: it is not delete authority, and a client must not derive one from
+// it. It is also present on the caller's OWN rows — deciding to render those as
+// "you" is the client's job, not this serializer's.
+//
 // Takes a real track row (not `Record<string, unknown>`), so a caller that
 // hands it something without these columns — e.g. an already-public track, or
 // an unrelated object — is a compile error rather than a silently-inert Omit.
 
 import type { tracks } from "../db/schema.js";
+import { type DisplayNames } from "./display-name.js";
 
 // Exported because the drizzle select builders these rows come from widen to
 // `any` at the call sites, so `.map((t) => ...)` there has no contextual type.
@@ -69,11 +87,13 @@ export type PublicTrack = Omit<
 > & {
   hasStream: boolean;
   uploadedByMe: boolean;
+  uploadedByName: string | null;
 };
 
 export function publicTrack(
   row: TrackRow,
-  actingUserId: string | null
+  actingUserId: string | null,
+  names: DisplayNames
 ): PublicTrack {
   const {
     originalKey: _originalKey,
@@ -87,5 +107,11 @@ export function publicTrack(
     // An anonymous share holder has no id, so nothing can be theirs. Never
     // let a null actingUserId match a null uploadedBy.
     uploadedByMe: actingUserId != null && uploadedBy === actingUserId,
+    // Gated on the session here as well as in resolveDisplayNames, so a route
+    // that resolves names and then serves them to a reader with no locker
+    // session cannot do so by accident. Absent from the map — an id the lookup
+    // did not cover — reads as no attribution rather than as a stale name.
+    uploadedByName:
+      actingUserId != null && uploadedBy != null ? names.get(uploadedBy) ?? null : null,
   };
 }

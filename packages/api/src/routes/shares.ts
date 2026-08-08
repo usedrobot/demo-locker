@@ -7,6 +7,7 @@ import { getLimits, isLimited } from "../lib/limits.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { publicPlaylist } from "../lib/public-playlist.js";
 import { publicShare } from "../lib/public-share.js";
+import { resolveDisplayNames } from "../lib/display-name.js";
 import { requestSessionUserId } from "../lib/playlist-access.js";
 import { lockerIdOf } from "../lib/locker.js";
 import type { Env } from "../types.js";
@@ -275,17 +276,25 @@ sharesRouter.get("/invite/:token", async (c) => {
   // truthful uploadedByMe instead of a blanket false.
   const actingUserId = await requestSessionUserId(c);
 
+  // Names for a signed-in visitor following an invite link; nothing at all for
+  // the anonymous listener this view usually serves, who is outside the locker
+  // and has no business learning the band's names (lib/display-name.ts).
+  const names = await resolveDisplayNames(db, actingUserId, [
+    playlist.createdBy,
+    ...trackList.map((t: TrackRow) => t.uploadedBy),
+  ]);
+
   return c.json({
     permission: share.permission,
     // publicPlaylist here: an anonymous invite holder must not learn the id
     // of the collaborator who created the playlist.
-    playlist: publicPlaylist(playlist, actingUserId),
+    playlist: publicPlaylist(playlist, actingUserId, names),
     // publicTrack here too. Missing it broke this route twice over: listeners
     // got no `hasStream`, so the player refused to start any track on a share
     // link, and the raw rows still carried originalKey/streamKey — the exact
     // leak the 0.2.8 review closed everywhere except the one route that
     // listeners, not owners, actually use.
-    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId)),
+    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId, names)),
     accent: owner?.accent ?? null,
   });
 });

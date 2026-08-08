@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { Track } from "../lib/api";
 import { tracks as tracksApi } from "../lib/api";
 import { player } from "../lib/audio";
+import Attribution from "./Attribution";
 
 type Props = {
   tracks: Track[];
@@ -150,8 +151,19 @@ export default function TrackList({ tracks, onReorder, onRemove, selectedId, onS
               {isPlaying ? "▶" : ""}
             </span>
 
-            {/* Title */}
-            <span style={{ flex: 1, color: "var(--fg)" }}>{track.title}</span>
+            {/* Title. minWidth:0 so it gives up space to the row's secondary
+                items rather than forcing the row past its container — the
+                other half of Attribution's contract. */}
+            <span style={{ flex: 1, minWidth: 0, color: "var(--fg)" }}>{track.title}</span>
+
+            {/* Whose demo. Renders nothing for a reader with no locker session,
+                which is what this same list serves on the anonymous invite
+                view (pages/Invite.tsx): the API sends them no names. */}
+            <Attribution
+              mine={track.uploadedByMe}
+              name={track.uploadedByName}
+              verb="Uploaded"
+            />
 
             {/* Status */}
             {!track.hasStream && (

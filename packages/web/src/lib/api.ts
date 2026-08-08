@@ -130,6 +130,14 @@ export type Playlist = {
   // control is `createdByMe || isOwner`: the locker owner may delete anything
   // in the locker and gets false on every collaborator-created row.
   createdByMe: boolean;
+  // WHO created it, by name — what createdByMe alone can never say once a
+  // locker holds two people. Resolved server-side from the collaborator's
+  // display name (the label the owner typed on their invite), falling back to
+  // their email; the creator's user id is still never serialized. Null means
+  // there is nothing to attribute — no creator recorded, or the reader has no
+  // locker session (an anonymous share holder gets no names at all) — and must
+  // render as nothing, never "unknown". Attribution, not permission.
+  createdByName: string | null;
 };
 
 export type Track = {
@@ -151,6 +159,11 @@ export type Track = {
   // no session to compare) and must never be rendered as "someone else
   // uploaded this".
   uploadedByMe: boolean;
+  // WHO uploaded it, by name — the counterpart of Playlist.createdByName, with
+  // the same rules: resolved server-side, no raw user id, null renders as
+  // nothing. The acting user's own rows are rendered "you" rather than with
+  // this name (see components/Attribution.tsx).
+  uploadedByName: string | null;
 };
 
 export const playlists = {
@@ -378,7 +391,16 @@ export type CollabInvite = {
   acceptedAt: string | null;
 };
 
-export type CollabMember = { id: string; email: string; createdAt: string };
+export type CollabMember = {
+  id: string;
+  email: string;
+  // The name this person's uploads carry everywhere else in the app: the label
+  // the owner typed when minting their invite. Null for anyone who redeemed
+  // before display names existed — the email is the fallback, and stays here
+  // regardless because this is the owner's member-management view.
+  displayName: string | null;
+  createdAt: string;
+};
 
 export const collab = {
   listInvites: () => request<{ invites: CollabInvite[] }>("/collab/invites"),

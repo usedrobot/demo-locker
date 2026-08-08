@@ -43,7 +43,13 @@ export type PendingInvite = { id: string; ownerId: string };
 // An invite this request actually took, carrying the exact accepted_at it
 // wrote. That timestamp is the claim's receipt: it is what lets a release
 // prove it is undoing its own claim and nobody else's.
-export type ClaimedInvite = PendingInvite & { claimedAt: Date };
+// The label rides along because it is the collaborator's NAME: it is copied
+// onto the new account's display_name at signup, so every row they upload can
+// say whose demo it is. Copied rather than joined through accepted_by at read
+// time — DELETE /collab/invites/:id is not restricted to pending invites, so an
+// owner deleting an accepted one would otherwise erase an active
+// collaborator's name from every row they own.
+export type ClaimedInvite = PendingInvite & { claimedAt: Date; label: string };
 
 // How many rows an UPDATE touched, across both SQLite drivers this codebase
 // runs on. better-sqlite3 returns a RunResult — `{ changes, lastInsertRowid }`
@@ -143,12 +149,18 @@ export async function claimInvite(
   // Safe to read back unconditionally: the token is unique, and we are the one
   // who moved this row out of the unredeemed state.
   const [invite] = await db
-    .select({ id: collaboratorInvites.id, ownerId: collaboratorInvites.ownerId })
+    .select({
+      id: collaboratorInvites.id,
+      ownerId: collaboratorInvites.ownerId,
+      label: collaboratorInvites.label,
+    })
     .from(collaboratorInvites)
     .where(eq(collaboratorInvites.token, token))
     .limit(1);
 
-  return invite ? { id: invite.id, ownerId: invite.ownerId, claimedAt: now } : null;
+  return invite
+    ? { id: invite.id, ownerId: invite.ownerId, label: invite.label, claimedAt: now }
+    : null;
 }
 
 // Give a claimed invite back.

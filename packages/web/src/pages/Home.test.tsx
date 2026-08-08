@@ -101,6 +101,7 @@ function track(over: Partial<Track>): Track {
     duration: 120,
     uploadedAt: "",
     uploadedByMe: false,
+    uploadedByName: null,
     ...over,
   };
 }
@@ -115,6 +116,7 @@ function playlist(over: Partial<Playlist>): Playlist {
     createdAt: "",
     updatedAt: "2026-08-07T00:00:00.000Z",
     createdByMe: false,
+    createdByName: null,
     ...over,
   };
 }
@@ -371,5 +373,133 @@ describe("Home — the collaborators panel", () => {
     // A collaborator may not see who else is in the locker, let alone invite
     // anyone — every /collab route 404s them.
     expect(container.querySelector('[data-testid="collab-panel"]')).toBeNull();
+  });
+});
+
+// Whose demo is this? The library and playlist lists on Home are where a band
+// with two songwriters actually reads that, and until this they rendered
+// identically no matter who made the row. `uploadedByMe`/`createdByMe` cannot
+// answer it — they say "mine / not mine", which with two collaborators never
+// identifies which of them.
+//
+// Every negative assertion below also pins the row it is about. "No name
+// rendered" passing because the list rendered nothing was a real finding on
+// Task 11.
+describe("Home — attribution on rows", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({ playlists: [] });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({ tracks: [] });
+    deleteTrackMock.mockReset();
+    deleteTrackMock.mockResolvedValue({});
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: COLLABORATOR });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  function attributions(): string[] {
+    return Array.from(container.querySelectorAll("[data-attribution]")).map(
+      (el) => el.textContent ?? ""
+    );
+  }
+
+  // Matches the marker by its TOOLTIP rather than its data attribute, so an
+  // EMPTY marker is caught too. React omits an attribute whose value is null,
+  // so a component that returned a blank span instead of nothing would leave
+  // no [data-attribution] to find — while still costing the row a flex item
+  // and its 0.75rem gap. A mutation run proved that gap invisible to the
+  // data-attribute query alone.
+  function attributionElements(): Element[] {
+    return Array.from(container.querySelectorAll('[title^="Uploaded by"], [title^="Created by"]'));
+  }
+
+  function titles(): string[] {
+    return Array.from(container.querySelectorAll("span")).map((el) => el.textContent ?? "");
+  }
+
+  it('reads "you" on the caller\'s own upload, never their own name', async () => {
+    listTracksMock.mockResolvedValue({
+      tracks: [
+        track({ id: "t-mine", title: "my demo", uploadedByMe: true, uploadedByName: "Nina" }),
+      ],
+    });
+    render();
+    await flush();
+
+    expect(titles()).toContain("my demo");
+    expect(attributions()).toEqual(["you"]);
+  });
+
+  it("names the other songwriter on their upload", async () => {
+    listTracksMock.mockResolvedValue({
+      tracks: [
+        track({ id: "t-theirs", title: "their demo", uploadedByMe: false, uploadedByName: "Jimmy" }),
+      ],
+    });
+    render();
+    await flush();
+
+    expect(titles()).toContain("their demo");
+    expect(attributions()).toEqual(["Jimmy"]);
+  });
+
+  it("renders nothing at all for a track with no attribution", async () => {
+    listTracksMock.mockResolvedValue({
+      tracks: [
+        track({ id: "t-orphan", title: "orphan demo", uploadedByMe: false, uploadedByName: null }),
+      ],
+    });
+    render();
+    await flush();
+
+    // Pins the row: without this the empty attribution list below would pass
+    // just as happily on a list that rendered no rows.
+    expect(titles()).toContain("orphan demo");
+    expect(attributions()).toEqual([]);
+    // Not even an empty marker — see attributionElements().
+    expect(attributionElements()).toHaveLength(0);
+    // Not "unknown", not "null" — nothing.
+    expect(container.textContent).not.toContain("unknown");
+    expect(container.textContent).not.toContain("null");
+  });
+
+  it("attributes playlist rows the same way", async () => {
+    listPlaylistsMock.mockResolvedValue({
+      playlists: [
+        playlist({ id: "p-mine", name: "my set", createdByMe: true, createdByName: "Nina" }),
+        playlist({ id: "p-theirs", name: "their set", createdByMe: false, createdByName: "Jimmy" }),
+        playlist({ id: "p-none", name: "old set", createdByMe: false, createdByName: null }),
+      ],
+    });
+    render();
+    await flush();
+
+    const shown = titles();
+    expect(shown).toContain("my set");
+    expect(shown).toContain("their set");
+    expect(shown).toContain("old set");
+    expect(attributions()).toEqual(["you", "Jimmy"]);
+    // Three rows, two of them attributed: the unattributed one contributes no
+    // marker at all, empty or otherwise.
+    expect(attributionElements()).toHaveLength(2);
+  });
+
+  it("does not turn attribution into a delete control", async () => {
+    listTracksMock.mockResolvedValue({
+      tracks: [
+        track({ id: "t-theirs", title: "their demo", uploadedByMe: false, uploadedByName: "Jimmy" }),
+      ],
+    });
+    render();
+    await flush();
+
+    // A collaborator may not delete someone else\'s upload — showing whose it
+    // is must not have changed that in either direction.
+    expect(attributions()).toEqual(["Jimmy"]);
+    expect(deleteButtons("Delete their demo")).toHaveLength(0);
   });
 });

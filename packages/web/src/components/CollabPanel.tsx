@@ -167,9 +167,38 @@ export default function CollabPanel() {
 
         {members.map((m) => (
           <div key={m.id} style={rowStyle}>
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {m.email}
+            {/* The name they were invited under, which is what their uploads
+                are labelled with everywhere else — with the address secondary,
+                since this is the view where the owner needs to know exactly
+                which account they are about to delete. Falls back to the email
+                alone for a member who redeemed before display names existed. */}
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {m.displayName ?? m.email}
             </span>
+            {m.displayName && (
+              <span
+                style={{
+                  color: "var(--fg-dim)",
+                  fontSize: "12px",
+                  flex: "0 1 auto",
+                  minWidth: 0,
+                  maxWidth: "20ch",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.email}
+              </span>
+            )}
             <button
               onClick={() => handleRemoveMember(m.id)}
               onMouseLeave={() => setConfirmRemoveId(null)}

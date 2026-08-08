@@ -11,6 +11,7 @@ import {
 import { lockerIdOf, lockerIdForUserId, isLockerOwner } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
+import { resolveDisplayNames } from "../lib/display-name.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { INERT_CONTENT_HEADERS, safeAudioType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
@@ -137,7 +138,8 @@ tracksRouter.post("/upload", async (c) => {
     })
     .returning();
 
-  return c.json({ track: publicTrack(track, actingUserId) }, 201);
+  const names = await resolveDisplayNames(db, actingUserId, [track.uploadedBy]);
+  return c.json({ track: publicTrack(track, actingUserId, names) }, 201);
 });
 
 // List the locker's whole track library (every upload, in or out of
@@ -152,8 +154,15 @@ tracksRouter.get("/", requireAuth, async (c) => {
     .orderBy(desc(tracks.uploadedAt));
   // The reader is a locker member, but not necessarily the uploader of every
   // row here — a locker can hold several collaborators, and none of them may
-  // learn each other's user id. publicTrack answers "is this mine" instead.
-  return c.json({ tracks: rows.map((t: TrackRow) => publicTrack(t, user.id)) });
+  // learn each other's user id. publicTrack answers "is this mine" instead,
+  // and carries a resolved NAME for whose it is — one lookup for the whole
+  // page, not one per row (lib/display-name.ts).
+  const names = await resolveDisplayNames(
+    db,
+    user.id,
+    rows.map((t: TrackRow) => t.uploadedBy)
+  );
+  return c.json({ tracks: rows.map((t: TrackRow) => publicTrack(t, user.id, names)) });
 });
 
 // Stream a track from R2 — gated by the parent playlist. <audio> can't send an
@@ -296,7 +305,9 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .returning();
 
-  return c.json({ track: publicTrack(updated, c.get("user").id) });
+  const actingUserId = c.get("user").id;
+  const names = await resolveDisplayNames(db, actingUserId, [updated.uploadedBy]);
+  return c.json({ track: publicTrack(updated, actingUserId, names) });
 });
 
 // Delete a track. The locker owner may delete anything in their locker; a

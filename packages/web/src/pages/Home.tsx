@@ -13,6 +13,7 @@ import { player } from "../lib/audio";
 import { cycleAccent } from "../lib/theme";
 import Logo from "../components/Logo";
 import CollabPanel from "../components/CollabPanel";
+import Attribution from "../components/Attribution";
 import Upload from "../components/Upload";
 import PendingTrackRow from "../components/PendingTrackRow";
 import { useUploadQueue } from "../lib/use-upload-queue";
@@ -453,8 +454,13 @@ export default function Home({ onSelect, onLogout }: Props) {
                   />
                 )}
               </div>
-              <span style={{ flex: 1 }}>{p.name}</span>
-              <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+              {/* minWidth:0 is the other half of Attribution's contract: a
+                  flex item defaults to min-content width, so without this the
+                  name below pushes the row wider than the viewport instead of
+                  the title giving up space. */}
+              <span style={{ flex: 1, minWidth: 0 }}>{p.name}</span>
+              <Attribution mine={p.createdByMe} name={p.createdByName} verb="Created" />
+              <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {new Date(p.updatedAt).toLocaleDateString()}
               </span>
               {/* `createdByMe || isOwner` — the client rule stated in
@@ -566,10 +572,18 @@ export default function Home({ onSelect, onLogout }: Props) {
               <span style={{ color: "var(--accent)", width: "2ch", flex: "none" }}>
                 {isPlaying ? "⏸" : "▶"}
               </span>
-              <span style={{ flex: 1, color: isPlaying ? "var(--accent)" : "var(--fg)" }}>
+              {/* minWidth:0 — see the playlist row above. */}
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  color: isPlaying ? "var(--accent)" : "var(--fg)",
+                }}
+              >
                 {t.title}
               </span>
-              <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+              <Attribution mine={t.uploadedByMe} name={t.uploadedByName} verb="Uploaded" />
+              <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {formatDuration(t.duration)}
               </span>
               {/* `uploadedByMe || isOwner` — see lib/public-track.ts. The

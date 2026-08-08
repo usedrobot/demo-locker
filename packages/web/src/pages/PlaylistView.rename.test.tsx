@@ -55,6 +55,8 @@ const meMock = vi.mocked(auth.me);
 const playlist: Playlist = {
   // createdByMe: this fixture stands in for the acting user's own playlist.
   createdByMe: true,
+  // Attribution is not this file's subject; null is the "nothing to show" case.
+  createdByName: null,
   id: "pl-1",
   name: "old name",
   ownerId: "u-1",
@@ -563,6 +565,7 @@ describe("playlist rename — collaborator access", () => {
   const ownerPlaylist: Playlist = {
     // The owner created it, not the collaborator acting in these tests.
     createdByMe: false,
+    createdByName: null,
     id: "pl-2",
     name: "owner's playlist",
     ownerId: "u-owner",

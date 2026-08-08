@@ -191,7 +191,18 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   try {
     [user] = await db
       .insert(users)
-      .values({ email, passwordHash, lockerOwnerId: invite?.ownerId ?? null })
+      // displayName comes from the label the owner typed when minting this
+      // invite — the human name they will read next to this person's uploads.
+      // Taken from the invite this signup actually claimed, not re-queried by
+      // token, and written in the same INSERT as the binding so an account can
+      // never exist bound-but-nameless. Null for an ordinary (non-invite)
+      // signup: the locker owner has no invite, and falls back to their email.
+      .values({
+        email,
+        passwordHash,
+        lockerOwnerId: invite?.ownerId ?? null,
+        displayName: invite?.label ?? null,
+      })
       .returning({
         id: users.id,
         email: users.email,

@@ -111,7 +111,17 @@ collabRouter.get("/members", requireAuth, async (c) => {
 
   const db = getDb(c.env.DB);
   const members = await db
-    .select({ id: users.id, email: users.email, createdAt: users.createdAt })
+    // displayName is the name this person's uploads carry everywhere else, so
+    // the panel can show "Jimmy" rather than a login address. Email stays: this
+    // is the owner's own member-management view, where the address is the
+    // useful identifier, and it is the fallback for a member who redeemed
+    // before display names existed.
+    .select({
+      id: users.id,
+      email: users.email,
+      displayName: users.displayName,
+      createdAt: users.createdAt,
+    })
     .from(users)
     .where(eq(users.lockerOwnerId, user.id));
 

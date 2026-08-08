@@ -166,7 +166,7 @@ describe("CollabPanel", () => {
 
   it("lists members with a remove control", async () => {
     listMembersMock.mockResolvedValue({
-      members: [{ id: "m-1", email: "jimmy@band.dev", createdAt: "" }],
+      members: [{ id: "m-1", email: "jimmy@band.dev", displayName: null, createdAt: "" }],
     });
 
     render();
@@ -178,7 +178,7 @@ describe("CollabPanel", () => {
 
   it("removes a member only on the second click of the confirm", async () => {
     listMembersMock.mockResolvedValue({
-      members: [{ id: "m-1", email: "jimmy@band.dev", createdAt: "" }],
+      members: [{ id: "m-1", email: "jimmy@band.dev", displayName: null, createdAt: "" }],
     });
 
     render();
@@ -206,7 +206,7 @@ describe("CollabPanel", () => {
     // A redeemed invite's person shows up as a member instead; listing the
     // spent invite too would read as a second, still-usable way in.
     listMembersMock.mockResolvedValue({
-      members: [{ id: "m-2", email: "rita@band.dev", createdAt: "" }],
+      members: [{ id: "m-2", email: "rita@band.dev", displayName: null, createdAt: "" }],
     });
 
     render();
@@ -426,5 +426,60 @@ describe("CollabPanel", () => {
 
     // Nothing has ever been disabled, so the refocus effect must not fire.
     expect(document.activeElement).not.toBe(nameInput());
+  });
+});
+
+// The panel is the owner's member-management view, and it showed a login
+// address where every other surface now shows a name. The name is the label the
+// owner typed when minting the invite, so it is the identifier they recognise;
+// the address stays as secondary text because this is the view where they
+// confirm exactly which account they are about to delete.
+describe("CollabPanel member names", () => {
+  beforeEach(() => {
+    listInvitesMock.mockReset();
+    listInvitesMock.mockResolvedValue({ invites: [] });
+    listMembersMock.mockReset();
+    listMembersMock.mockResolvedValue({ members: [] });
+    removeMemberMock.mockReset();
+    removeMemberMock.mockResolvedValue({});
+    inviteMock.mockReset();
+    inviteMock.mockResolvedValue({ invite: INVITE });
+    revokeInviteMock.mockReset();
+    revokeInviteMock.mockResolvedValue({});
+    copyTextMock.mockReset();
+    copyTextMock.mockResolvedValue(true);
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  it("shows the display name with the email alongside it", async () => {
+    listMembersMock.mockResolvedValue({
+      members: [
+        { id: "m-1", email: "jimmy@test.dev", displayName: "Jimmy", createdAt: "" },
+      ],
+    });
+    render();
+    await flush();
+
+    expect(container.textContent).toContain("Jimmy");
+    expect(container.textContent).toContain("jimmy@test.dev");
+  });
+
+  it("falls back to the email for a member with no display name", async () => {
+    listMembersMock.mockResolvedValue({
+      members: [{ id: "m-2", email: "older@test.dev", displayName: null, createdAt: "" }],
+    });
+    render();
+    await flush();
+
+    // Pins the row: the remove control proves it rendered, so "the address is
+    // shown once" cannot pass on an empty list.
+    expect(
+      container.querySelector('button[aria-label*="older@test.dev"]')
+    ).not.toBeNull();
+    expect(container.textContent).toContain("older@test.dev");
+    expect(container.textContent).not.toContain("null");
   });
 });

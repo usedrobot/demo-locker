@@ -12,6 +12,7 @@ import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
 import { publicPlaylist, type PlaylistRow } from "../lib/public-playlist.js";
+import { resolveDisplayNames } from "../lib/display-name.js";
 import {
   INERT_CONTENT_HEADERS,
   isAllowedImageType,
@@ -32,9 +33,16 @@ playlistsRouter.get("/", requireAuth, async (c) => {
 
   // Every reader here is a locker member, but not necessarily the creator of
   // every row — a locker can hold several collaborators, and none of them may
-  // learn each other's user id. publicPlaylist answers "is this mine" instead.
+  // learn each other's user id. publicPlaylist answers "is this mine" instead,
+  // and carries a resolved NAME for whose it is — one lookup for the whole
+  // page, not one per row (lib/display-name.ts).
+  const names = await resolveDisplayNames(
+    db,
+    user.id,
+    result.map((p: PlaylistRow) => p.createdBy)
+  );
   return c.json({
-    playlists: result.map((p: PlaylistRow) => publicPlaylist(p, user.id)),
+    playlists: result.map((p: PlaylistRow) => publicPlaylist(p, user.id, names)),
   });
 });
 
@@ -65,7 +73,8 @@ playlistsRouter.post("/", requireAuth, async (c) => {
     .values({ name, ownerId: lockerId, createdBy: user.id })
     .returning();
 
-  return c.json({ playlist: publicPlaylist(playlist, user.id) }, 201);
+  const names = await resolveDisplayNames(db, user.id, [playlist.createdBy]);
+  return c.json({ playlist: publicPlaylist(playlist, user.id, names) }, 201);
 });
 
 playlistsRouter.get("/:id", async (c) => {
@@ -101,9 +110,15 @@ playlistsRouter.get("/:id", async (c) => {
   // (both false here for a share holder, who has no id and therefore owns
   // nothing).
   const actingUserId = await requestSessionUserId(c);
+  // One lookup covers the playlist's creator and every uploader on the page.
+  // Resolves to nothing at all for a share holder, who has no session.
+  const names = await resolveDisplayNames(db, actingUserId, [
+    playlist.createdBy,
+    ...trackList.map((t: TrackRow) => t.uploadedBy),
+  ]);
   return c.json({
-    playlist: publicPlaylist(playlist, actingUserId),
-    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId)),
+    playlist: publicPlaylist(playlist, actingUserId, names),
+    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId, names)),
   });
 });
 
@@ -166,7 +181,8 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .returning();
 
-  return c.json({ playlist: publicPlaylist(updated, user.id) });
+  const names = await resolveDisplayNames(db, user.id, [updated.createdBy]);
+  return c.json({ playlist: publicPlaylist(updated, user.id, names) });
 });
 
 // Upload playlist artwork — multipart, stored in R2 under playlist-art/<id>
@@ -213,7 +229,8 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .returning();
 
-  return c.json({ playlist: publicPlaylist(updated, user.id) });
+  const names = await resolveDisplayNames(db, user.id, [updated.createdBy]);
+  return c.json({ playlist: publicPlaylist(updated, user.id, names) });
 });
 
 // Stream playlist artwork — gated to a session acting in the locker (owner

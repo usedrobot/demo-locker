@@ -283,14 +283,14 @@ describe("playlist rename", () => {
     expect(updateMock).toHaveBeenCalledWith("pl-1", { name: "second session name" });
   });
 
-  // Regression: an earlier version of the in-flight guard bailed
-  // unconditionally on re-entry, which stopped the duplicate PATCH above
-  // but also silently dropped a legitimate correction typed while the
-  // first request was still out — a real risk on a slow connection, and
-  // exactly the kind of data loss this whole rename-on-blur flow exists to
-  // prevent. The correction must still reach the server, in a follow-up
-  // request once the in-flight one resolves.
-  it("commits a correction typed while an earlier request is still in flight", async () => {
+  // The editor does not stay editable across the request window. Letting the
+  // user keep typing during a PATCH meant either dropping the correction or
+  // running a retry loop that could commit half-typed text; disabling the
+  // field for the (usually brief) request instead makes the window
+  // uneditable, so there is nothing to drop and nothing to reconcile. It
+  // also makes the in-flight Escape no-op below legible rather than
+  // mysterious: the user can see the field is not accepting input.
+  it("disables the input and shows a pending affordance while the rename is in flight", async () => {
     const first = deferred<{ playlist: Playlist }>();
     updateMock.mockReturnValueOnce(first.promise);
 
@@ -299,32 +299,71 @@ describe("playlist rename", () => {
 
     act(() => renameButton()!.click());
     const input = nameInput()!;
-    act(() => typeValue(input, "first"));
+    expect(input.disabled).toBe(false);
+
+    act(() => typeValue(input, "slow one"));
     act(() => {
       input.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
       );
     });
-    // The first request is out but not yet resolved.
-    expect(updateMock).toHaveBeenCalledTimes(1);
-    expect(nameInput()).not.toBeNull();
+    await flush();
 
-    // The user notices a typo and corrects it, then clicks away, all before
-    // the first response lands.
-    act(() => typeValue(input, "corrected"));
+    // The request is out and has not resolved: the field is still mounted,
+    // still holds the draft, and is not editable.
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    const pending = nameInput();
+    expect(pending).not.toBeNull();
+    expect(pending!.disabled).toBe(true);
+    expect(pending!.value).toBe("slow one");
+    expect(container.textContent).toContain("saving");
+
+    act(() => first.resolve({ playlist: { ...playlist, name: "slow one" } }));
+    await flush();
+
+    // Success closes the editor and takes the pending affordance with it.
+    expect(nameInput()).toBeNull();
+    expect(container.textContent).not.toContain("saving");
+  });
+
+  // The property this whole task has been protecting: a failed rename must
+  // never cost the user their typed name. On failure the field comes back to
+  // life with the draft still in it and the error visible, so the fix is a
+  // correction-and-retry rather than a retype from scratch.
+  it("re-enables the input with the draft intact when the rename fails", async () => {
+    updateMock.mockRejectedValueOnce(new Error("name already taken"));
+
+    render();
+    await flush();
+
+    act(() => renameButton()!.click());
+    act(() => typeValue(nameInput()!, "taken name"));
     act(() => {
-      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      nameInput()!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
     });
     await flush();
-    // Still only the one request so far — the correction was queued, not
-    // fired concurrently.
-    expect(updateMock).toHaveBeenCalledTimes(1);
 
-    act(() => first.resolve({ playlist: { ...playlist, name: "first" } }));
+    const input = nameInput();
+    expect(input).not.toBeNull();
+    expect(input!.disabled).toBe(false);
+    expect(input!.value).toBe("taken name");
+    expect(container.textContent).toContain("name already taken");
+    expect(container.textContent).not.toContain("saving");
+
+    // And the retry actually goes out — the field is genuinely live again,
+    // not merely rendered without the attribute.
+    act(() => typeValue(input!, "free name"));
+    act(() => {
+      input!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
     await flush();
 
     expect(updateMock).toHaveBeenCalledTimes(2);
-    expect(updateMock).toHaveBeenNthCalledWith(2, "pl-1", { name: "corrected" });
+    expect(updateMock).toHaveBeenNthCalledWith(2, "pl-1", { name: "free name" });
   });
 
   // Regression: Escape used to close the editor unconditionally, including
@@ -358,8 +397,10 @@ describe("playlist rename", () => {
     });
     await flush();
     // Not discarded: the editor is still open, and no second (cancelling)
-    // request was fired.
+    // request was fired. It is also visibly disabled, which is what makes
+    // the no-op legible instead of the key just seeming to be ignored.
     expect(nameInput()).not.toBeNull();
+    expect(nameInput()!.disabled).toBe(true);
     expect(updateMock).toHaveBeenCalledTimes(1);
 
     act(() => first.resolve({ playlist: { ...playlist, name: "in flight" } }));

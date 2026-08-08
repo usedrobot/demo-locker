@@ -30,6 +30,11 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [renameError, setRenameError] = useState("");
+  // Drives the disabled input + pending affordance. Mirrored by
+  // renameInFlightRef below, which is what the handlers actually test —
+  // state doesn't update synchronously within a handler, and the guard has
+  // to hold for a blur dispatched in the same turn as the Enter.
+  const [renameSaving, setRenameSaving] = useState(false);
   // One-shot: Escape sets this to tell the *next* blur "discard, don't
   // commit". It does NOT depend on that blur ever arriving — removing a
   // focused element from the DOM does not reliably fire blur/focusout (it
@@ -39,21 +44,10 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // silently swallow a later, unrelated commit.
   const cancelRenameRef = useRef(false);
   // True only while a commitRename() network call is in flight. Guards
-  // against a blur firing (e.g. clicking another control) before that
-  // request resolves, which would otherwise re-enter commitRename with the
-  // same draft and fire a second, duplicate PATCH.
+  // against a blur firing (e.g. clicking another control, or the input
+  // being disabled out from under the focus) before that request resolves,
+  // which would otherwise re-enter commitRename and fire a duplicate PATCH.
   const renameInFlightRef = useRef(false);
-  // Set when commitRename is re-entered while renameInFlightRef is already
-  // true — i.e. the user corrected the draft (or blurred/hit Enter again)
-  // before the outstanding PATCH came back. The in-flight request's own
-  // loop checks this once it resolves and, if set, sends the corrected
-  // draft too instead of the edit being silently dropped.
-  const pendingRenameRetryRef = useRef(false);
-  // Mirrors `draftName` synchronously. The in-flight commit loop below can
-  // span several renders (each `await` yields), and reading React state
-  // from that closure would see whatever `draftName` was when the *call*
-  // started, not what the user has typed since — a ref sidesteps that.
-  const draftNameRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
@@ -80,59 +74,37 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // share a playlist but may not put it on the open web (DL, 2026-08-07).
   const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
 
-  function setDraft(value: string) {
-    draftNameRef.current = value;
-    setDraftName(value);
-  }
-
   async function commitRename() {
     if (!playlist) return;
-    if (renameInFlightRef.current) {
-      // A blur or Enter fired while an earlier call from this session is
-      // still awaiting its PATCH. Don't fire a second request concurrently
-      // — but don't drop this one either: a correction typed on a slow
-      // connection is exactly the work this whole flow exists to protect.
-      // The in-flight call's own loop below checks this flag once its
-      // request resolves and sends the (possibly further-edited) draft.
-      pendingRenameRetryRef.current = true;
+    // A PATCH from this session is already out. The input is disabled for
+    // that whole window, so there is nothing newly typed to send — this can
+    // only be a stray re-entry (notably the blur browsers fire when a
+    // focused input is disabled), and firing again would just duplicate the
+    // request.
+    if (renameInFlightRef.current) return;
+
+    const next = draftName.trim();
+    if (!next || next === playlist.name) {
+      setRenaming(false);
+      setRenameError("");
       return;
     }
-    pendingRenameRetryRef.current = false;
+
     renameInFlightRef.current = true;
-    // `base` tracks the last server-confirmed playlist for this loop. Using
-    // it instead of the `playlist` state avoids a stale-closure comparison
-    // on a second pass — `playlist` won't reflect the first PATCH's result
-    // until React re-renders, but this loop may run its second iteration
-    // before that happens.
-    let base = playlist;
+    setRenameSaving(true);
     try {
-      // Usually one request. Loops a second (or third...) time only when
-      // pendingRenameRetryRef was set by a re-entrant call above while this
-      // one's PATCH was in flight — i.e. the user corrected the draft (or
-      // blurred/hit Enter again) before the response landed.
-      for (;;) {
-        const next = draftNameRef.current.trim();
-        if (!next || next === base.name) {
-          setRenaming(false);
-          setRenameError("");
-          return;
-        }
-        const r = await api.update(base.id, { name: next });
-        base = r.playlist;
-        setPlaylist(r.playlist);
-        if (!pendingRenameRetryRef.current) {
-          setRenaming(false);
-          setRenameError("");
-          return;
-        }
-        pendingRenameRetryRef.current = false;
-        // Loop again: draftNameRef may have changed further since the
-        // request that just resolved was sent.
-      }
+      const r = await api.update(playlist.id, { name: next });
+      setPlaylist(r.playlist);
+      setRenaming(false);
+      setRenameError("");
     } catch (err) {
+      // Leave the editor open with the draft untouched. A failed rename
+      // must never cost the user what they typed — they correct and retry
+      // from where they were, rather than starting over.
       setRenameError(err instanceof Error ? err.message : "rename failed");
     } finally {
       renameInFlightRef.current = false;
+      setRenameSaving(false);
     }
   }
 
@@ -207,40 +179,58 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
             column content-sized, which collapses it to zero. */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {renaming ? (
-            <input
-              aria-label="playlist name"
-              autoFocus
-              value={draftName}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-                if (e.key === "Escape") {
-                  // A commit already in flight can't be cancelled — the
-                  // request is already gone. Escape only cancels an unsent
-                  // edit; once the PATCH is out, let it resolve and show
-                  // the real server state rather than closing the editor
-                  // as if nothing happened while the rename lands anyway.
-                  if (renameInFlightRef.current) return;
-                  cancelRenameRef.current = true;
-                  setRenaming(false);
-                  setRenameError("");
-                }
-              }}
-              onBlur={() => {
-                // Escape already handled discarding — don't also commit.
-                if (cancelRenameRef.current) {
-                  cancelRenameRef.current = false;
-                  return;
-                }
-                // Clicking away used to discard silently: setRenaming(false)
-                // ran on mousedown, before the click's mouseup, so the
-                // control the user meant to hit (e.g. [make public]) moved
-                // out from under the pointer AND the typed name was lost.
-                // Committing here preserves the edit either way.
-                commitRename();
-              }}
-              className="rename-input"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <input
+                aria-label="playlist name"
+                autoFocus
+                value={draftName}
+                // Uneditable for the length of the request. That window used
+                // to stay live, which meant a correction typed into it either
+                // got dropped or had to be reconciled by a retry loop that
+                // could PATCH half-typed text. Nothing can be typed here now,
+                // so there is nothing to lose and nothing to reconcile.
+                disabled={renameSaving}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  if (e.key === "Escape") {
+                    // A commit already in flight can't be cancelled — the
+                    // request is already gone. Escape only cancels an unsent
+                    // edit; once the PATCH is out, let it resolve and show
+                    // the real server state rather than closing the editor
+                    // as if nothing happened while the rename lands anyway.
+                    // The field is visibly disabled while that's true, so
+                    // this no-op reads as "busy", not as a dropped keypress.
+                    if (renameInFlightRef.current) return;
+                    cancelRenameRef.current = true;
+                    setRenaming(false);
+                    setRenameError("");
+                  }
+                }}
+                onBlur={() => {
+                  // Escape already handled discarding — don't also commit.
+                  if (cancelRenameRef.current) {
+                    cancelRenameRef.current = false;
+                    return;
+                  }
+                  // Clicking away used to discard silently: setRenaming(false)
+                  // ran on mousedown, before the click's mouseup, so the
+                  // control the user meant to hit (e.g. [make public]) moved
+                  // out from under the pointer AND the typed name was lost.
+                  // Committing here preserves the edit either way.
+                  commitRename();
+                }}
+                className="rename-input"
+              />
+              {renameSaving && (
+                <span
+                  className="dots"
+                  style={{ color: "var(--fg-dim)", fontSize: "11px", flex: "none" }}
+                >
+                  saving
+                </span>
+              )}
+            </div>
           ) : (
             <AsciiText text={playlist.name} />
           )}
@@ -251,7 +241,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
                   // A prior session may have set this and never had it
                   // consumed (see the ref's own comment) — start clean.
                   cancelRenameRef.current = false;
-                  setDraft(playlist.name);
+                  setDraftName(playlist.name);
                   setRenameError("");
                   setRenaming(true);
                 }}

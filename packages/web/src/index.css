@@ -420,13 +420,25 @@ button:active {
    rather than wrapping it, so the container never sizes itself from an
    editable child. width:100% keeps it inside the flex:1 column. */
 .rename-input {
-  width: 100%;
+  /* flex:1 + min-width:0 rather than width:100%: the input now shares a flex
+     row with the "saving" affordance, and a 100%-wide item would push that
+     out of the column. */
+  flex: 1;
+  min-width: 0;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg);
   font-family: var(--font);
   font-size: 16px;
   padding: 0.3rem 0.4rem;
+}
+
+/* Disabled for the length of a rename request. Dimming it is what makes the
+   in-flight window legible — Escape and typing are both no-ops here, and the
+   user can see why. */
+.rename-input:disabled {
+  color: var(--fg-dim);
+  cursor: not-allowed;
 }
 
 /* Playlist header: ascii title on the left, artwork on the right. */

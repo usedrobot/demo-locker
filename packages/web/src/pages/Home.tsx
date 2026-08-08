@@ -408,7 +408,14 @@ export default function Home({ onSelect, onLogout }: Props) {
               <button type="submit" style={linkStyle}>
                 {nameBusy ? "[saving...]" : "[save]"}
               </button>
-              {nameError && <span style={{ color: "var(--error)" }}>{nameError}</span>}
+              {/* role="alert" like the other error surfaces on this page: a
+                  refusal that only changes colour somewhere below the button is
+                  a refusal a screen reader never announces. */}
+              {nameError && (
+                <span role="alert" style={{ color: "var(--error)" }}>
+                  {nameError}
+                </span>
+              )}
               {nameDone && <span style={{ color: "var(--fg-dim)" }}>saved</span>}
             </div>
           </form>

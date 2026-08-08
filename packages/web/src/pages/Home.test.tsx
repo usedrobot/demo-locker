@@ -647,7 +647,9 @@ describe("Home — the name panel", () => {
     act(() => saveButton().click());
     await flush();
 
-    expect(container.textContent).toContain("name must be 100 characters or fewer");
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert, "the refusal was not announced anywhere").not.toBeNull();
+    expect(alert!.textContent).toContain("name must be 100 characters or fewer");
     // The field is still there with what was typed, so the fix is one edit away.
     expect(nameInput()).not.toBeNull();
     expect(container.textContent).not.toContain("saved —");

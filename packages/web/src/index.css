@@ -416,6 +416,19 @@ button:active {
   gap: 1rem;
 }
 
+/* The ascii title is a size container; the rename input stands in for it
+   rather than wrapping it, so the container never sizes itself from an
+   editable child. width:100% keeps it inside the flex:1 column. */
+.rename-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;
+  padding: 0.3rem 0.4rem;
+}
+
 /* Playlist header: ascii title on the left, artwork on the right. */
 .playlist-header {
   display: flex;

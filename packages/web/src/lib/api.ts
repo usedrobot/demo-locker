@@ -83,7 +83,9 @@ export const auth = {
       { method: "POST", body: JSON.stringify({ email, password }) }
     ),
   me: () =>
-    request<{ user: { id: string; email: string; accent: string | null } }>("/auth/me"),
+    request<{
+      user: { id: string; email: string; accent: string | null; lockerOwnerId: string | null };
+    }>("/auth/me"),
   setAccent: (accent: string) =>
     request<{ accent: string }>("/auth/accent", {
       method: "POST",

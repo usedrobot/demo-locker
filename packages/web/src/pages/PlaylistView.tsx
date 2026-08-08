@@ -24,15 +24,24 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [lockerOwnerId, setLockerOwnerId] = useState<string | null>(null);
   const [showAddTracks, setShowAddTracks] = useState(false);
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [renameError, setRenameError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     auth
       .me()
       .then((r) => {
-        if (!cancelled) setCurrentUserId(r.user.id);
+        if (!cancelled) {
+          setCurrentUserId(r.user.id);
+          // Same resolution the API does in lib/locker.ts: which locker am
+          // I acting in? A collaborator's own id is never the locker's id.
+          setLockerOwnerId(r.user.lockerOwnerId ?? r.user.id);
+        }
       })
       .catch(() => {});
     return () => {
@@ -40,7 +49,29 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     };
   }, []);
 
+  // May act on this locker's library: add tracks, reorder, rename, share.
+  const canManage = !!playlist && !!lockerOwnerId && playlist.ownerId === lockerOwnerId;
+
+  // Owns the locker outright. Gates publishing only — a collaborator may
+  // share a playlist but may not put it on the open web (DL, 2026-08-07).
   const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
+
+  async function commitRename() {
+    if (!playlist) return;
+    const next = draftName.trim();
+    if (!next || next === playlist.name) {
+      setRenaming(false);
+      return;
+    }
+    try {
+      const r = await api.update(playlist.id, { name: next });
+      setPlaylist(r.playlist);
+      setRenaming(false);
+      setRenameError("");
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : "rename failed");
+    }
+  }
 
   async function openAddTracks() {
     const r = await tracksApi.list();
@@ -112,14 +143,48 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
             size itself from its own content. minWidth:0 alone leaves this
             column content-sized, which collapses it to zero. */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <AsciiText text={playlist.name} />
-          {isOwner && (
-            <button
-              onClick={togglePublic}
-              style={{ ...linkStyle, color: "var(--accent)", marginTop: "0.4rem" }}
-            >
-              [{playlist.isPublic ? "make private" : "make public"}]
-            </button>
+          {renaming ? (
+            <input
+              aria-label="playlist name"
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") {
+                  setRenaming(false);
+                  setRenameError("");
+                }
+              }}
+              onBlur={() => setRenaming(false)}
+              className="rename-input"
+            />
+          ) : (
+            <AsciiText text={playlist.name} />
+          )}
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.4rem" }}>
+            {canManage && !renaming && (
+              <button
+                onClick={() => {
+                  setDraftName(playlist.name);
+                  setRenaming(true);
+                }}
+                style={{ ...linkStyle, color: "var(--accent)" }}
+              >
+                [rename]
+              </button>
+            )}
+            {isOwner && (
+              <button
+                onClick={togglePublic}
+                style={{ ...linkStyle, color: "var(--accent)" }}
+              >
+                [{playlist.isPublic ? "make private" : "make public"}]
+              </button>
+            )}
+          </div>
+          {renameError && (
+            <div style={{ color: "#f44", fontSize: "12px" }}>{renameError}</div>
           )}
         </div>
         <PlaylistArtwork
@@ -204,7 +269,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         <SharePanel
           playlistId={playlistId}
           extraAction={
-            isOwner ? (
+            canManage ? (
               <button
                 onClick={() => (showAddTracks ? setShowAddTracks(false) : openAddTracks())}
                 className="tui-btn"

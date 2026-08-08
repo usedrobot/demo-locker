@@ -2642,6 +2642,7 @@ In a separate browser profile, so you are genuinely not signed in as DL:
 7. Confirm the collaborator **can** mint a share link, and that opening that link in a logged-out context works.
 8. Confirm the collaborator sees **no publish control** and **no collaborators panel** — and that `PATCH /playlists/:id` with `{isPublic:true}` 404s if called directly with their token.
 9. Rename a playlist from each account.
+9b. **Rename failure path, in a real browser — the one claim the test suite cannot make.** `happy-dom` does not blur when a focused input is disabled, and `.blur()` on an already-disabled input is a no-op there, so every rename-focus test describes a state no browser is ever in. Stop the API (or point the client at a dead URL), start a rename, let it fail, then **type without clicking**. The correction must land in the field. Then click away and confirm it commits. If focus is on `<body>` instead, the keystrokes go nowhere and the retry path is unreachable by keyboard.
 10. As owner, remove the collaborator. Confirm they are signed out and **their uploaded track is still in the library**.
 
 - [ ] **Step 5: Record the result**

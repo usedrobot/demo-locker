@@ -104,6 +104,18 @@ function typeValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+// Lets a test hold a PATCH open indefinitely and resolve it on cue, to
+// exercise behavior that only matters while a request is genuinely in
+// flight (as opposed to `mockResolvedValue`, which settles on the same
+// microtask turn and never leaves an observable in-flight window).
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("playlist rename", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -269,6 +281,95 @@ describe("playlist rename", () => {
     await flush();
 
     expect(updateMock).toHaveBeenCalledWith("pl-1", { name: "second session name" });
+  });
+
+  // Regression: an earlier version of the in-flight guard bailed
+  // unconditionally on re-entry, which stopped the duplicate PATCH above
+  // but also silently dropped a legitimate correction typed while the
+  // first request was still out — a real risk on a slow connection, and
+  // exactly the kind of data loss this whole rename-on-blur flow exists to
+  // prevent. The correction must still reach the server, in a follow-up
+  // request once the in-flight one resolves.
+  it("commits a correction typed while an earlier request is still in flight", async () => {
+    const first = deferred<{ playlist: Playlist }>();
+    updateMock.mockReturnValueOnce(first.promise);
+
+    render();
+    await flush();
+
+    act(() => renameButton()!.click());
+    const input = nameInput()!;
+    act(() => typeValue(input, "first"));
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
+    // The first request is out but not yet resolved.
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(nameInput()).not.toBeNull();
+
+    // The user notices a typo and corrects it, then clicks away, all before
+    // the first response lands.
+    act(() => typeValue(input, "corrected"));
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+    // Still only the one request so far — the correction was queued, not
+    // fired concurrently.
+    expect(updateMock).toHaveBeenCalledTimes(1);
+
+    act(() => first.resolve({ playlist: { ...playlist, name: "first" } }));
+    await flush();
+
+    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(updateMock).toHaveBeenNthCalledWith(2, "pl-1", { name: "corrected" });
+  });
+
+  // Regression: Escape used to close the editor unconditionally, including
+  // while a PATCH from an earlier Enter was still in flight — the UI said
+  // "cancelled" while the request completed and the rename landed anyway.
+  // The request can't actually be recalled, so Escape must not pretend it
+  // can: while a commit is outstanding, Escape is a no-op and the editor
+  // stays open until that request resolves for real.
+  it("does not let Escape discard a rename that is already in flight", async () => {
+    const first = deferred<{ playlist: Playlist }>();
+    updateMock.mockReturnValueOnce(first.promise);
+
+    render();
+    await flush();
+
+    act(() => renameButton()!.click());
+    const input = nameInput()!;
+    act(() => typeValue(input, "in flight"));
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
+    expect(updateMock).toHaveBeenCalledTimes(1);
+
+    // Escape while that request is still out.
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+      );
+    });
+    await flush();
+    // Not discarded: the editor is still open, and no second (cancelling)
+    // request was fired.
+    expect(nameInput()).not.toBeNull();
+    expect(updateMock).toHaveBeenCalledTimes(1);
+
+    act(() => first.resolve({ playlist: { ...playlist, name: "in flight" } }));
+    await flush();
+
+    // The request that Escape couldn't actually stop completes, and the
+    // editor closes reflecting it — no silent divergence between what the
+    // UI showed and what the server actually did.
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(nameInput()).toBeNull();
   });
 
   it("does not pin a stale rename error once the editor closes with no change", async () => {

@@ -43,6 +43,17 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // request resolves, which would otherwise re-enter commitRename with the
   // same draft and fire a second, duplicate PATCH.
   const renameInFlightRef = useRef(false);
+  // Set when commitRename is re-entered while renameInFlightRef is already
+  // true — i.e. the user corrected the draft (or blurred/hit Enter again)
+  // before the outstanding PATCH came back. The in-flight request's own
+  // loop checks this once it resolves and, if set, sends the corrected
+  // draft too instead of the edit being silently dropped.
+  const pendingRenameRetryRef = useRef(false);
+  // Mirrors `draftName` synchronously. The in-flight commit loop below can
+  // span several renders (each `await` yields), and reading React state
+  // from that closure would see whatever `draftName` was when the *call*
+  // started, not what the user has typed since — a ref sidesteps that.
+  const draftNameRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
@@ -69,28 +80,55 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // share a playlist but may not put it on the open web (DL, 2026-08-07).
   const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
 
+  function setDraft(value: string) {
+    draftNameRef.current = value;
+    setDraftName(value);
+  }
+
   async function commitRename() {
     if (!playlist) return;
-    // A blur fired while an earlier call from this same session is still
-    // awaiting its PATCH — ignore it rather than firing a second, identical
-    // request against the same draft.
-    if (renameInFlightRef.current) return;
-    const next = draftName.trim();
-    if (!next || next === playlist.name) {
-      // Clear any error from an earlier failed attempt in this same
-      // session — the error <div> below isn't gated on `renaming`, so
-      // leaving it set here would pin it on screen with no editor left
-      // open to dismiss it.
-      setRenaming(false);
-      setRenameError("");
+    if (renameInFlightRef.current) {
+      // A blur or Enter fired while an earlier call from this session is
+      // still awaiting its PATCH. Don't fire a second request concurrently
+      // — but don't drop this one either: a correction typed on a slow
+      // connection is exactly the work this whole flow exists to protect.
+      // The in-flight call's own loop below checks this flag once its
+      // request resolves and sends the (possibly further-edited) draft.
+      pendingRenameRetryRef.current = true;
       return;
     }
+    pendingRenameRetryRef.current = false;
     renameInFlightRef.current = true;
+    // `base` tracks the last server-confirmed playlist for this loop. Using
+    // it instead of the `playlist` state avoids a stale-closure comparison
+    // on a second pass — `playlist` won't reflect the first PATCH's result
+    // until React re-renders, but this loop may run its second iteration
+    // before that happens.
+    let base = playlist;
     try {
-      const r = await api.update(playlist.id, { name: next });
-      setPlaylist(r.playlist);
-      setRenaming(false);
-      setRenameError("");
+      // Usually one request. Loops a second (or third...) time only when
+      // pendingRenameRetryRef was set by a re-entrant call above while this
+      // one's PATCH was in flight — i.e. the user corrected the draft (or
+      // blurred/hit Enter again) before the response landed.
+      for (;;) {
+        const next = draftNameRef.current.trim();
+        if (!next || next === base.name) {
+          setRenaming(false);
+          setRenameError("");
+          return;
+        }
+        const r = await api.update(base.id, { name: next });
+        base = r.playlist;
+        setPlaylist(r.playlist);
+        if (!pendingRenameRetryRef.current) {
+          setRenaming(false);
+          setRenameError("");
+          return;
+        }
+        pendingRenameRetryRef.current = false;
+        // Loop again: draftNameRef may have changed further since the
+        // request that just resolved was sent.
+      }
     } catch (err) {
       setRenameError(err instanceof Error ? err.message : "rename failed");
     } finally {
@@ -173,10 +211,16 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
               aria-label="playlist name"
               autoFocus
               value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
+              onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitRename();
                 if (e.key === "Escape") {
+                  // A commit already in flight can't be cancelled — the
+                  // request is already gone. Escape only cancels an unsent
+                  // edit; once the PATCH is out, let it resolve and show
+                  // the real server state rather than closing the editor
+                  // as if nothing happened while the rename lands anyway.
+                  if (renameInFlightRef.current) return;
                   cancelRenameRef.current = true;
                   setRenaming(false);
                   setRenameError("");
@@ -207,7 +251,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
                   // A prior session may have set this and never had it
                   // consumed (see the ref's own comment) — start clean.
                   cancelRenameRef.current = false;
-                  setDraftName(playlist.name);
+                  setDraft(playlist.name);
                   setRenameError("");
                   setRenaming(true);
                 }}

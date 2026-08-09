@@ -34,6 +34,48 @@ import { users } from "../db/schema.js";
 // refuses — and the label route already had this number.
 export const MAX_DISPLAY_NAME_CHARS = 100;
 
+// This is NOT an escaping guard. The name is rendered as text content by React,
+// which escapes it, so markup in a name is inert — an allowlist like the
+// accent's is neither possible nor needed for free text. What is left after
+// escaping is layout and impersonation: a newline lets one person's name take
+// two rows and paint a second, fake attribution under it, and a control run can
+// hide the rest of a name in a terminal or a log.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+// ONE validator for the TWO doors into users.display_name.
+//
+// POST /auth/display-name writes the column directly; POST /collab/invites
+// writes a label that routes/auth.ts copies verbatim into the same column at
+// redemption. A rule enforced at one door is not enforced at all — the value
+// simply walks in through the other, and once it is a collaborator's name it is
+// rendered on every row they touch. The cap was already shared for exactly this
+// reason; the character class was not, so `{"label":"Jimmy\nJimmy"}` was
+// accepted at mint and became a display name at signup.
+//
+// TRIM FIRST, then test — for BOTH rules:
+//   - characters, because \n, \r and \t are all in the class above AND are all
+//     stripped by trim(), so testing the raw value refuses a pasted trailing
+//     newline that trimming would have removed, contradicting the documented
+//     "send whitespace to unset". The interior newline the rule exists for is
+//     still caught either way.
+//   - length, because padding must not smuggle a longer name past the cap.
+//
+// `field` only names the value in the refusal ("name" / "label"), so each route
+// keeps the wording its clients already read.
+export function validateDisplayName(
+  raw: string,
+  field: "name" | "label"
+): { error: string } | { trimmed: string } {
+  const trimmed = raw.trim();
+  if (CONTROL_CHARS.test(trimmed)) {
+    return { error: `${field} must not contain line breaks or control characters` };
+  }
+  if (trimmed.length > MAX_DISPLAY_NAME_CHARS) {
+    return { error: `${field} must be ${MAX_DISPLAY_NAME_CHARS} characters or fewer` };
+  }
+  return { trimmed };
+}
+
 // One response's resolved attribution.
 //
 // `byId` maps an account id to the name to show for it; an id that is absent

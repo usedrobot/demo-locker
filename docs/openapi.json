@@ -381,7 +381,7 @@
           },
           "label": {
             "type": "string",
-            "description": "Owner-supplied name for the person invited. Not an email — nothing is sent; the owner delivers the link themselves."
+            "description": "Owner-supplied name for the person invited. Not an email — nothing is sent; the owner delivers the link themselves. This label BECOMES that person's display name when they redeem the invite (users.display_name), so it is shown to every member of the locker on every track and playlist they touch — it is not a private note. Stored trimmed, and held to the same rules as POST /auth/display-name: at most 100 characters measured after trimming, and no line breaks or control characters."
           },
           "token": {
             "type": "string",
@@ -2842,7 +2842,7 @@
     "/auth/display-name": {
       "post": {
         "summary": "Set your own display name",
-        "description": "Open to ANY authenticated session, not just the locker owner. The owner has no invite to take a name from, so without this their login address was shown on every row they uploaded, to every collaborator, permanently; a collaborator uses the same route to correct a name the owner mistyped when inviting them. The value is trimmed; empty or whitespace-only stores null (unset) rather than an empty string, because null is what falls back to the email. Names longer than 100 characters after trimming — the same cap the invite label carries, since that label becomes this value at redemption — are rejected, as are line breaks and control characters: the name is rendered as text content, so this is a layout and impersonation limit rather than an escaping one. A non-string is rejected outright. The stored value is returned so the client can show what was actually saved.",
+        "description": "Open to ANY authenticated session, not just the locker owner. The owner has no invite to take a name from, so without this their login address was shown on every row they uploaded, to every collaborator, permanently; a collaborator uses the same route to correct a name the owner mistyped when inviting them. The value is trimmed; empty or whitespace-only stores null (unset) rather than an empty string, because null is what falls back to the email. Names longer than 100 characters after trimming — the same cap the invite label carries, since that label becomes this value at redemption — are rejected, as are line breaks and control characters: the name is rendered as text content, so this is a layout and impersonation limit rather than an escaping one. Both rules are applied to the TRIMMED value, so a pasted trailing newline is trimmed away rather than refused, while an interior one is still refused. A non-string is rejected outright. The stored value is returned so the client can show what was actually saved.",
         "operationId": "setDisplayName",
         "security": [
           {
@@ -2934,7 +2934,7 @@
                   "label": {
                     "type": "string",
                     "maxLength": 100,
-                    "description": "How this pending invite is identified in the owner's access list before it is redeemed."
+                    "description": "The name the owner is giving this person. It identifies the pending invite in the owner's access list, and at redemption it is copied onto the new account as its display name, from where it is shown to the whole locker as the attribution on that person's uploads. Trimmed before storage; whitespace-only is refused as missing (unlike POST /auth/display-name, where whitespace means unset, because an owner naming someone else must have typed something). Refused with 400 if it exceeds 100 characters after trimming, or contains line breaks or control characters — the same rules POST /auth/display-name applies, because both write the same column."
                   }
                 },
                 "required": [

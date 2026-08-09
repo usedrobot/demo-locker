@@ -10,7 +10,7 @@ import { getDb } from "../db/index.js";
 import { users, collaboratorInvites, comments, tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { isLockerOwner } from "../lib/locker.js";
-import { MAX_DISPLAY_NAME_CHARS } from "../lib/display-name.js";
+import { validateDisplayName } from "../lib/display-name.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import type { Env } from "../types.js";
 
@@ -24,14 +24,18 @@ collabRouter.post("/invites", requireAuth, async (c) => {
   if (!label || typeof label !== "string" || !label.trim()) {
     return c.json({ error: "label required" }, 400);
   }
-  // The label becomes the collaborator's display name at redemption, so it is
-  // capped by the same constant the name route uses — see lib/display-name.ts.
-  if (label.length > MAX_DISPLAY_NAME_CHARS) {
-    return c.json(
-      { error: `label must be ${MAX_DISPLAY_NAME_CHARS} characters or fewer` },
-      400
-    );
-  }
+  // The label BECOMES the collaborator's display name at redemption, so it is
+  // held to the same rules as POST /auth/display-name — the same cap and the
+  // same refusal of line breaks and control characters — by the one validator
+  // both doors call (lib/display-name.ts). A rule enforced at one door only is
+  // not enforced at all.
+  //
+  // The one difference is deliberate: a whitespace-only label is MISSING here
+  // (refused above), where the name route reads it as "unset". An owner is
+  // naming someone else and needs to have typed something; a person clearing
+  // their own name is asking for the email fallback.
+  const checked = validateDisplayName(label, "label");
+  if ("error" in checked) return c.json({ error: checked.error }, 400);
 
   const db = getDb(c.env.DB);
 
@@ -63,7 +67,7 @@ collabRouter.post("/invites", requireAuth, async (c) => {
   const token = crypto.randomUUID().replace(/-/g, "");
   const [invite] = await db
     .insert(collaboratorInvites)
-    .values({ ownerId: user.id, token, label: label.trim() })
+    .values({ ownerId: user.id, token, label: checked.trimmed })
     .returning();
 
   return c.json({ invite }, 201);

@@ -103,6 +103,22 @@ something or to tighten a quota.
 | `MAX_COLLABORATORS` | unset (unlimited) | Collaborators per locker — people who sign in and share your library. Counts invites you have minted but nobody has redeemed yet, so an unredeemed invite holds a seat until you revoke it. |
 | `MAX_SHARE_LINKS` | unset (unlimited) | Share links per playlist. **Before 0.2.13 this ceiling was controlled by `MAX_COLLABORATORS`** — if you set that variable to limit share links, copy the value here — and note that `MAX_COLLABORATORS` still applies, now as a collaborator cap, so decide separately whether you want one. |
 
+### Display names
+
+With more than one person in a locker, every track and playlist shows who added
+it. That name is the account's display name, and where an account has none it
+falls back to the account's **email address** — so on a fresh install the
+owner's login address is what collaborators see on everything the owner
+uploaded.
+
+Set one with `POST /auth/display-name` (`{"displayName":"Dave"}`), or from the
+account row in the web UI. Any signed-in account can set its own: a
+collaborator arrives with whatever the owner typed as their invite label, and
+can correct it. Send an empty string to clear it and return to the fallback.
+
+Names never leave the locker. A share or invite link discloses none of them,
+and neither does a signed-in visitor from a different locker.
+
 `/auth/login` and `/auth/signup` are rate limited per client IP (10 logins per
 15 minutes, 5 signups per hour) and answer 429 with `Retry-After` past that.
 Behind a reverse proxy, make sure it sets `X-Forwarded-For` — without it, and

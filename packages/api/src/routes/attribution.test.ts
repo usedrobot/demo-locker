@@ -525,6 +525,62 @@ describe("a departed collaborator keeps their name on the work they left", () =>
     )).text()).not.toContain("Departing");
   });
 
+  // DL's ruling: the snapshot is display_name ONLY. Everywhere else a nameless
+  // account falls back to its email address, but this write cannot be undone —
+  // once the account is deleted no route can edit uploaded_by_name — so the
+  // fallback would freeze a login address into the locker permanently. A blank
+  // row is the lesser harm, and it is rare: an invited collaborator arrives
+  // already carrying the label the owner typed.
+  it("leaves a blank row, not a frozen email, for a member who never set a name", async () => {
+    const NAMELESS_EMAIL = "attr-nameless@test.dev";
+    const [nameless] = await db
+      .insert(users)
+      .values({ email: NAMELESS_EMAIL, passwordHash: "x", lockerOwnerId: ownerId })
+      .returning();
+    expect(nameless.displayName).toBeNull();
+
+    const [pl] = await db
+      .insert(playlists)
+      .values({ ownerId, name: "nameless set", createdBy: nameless.id })
+      .returning();
+    await db.insert(tracks).values({
+      ownerId,
+      playlistId: pl.id,
+      title: "nameless demo",
+      position: 1,
+      originalKey: "k-nameless",
+      uploadedBy: nameless.id,
+    });
+
+    const res = await app.request(
+      `/collab/members/${nameless.id}`,
+      { method: "DELETE", headers: auth(ownerToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+
+    // The stored snapshot is NULL — not the address, under any key.
+    const [trackRow] = await db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.title, "nameless demo"));
+    expect(trackRow, "the nameless member's track is gone entirely").toBeDefined();
+    expect(trackRow.uploadedBy).toBeNull();
+    expect(trackRow.uploadedByName).toBeNull();
+
+    const [playlistRow] = await db.select().from(playlists).where(eq(playlists.id, pl.id));
+    expect(playlistRow, "the nameless member's playlist is gone entirely").toBeDefined();
+    expect(playlistRow.createdByName).toBeNull();
+
+    // and a member reading the locker is shown nothing rather than the address
+    const read = await app.request(`/playlists/${pl.id}`, { headers: auth(ownerToken) }, env);
+    const raw = await read.text();
+    const body = JSON.parse(raw) as { playlist: PublicPlaylist; tracks: PublicTrack[] };
+    expect(byTitle(body.tracks, "nameless demo").uploadedByName).toBeNull();
+    expect(body.playlist.createdByName).toBeNull();
+    expect(raw).not.toContain(NAMELESS_EMAIL);
+  });
+
   // The signed-in half of the same rule. The snapshot comes off the ROW, not
   // out of the resolved-names map, so an outsider gate that only emptied the
   // map would leave this one path still handing over a departed member's name.

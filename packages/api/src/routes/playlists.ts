@@ -279,11 +279,10 @@ playlistsRouter.get("/:id/artwork", async (c) => {
 // audio is destroyed here.
 //
 // The playlist-level COMMENTS do not survive: `comments.playlist_id` is
-// ON DELETE cascade (0000_init.sql:14). So a collaborator who is refused
-// directly by DELETE /comments/:id — which is still owner-only — can destroy
-// the same comments by deleting a playlist they created. That asymmetry is
-// known, is not a licence to widen either route, and is carried as a product
-// question rather than settled here.
+// ON DELETE cascade (0000_init.sql:14). Deleting a playlist you created
+// therefore takes its comments with it — which is consistent with
+// DELETE /comments/:id, open to every locker member since comment moderation
+// stopped being owner-only (routes/comments.ts).
 playlistsRouter.delete("/:id", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");

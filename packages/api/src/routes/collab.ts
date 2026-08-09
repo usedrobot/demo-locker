@@ -16,6 +16,20 @@ import type { Env } from "../types.js";
 
 const collabRouter = new Hono<Env>();
 
+// What an invite looks like on the wire — the SAME five columns from both
+// handlers that return one. `.returning()` with no projection serialized the
+// whole row, so the 201 carried ownerId and acceptedBy (raw internal user ids)
+// while the list carried neither. Only the owner ever sees this and ownerId is
+// their own id, so nothing leaked to a third party — but one type has to mean
+// one shape, and no route on this API puts a raw user id in a response.
+const INVITE_FIELDS = {
+  id: collaboratorInvites.id,
+  label: collaboratorInvites.label,
+  token: collaboratorInvites.token,
+  createdAt: collaboratorInvites.createdAt,
+  acceptedAt: collaboratorInvites.acceptedAt,
+};
+
 collabRouter.post("/invites", requireAuth, async (c) => {
   const user = c.get("user");
   if (!isLockerOwner(user)) return c.json({ error: "not found" }, 404);
@@ -68,7 +82,7 @@ collabRouter.post("/invites", requireAuth, async (c) => {
   const [invite] = await db
     .insert(collaboratorInvites)
     .values({ ownerId: user.id, token, label: checked.trimmed })
-    .returning();
+    .returning(INVITE_FIELDS);
 
   return c.json({ invite }, 201);
 });
@@ -79,13 +93,7 @@ collabRouter.get("/invites", requireAuth, async (c) => {
 
   const db = getDb(c.env.DB);
   const invites = await db
-    .select({
-      id: collaboratorInvites.id,
-      label: collaboratorInvites.label,
-      token: collaboratorInvites.token,
-      createdAt: collaboratorInvites.createdAt,
-      acceptedAt: collaboratorInvites.acceptedAt,
-    })
+    .select(INVITE_FIELDS)
     .from(collaboratorInvites)
     .where(eq(collaboratorInvites.ownerId, user.id));
 
@@ -160,10 +168,14 @@ collabRouter.delete("/members/:id", requireAuth, async (c) => {
 
   const db = getDb(c.env.DB);
   const [member] = await db
-    // displayName and email because the name this person is leaving behind is
-    // the one everything else resolves for them: displayName if set, otherwise
-    // the address (lib/display-name.ts).
-    .select({ id: users.id, email: users.email, displayName: users.displayName })
+    // displayName ONLY. Everywhere else a nameless account falls back to its
+    // email address, but this write is permanent in a way those reads are not:
+    // once the account is deleted no route can edit uploaded_by_name, so the
+    // fallback would freeze a login address into the locker forever. DL's
+    // ruling: a departed member who never set a name leaves a blank row
+    // instead. Rare — every invited collaborator arrives with the label the
+    // owner typed as their name.
+    .select({ id: users.id, displayName: users.displayName })
     .from(users)
     .where(and(eq(users.id, c.req.param("id")), eq(users.lockerOwnerId, user.id)))
     .limit(1);
@@ -173,7 +185,7 @@ collabRouter.delete("/members/:id", requireAuth, async (c) => {
   // uploaded_by / created_by are already NULL with nothing left to match on.
   // Scoped to this locker as well as this member, so the write can only ever
   // touch rows the owner making the request can already see.
-  const departedName = member.displayName ?? member.email;
+  const departedName = member.displayName;
   await db
     .update(tracks)
     .set({ uploadedByName: departedName })
@@ -183,14 +195,18 @@ collabRouter.delete("/members/:id", requireAuth, async (c) => {
     .set({ createdByName: departedName })
     .where(and(eq(playlists.createdBy, member.id), eq(playlists.ownerId, user.id)));
 
+  // LIVE AND REQUIRED — do not delete this as speculative.
+  //
   // comments.resolved_by is the one FK to users with no ON DELETE action, and
   // it cannot get one: changing a column's FK on SQLite needs a full table
-  // rebuild, which this plan forbids on a live table. Without this the DELETE
-  // below aborts with FOREIGN KEY constraint failed. It cannot fire today —
-  // resolving a comment is owner-only, so no collaborator id is ever written
-  // here — so this is defusing a landmine rather than fixing a live bug. It
-  // stays because the day resolution opens up to collaborators, the failure
-  // would be an unexplainable 500 on the revoke path.
+  // rebuild, which this plan forbids on a live table. Without this line the
+  // DELETE below aborts with FOREIGN KEY constraint failed.
+  //
+  // Resolving a comment is open to every locker member (routes/comments.ts), so
+  // resolved_by genuinely holds collaborator ids: any collaborator who has ever
+  // resolved a comment would 500 the owner's removal request. This is the only
+  // thing standing between that and an unexplainable failure on the revoke
+  // path.
   await db.update(comments).set({ resolvedBy: null }).where(eq(comments.resolvedBy, member.id));
 
   await db.delete(users).where(eq(users.id, member.id));

@@ -150,6 +150,7 @@ d1 list`):
       "/playlists", "/playlists/*",
       "/comments", "/comments/*",
       "/shares", "/shares/*",
+      "/collab", "/collab/*",
       "/tracks", "/tracks/*",
       "/public/v1", "/public/v1/*"
     ]
@@ -163,8 +164,10 @@ d1 list`):
 > Worker, so a prefix listed only as `/playlists/*` means `GET /playlists`
 > falls through to the SPA and returns HTML instead of JSON. Sub-paths keep
 > working, which makes it look healthy while every collection endpoint is
-> broken. Drop the `routes` block entirely if you installed without a custom
-> domain.
+> broken. `/collab` is new on that list in 0.2.13 — an upgrade that keeps an
+> older `run_worker_first` leaves the whole collaborators feature (invites,
+> members, removal) answering with the SPA index. Drop the `routes` block
+> entirely if you installed without a custom domain.
 
 **3. Apply migrations BEFORE deploying:**
 

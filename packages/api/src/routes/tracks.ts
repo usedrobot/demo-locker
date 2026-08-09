@@ -62,6 +62,10 @@ tracksRouter.post("/upload", async (c) => {
   // Who is acting, if anyone. Null for an anonymous edit-share holder — they
   // are not a user and have no id to record.
   const actingUserId = await requestSessionUserId(c);
+  // Which locker that session belongs to — resolved once, because the library
+  // branch below needs it as the ownerId and the attribution below needs it to
+  // compare against whichever locker this upload actually landed in.
+  const actingLockerId = actingUserId ? await lockerIdForUserId(db, actingUserId) : null;
 
   let ownerId: string | null = null;
   let position = 0;
@@ -77,11 +81,24 @@ tracksRouter.post("/upload", async (c) => {
     // library upload — session required. ownerId is the LOCKER, not the
     // uploader: a collaborator's library upload belongs to the owner's
     // library, exactly as a playlist upload does. actingUserId carries who.
-    if (!actingUserId) {
+    if (!actingUserId || !actingLockerId) {
       return c.json({ error: "unauthorized" }, 401);
     }
-    ownerId = await lockerIdForUserId(db, actingUserId);
+    ownerId = actingLockerId;
   }
+
+  // WHO to credit — not simply "whoever is signed in". This route admits an
+  // edit-share token, and the token and the session are resolved independently
+  // above, so a signed-in account from ANOTHER locker can reach this insert by
+  // sending both. Recording their id would put an outsider's self-chosen
+  // display name (settable to a bandmate's) permanently onto the band's
+  // attribution, with no remedy: DELETE /collab/members/:id only matches
+  // accounts in the locker, and nothing else rewrites uploaded_by.
+  //
+  // So a cross-locker edit-share upload is credited exactly like the anonymous
+  // edit-share upload it resembles — NULL, no name. Who may UPLOAD is
+  // unchanged; only who gets the credit is.
+  const uploadedBy = actingLockerId === ownerId ? actingUserId : null;
 
   // Enforced here rather than trusted from config: MAX_STORAGE_BYTES was read
   // from the env and surfaced in the docs for four releases without a single
@@ -134,11 +151,11 @@ tracksRouter.post("/upload", async (c) => {
       waveformData: waveformData || null,
       duration: duration && isFinite(duration) ? duration : null,
       sizeBytes: uploadBytes,
-      uploadedBy: actingUserId,
+      uploadedBy,
     })
     .returning();
 
-  const names = await resolveDisplayNames(db, actingUserId, [track.uploadedBy]);
+  const names = await resolveDisplayNames(db, actingUserId, ownerId, [track.uploadedBy]);
   return c.json({ track: publicTrack(track, actingUserId, names) }, 201);
 });
 
@@ -160,6 +177,7 @@ tracksRouter.get("/", requireAuth, async (c) => {
   const names = await resolveDisplayNames(
     db,
     user.id,
+    lockerIdOf(user),
     rows.map((t: TrackRow) => t.uploadedBy)
   );
   return c.json({ tracks: rows.map((t: TrackRow) => publicTrack(t, user.id, names)) });
@@ -306,7 +324,7 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
     .returning();
 
   const actingUserId = c.get("user").id;
-  const names = await resolveDisplayNames(db, actingUserId, [updated.uploadedBy]);
+  const names = await resolveDisplayNames(db, actingUserId, lockerId, [updated.uploadedBy]);
   return c.json({ track: publicTrack(updated, actingUserId, names) });
 });
 

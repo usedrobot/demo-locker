@@ -75,13 +75,12 @@ export function publicPlaylist(
     // An anonymous share holder has no id, so nothing can be theirs. Never
     // let a null actingUserId match a null createdBy.
     createdByMe: actingUserId != null && createdBy === actingUserId,
-    // Gated on the session here as well as in resolveDisplayNames — see the
+    // Gated on membership here as well as in resolveDisplayNames — see the
     // matching note in lib/public-track.ts.
-    createdByName:
-      actingUserId == null
-        ? null
-        : createdBy != null
-          ? names.get(createdBy) ?? null
-          : departedName,
+    createdByName: !names.allowed
+      ? null
+      : createdBy != null
+        ? names.byId.get(createdBy) ?? null
+        : departedName,
   };
 }

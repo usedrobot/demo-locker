@@ -279,7 +279,7 @@ sharesRouter.get("/invite/:token", async (c) => {
   // Names for a signed-in visitor following an invite link; nothing at all for
   // the anonymous listener this view usually serves, who is outside the locker
   // and has no business learning the band's names (lib/display-name.ts).
-  const names = await resolveDisplayNames(db, actingUserId, [
+  const names = await resolveDisplayNames(db, actingUserId, playlist.ownerId, [
     playlist.createdBy,
     ...trackList.map((t: TrackRow) => t.uploadedBy),
   ]);

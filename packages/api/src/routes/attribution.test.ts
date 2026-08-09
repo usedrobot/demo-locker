@@ -237,6 +237,132 @@ describe("attribution and anonymous share holders", () => {
   });
 });
 
+// "Names are locker-internal" is a question about MEMBERSHIP, not about having
+// a session. Every route that resolves names admits a caller on a share token
+// while separately resolving whatever Bearer session the same request carries,
+// so a signed-in account from ANOTHER locker who is handed a link arrives with
+// a non-null acting user id and is not, by that fact, inside this locker.
+//
+// The outsider here has their own locker (lockerOwnerId null) and a display
+// name they chose themselves — the spoofing shape: nothing stops them setting
+// it to a name the band already uses.
+describe("a signed-in outsider holding a share link", () => {
+  let outsiderId: string;
+  const OUTSIDER_EMAIL = "attr-outsider@test.dev";
+  const OUTSIDER_TOKEN = "attr-outsider-session";
+  const LISTEN_SHARE = "attr-outsider-listen";
+  const EDIT_SHARE = "attr-outsider-edit";
+
+  beforeAll(async () => {
+    const [outsider] = await db
+      .insert(users)
+      .values({
+        email: OUTSIDER_EMAIL,
+        passwordHash: "x",
+        displayName: "Jimmy",
+      })
+      .returning();
+    outsiderId = outsider.id;
+    await db.insert(sessions).values({
+      userId: outsiderId,
+      token: OUTSIDER_TOKEN,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60),
+    });
+
+    await db.insert(shares).values([
+      { playlistId, token: LISTEN_SHARE, permission: "listen" },
+      { playlistId, token: EDIT_SHARE, permission: "edit" },
+    ]);
+  });
+
+  it("is served no names on GET /playlists/:id, the route the web client renders", async () => {
+    const res = await app.request(
+      `/playlists/${playlistId}?token=${LISTEN_SHARE}`,
+      { headers: auth(OUTSIDER_TOKEN) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: PublicPlaylist; tracks: PublicTrack[] };
+
+    expect(body.playlist.createdByName).toBeNull();
+    const jimmys = byTitle(body.tracks, "jimmys demo");
+    expect(jimmys.uploadedByName).toBeNull();
+    // The acting id survives the gate — it answers "is this MINE", which is
+    // safe for any caller and is what gates the delete control on an edit link.
+    expect(jimmys.uploadedByMe).toBe(false);
+  });
+
+  it("is served no names on the invite landing view either", async () => {
+    const res = await app.request(
+      `/shares/invite/${LISTEN_SHARE}`,
+      { headers: auth(OUTSIDER_TOKEN) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: PublicPlaylist; tracks: PublicTrack[] };
+
+    expect(body.playlist.createdByName).toBeNull();
+    expect(byTitle(body.tracks, "jimmys demo").uploadedByName).toBeNull();
+  });
+
+  // Uploading through an edit link is the intended feature and is unchanged.
+  // The ATTRIBUTION is what was wrong: recording the outsider's id put a name
+  // they chose onto the band's rows, permanently and with no remedy — the
+  // owner's only removal route matches accounts inside the locker.
+  it("uploads through an edit link with no recorded uploader, exactly like an anonymous one", async () => {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([9, 9, 9])], "outsider.wav"), "outsider.wav");
+    form.append("title", "outsider upload");
+    form.append("playlistId", playlistId);
+
+    const res = await app.request(
+      `/tracks/upload?token=${EDIT_SHARE}`,
+      { method: "POST", headers: auth(OUTSIDER_TOKEN), body: form },
+      env
+    );
+    expect(res.status).toBe(201);
+    const { track } = (await res.json()) as {
+      track: { id: string; uploadedByName: string | null };
+    };
+    expect(track.uploadedByName).toBeNull();
+
+    const [row] = await db.select().from(tracks).where(eq(tracks.id, track.id));
+    expect(row, "the upload did not land").toBeDefined();
+    expect(row.ownerId).toBe(ownerId);
+    expect(row.uploadedBy).toBeNull();
+  });
+
+  // Belt to the braces above: even if a non-member id is already sitting in
+  // uploaded_by — written before this was fixed, or by some future path — the
+  // resolver refuses to put a name to it, because it only ever resolves
+  // accounts inside the locker being read.
+  it("has no name resolved for it even when a member reads a row it is already on", async () => {
+    const [planted] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId,
+        title: "planted outsider row",
+        position: 9,
+        originalKey: "k-planted",
+        uploadedBy: outsiderId,
+      })
+      .returning();
+    expect(planted.uploadedBy).toBe(outsiderId);
+
+    const res = await app.request(
+      `/playlists/${playlistId}`,
+      { headers: auth(ownerToken) },
+      env
+    );
+    const body = (await res.json()) as { tracks: PublicTrack[] };
+    expect(byTitle(body.tracks, "planted outsider row").uploadedByName).toBeNull();
+    // The member's own rows still resolve — the filter is on the id being
+    // named, not a blanket refusal.
+    expect(byTitle(body.tracks, "jimmys demo").uploadedByName).toBe("Jimmy");
+  });
+});
+
 describe("GET /collab/members", () => {
   it("returns the display name alongside the email", async () => {
     const res = await app.request("/collab/members", { headers: auth(ownerToken) }, env);
@@ -397,6 +523,35 @@ describe("a departed collaborator keeps their name on the work they left", () =>
       {},
       env
     )).text()).not.toContain("Departing");
+  });
+
+  // The signed-in half of the same rule. The snapshot comes off the ROW, not
+  // out of the resolved-names map, so an outsider gate that only emptied the
+  // map would leave this one path still handing over a departed member's name.
+  it("gives a signed-in outsider holding the same link no name from the snapshot", async () => {
+    const [stranger] = await db
+      .insert(users)
+      .values({ email: "attr-departed-stranger@test.dev", passwordHash: "x" })
+      .returning();
+    const strangerToken = "attr-departed-stranger-session";
+    await db.insert(sessions).values({
+      userId: stranger.id,
+      token: strangerToken,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60),
+    });
+
+    const res = await app.request(
+      `/playlists/${departedPlaylistId}?token=${DEPARTED_SHARE}`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    const body = JSON.parse(raw) as { playlist: PublicPlaylist; tracks: PublicTrack[] };
+
+    expect(byTitle(body.tracks, "departed demo").uploadedByName).toBeNull();
+    expect(body.playlist.createdByName).toBeNull();
+    expect(raw).not.toContain("Departing");
   });
 
   it("gives a locker session reading that same route the snapshot name", async () => {

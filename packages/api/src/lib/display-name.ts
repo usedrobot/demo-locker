@@ -24,7 +24,7 @@
 // correct) at all eight call sites and would widen every row type; this keeps
 // the serializers taking plain rows.
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import type { Database } from "../db/index.js";
 import { users } from "../db/schema.js";
 
@@ -34,38 +34,98 @@ import { users } from "../db/schema.js";
 // refuses — and the label route already had this number.
 export const MAX_DISPLAY_NAME_CHARS = 100;
 
-// id -> the name to show for that account. An id that is absent resolves to no
-// name, which is the same "render nothing" outcome as no attribution at all.
-export type DisplayNames = ReadonlyMap<string, string>;
+// One response's resolved attribution.
+//
+// `byId` maps an account id to the name to show for it; an id that is absent
+// resolves to no name, which is the same "render nothing" outcome as no
+// attribution at all.
+//
+// `allowed` is the READER's side of the question and it is carried separately
+// on purpose. An empty `byId` cannot express the difference between "you may
+// see names, and none of these rows has an uploader to name" and "you are
+// outside this locker and may see none" — and the two need different answers,
+// because a row whose uploader has been REMOVED carries its name in a snapshot
+// column on the row itself (tracks.uploaded_by_name) rather than in this map.
+// A serializer that gated on the map alone would hand a departed member's name
+// to an outsider. `allowed` is the one gate both paths consult.
+export type DisplayNames = {
+  readonly allowed: boolean;
+  readonly byId: ReadonlyMap<string, string>;
+};
 
-export const NO_NAMES: DisplayNames = new Map();
+export const NO_NAMES: DisplayNames = { allowed: false, byId: new Map() };
 
 // Resolve the names for one response's worth of attribution ids.
 //
-// A reader with no locker session (`actingUserId` null — an anonymous share or
-// invite holder) gets nothing, and costs no query. Share links go to people
-// outside the locker: the band's names are not part of what a listen link
-// grants, and DL's ruling was about telling collaborators' work apart from each
-// other's. The serializers enforce this too, so a route that forgets to gate
-// still cannot leak; skipping the query here is the saving, not the guard.
+// NAMES ARE LOCKER-INTERNAL (DL's ruling). Two things follow, and both are
+// enforced HERE rather than at the call sites:
+//
+//   1. The READER must be in `lockerId`. A reader with no session at all — the
+//      anonymous share or invite holder — gets nothing, as before. But so does
+//      a SIGNED-IN reader who is not a member of this locker: several routes
+//      (GET /playlists/:id, GET /shares/:token, POST /tracks/upload) admit a
+//      caller on a share token while independently resolving whatever Bearer
+//      session the same request happens to carry, so "has a session" was never
+//      the same question as "is in this locker". Gating per call site left the
+//      main playlist read path leaking; the locker id is a REQUIRED parameter
+//      so a forgotten call site is a compile error rather than a silent leak.
+//
+//   2. The names RESOLVED are only those of accounts in `lockerId`. An id can
+//      reach this function from a row written by an outsider — an edit-share
+//      holder with an account elsewhere on the instance — and serving that
+//      account's self-chosen display name would let a stranger paint an
+//      arbitrary name (a bandmate's, say) onto the band's attribution. An id
+//      that is not a member resolves to no name, which renders as nothing,
+//      exactly like a legacy row with no attribution at all.
+//
+// `actingUserId` itself is NOT gated: it answers "is this row mine", which is
+// safe for any caller and is what gates the delete controls, including on an
+// edit-share link. Only the names are locker-internal.
+//
+// Both facts come out of the SAME query. The acting user's id is added to the
+// id set, and the membership predicate is applied to the whole select, so the
+// reader is a member precisely when their own row comes back — no second
+// round trip on a per-response path.
 export async function resolveDisplayNames(
   db: Database,
   actingUserId: string | null,
+  lockerId: string,
   ids: (string | null)[]
 ): Promise<DisplayNames> {
   if (actingUserId === null) return NO_NAMES;
 
   const wanted = [...new Set(ids.filter((id): id is string => id !== null))];
-  if (wanted.length === 0) return NO_NAMES;
+  // No early return on an empty id set: the reader's membership still has to be
+  // settled, because the serializers gate the departed-member SNAPSHOT on it
+  // too and a page of rows whose uploaders have all been removed has no ids to
+  // resolve at all. One query answers both questions either way.
 
+  // Membership, in one predicate: the owner IS the locker id, and every
+  // collaborator points at it (lib/locker.ts).
   const rows = await db
     .select({ id: users.id, displayName: users.displayName, email: users.email })
     .from(users)
-    .where(inArray(users.id, wanted));
+    .where(
+      and(
+        inArray(users.id, [...new Set([actingUserId, ...wanted])]),
+        or(eq(users.id, lockerId), eq(users.lockerOwnerId, lockerId))
+      )
+    );
 
   // Annotated because the drizzle select builder widens to `any` here, exactly
   // as it does at the route call sites — without it the callback parameter is
   // implicitly any and the shape goes unchecked.
   type NameRow = { id: string; displayName: string | null; email: string };
-  return new Map(rows.map((r: NameRow) => [r.id, r.displayName ?? r.email]));
+  const members = rows as NameRow[];
+
+  // The reader's own row is present only if the reader is in this locker.
+  if (!members.some((r) => r.id === actingUserId)) return NO_NAMES;
+
+  const asked = new Set(wanted);
+  return {
+    allowed: true,
+    byId: new Map(
+      members.filter((r) => asked.has(r.id)).map((r) => [r.id, r.displayName ?? r.email])
+    ),
+  };
 }

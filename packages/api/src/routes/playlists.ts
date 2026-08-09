@@ -39,6 +39,7 @@ playlistsRouter.get("/", requireAuth, async (c) => {
   const names = await resolveDisplayNames(
     db,
     user.id,
+    lockerIdOf(user),
     result.map((p: PlaylistRow) => p.createdBy)
   );
   return c.json({
@@ -73,7 +74,7 @@ playlistsRouter.post("/", requireAuth, async (c) => {
     .values({ name, ownerId: lockerId, createdBy: user.id })
     .returning();
 
-  const names = await resolveDisplayNames(db, user.id, [playlist.createdBy]);
+  const names = await resolveDisplayNames(db, user.id, lockerId, [playlist.createdBy]);
   return c.json({ playlist: publicPlaylist(playlist, user.id, names) }, 201);
 });
 
@@ -112,7 +113,7 @@ playlistsRouter.get("/:id", async (c) => {
   const actingUserId = await requestSessionUserId(c);
   // One lookup covers the playlist's creator and every uploader on the page.
   // Resolves to nothing at all for a share holder, who has no session.
-  const names = await resolveDisplayNames(db, actingUserId, [
+  const names = await resolveDisplayNames(db, actingUserId, playlist.ownerId, [
     playlist.createdBy,
     ...trackList.map((t: TrackRow) => t.uploadedBy),
   ]);
@@ -181,7 +182,7 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .returning();
 
-  const names = await resolveDisplayNames(db, user.id, [updated.createdBy]);
+  const names = await resolveDisplayNames(db, user.id, lockerId, [updated.createdBy]);
   return c.json({ playlist: publicPlaylist(updated, user.id, names) });
 });
 
@@ -229,7 +230,7 @@ playlistsRouter.post("/:id/artwork", requireAuth, async (c) => {
     .where(eq(playlists.id, id))
     .returning();
 
-  const names = await resolveDisplayNames(db, user.id, [updated.createdBy]);
+  const names = await resolveDisplayNames(db, user.id, lockerId, [updated.createdBy]);
   return c.json({ playlist: publicPlaylist(updated, user.id, names) });
 });
 

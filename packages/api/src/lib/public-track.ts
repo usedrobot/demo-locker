@@ -122,15 +122,18 @@ export function publicTrack(
     // An anonymous share holder has no id, so nothing can be theirs. Never
     // let a null actingUserId match a null uploadedBy.
     uploadedByMe: actingUserId != null && uploadedBy === actingUserId,
-    // Gated on the session here as well as in resolveDisplayNames, so a route
-    // that resolves names and then serves them to a reader with no locker
-    // session cannot do so by accident. Absent from the map — an id the lookup
-    // did not cover — reads as no attribution rather than as a stale name.
-    uploadedByName:
-      actingUserId == null
-        ? null
-        : uploadedBy != null
-          ? names.get(uploadedBy) ?? null
-          : departedName,
+    // `names.allowed` is the membership gate, checked here as well as in
+    // resolveDisplayNames, so a route that resolves names and then serves them
+    // to a reader outside the locker cannot do so by accident. It covers BOTH
+    // paths deliberately: the departed member's snapshot comes off the row, not
+    // out of the map, so gating on the map alone would have handed an outsider
+    // a name the map never contained. Absent from the map — an id the lookup
+    // did not cover, including an uploader who is not in this locker — reads as
+    // no attribution rather than as a stale name.
+    uploadedByName: !names.allowed
+      ? null
+      : uploadedBy != null
+        ? names.byId.get(uploadedBy) ?? null
+        : departedName,
   };
 }

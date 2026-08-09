@@ -23,8 +23,22 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [lockerOwnerId, setLockerOwnerId] = useState<string | null>(null);
+  // Which locker this session acts in — the same resolution the API does in
+  // lib/locker.ts, where a collaborator's own id is never their locker's id.
+  const [lockerId, setLockerId] = useState<string | null>(null);
+  // Whether this session OWNS that locker. The server's own rule, verbatim
+  // (`user.lockerOwnerId === null`), and the one Home.tsx uses — deriving it a
+  // second way from `playlist.ownerId === currentUserId` only agreed by the
+  // coincidence that playlists.ownerId happens to hold the locker id.
+  const [isLockerOwner, setIsLockerOwner] = useState(false);
+  // A refused write from one of this page's controls (publish, reorder). Kept
+  // apart from loadError: the page is fine, one action was not.
+  const [writeError, setWriteError] = useState("");
+  // Whatever stopped this page knowing who the viewer is, or what is on it.
+  // Discarding it left the OWNER looking like a listener — no rename, no
+  // publish, no add-tracks, no reorder, no artwork, no moderation — with
+  // nothing on screen to say why.
+  const [loadError, setLoadError] = useState("");
   const [showAddTracks, setShowAddTracks] = useState(false);
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
   const [renaming, setRenaming] = useState(false);
@@ -49,43 +63,65 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // which would otherwise re-enter commitRename and fire a duplicate PATCH.
   const renameInFlightRef = useRef(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  // Previous values of `renaming` / `renameSaving`, so the focus effect below
+  // can act on a transition rather than on every render that leaves them true.
+  const wasRenamingRef = useRef(false);
+  const wasSavingRef = useRef(false);
+  // Whether the input held focus at the moment a save started — read BEFORE
+  // the disabling render commits, because by the time the effect runs a real
+  // browser has already moved focus to <body>.
+  const refocusAfterSaveRef = useRef(false);
 
-  // Disabling a focused input moves focus to <body>, and `autoFocus` cannot
-  // re-fire on an element that was never unmounted — so when a failed rename
-  // re-enables the field, it comes back editable but *unfocused*: the draft
-  // is sitting there, the error is on screen, and the user's correction goes
-  // to the document and is lost. Enter and Escape do nothing, and [rename] is
-  // hidden while renaming, so there is no visible way back in. Restoring
-  // focus is also what re-arms the blur-commit safety net, which would
-  // otherwise be permanently dead for the rest of this editing session.
+  // Focus, in the two moments this field loses it.
+  //
+  // OPENING the editor: take focus deliberately. There is no `autoFocus`,
+  // because it cannot re-fire on an element that was never unmounted, and one
+  // mechanism owning focus is easier to reason about than two.
+  //
+  // COMING BACK FROM A FAILED SAVE: disabling a focused input moves focus to
+  // <body>, and this input is never unmounted, so nothing brings focus back on
+  // its own. The field returns editable but unfocused: the draft is sitting
+  // there, the error is on screen, and the correction goes to the document and
+  // is lost. Enter and Escape do nothing, and [rename] is hidden while
+  // renaming, so there is no visible way back in. Restoring focus is also what
+  // re-arms the blur-commit safety net, which would otherwise be dead for the
+  // rest of this editing session.
+  //
+  // The second case is RESTORATION, not a claim, and the original refocused
+  // unconditionally — stealing focus from wherever the user had moved to while
+  // the request was in flight. It is now gated the way SharePanel.tsx gates
+  // the identical situation:
+  //   1. the saving true -> false transition only, so it never fires on mount
+  //      or on an unrelated render;
+  //   2. the input actually held focus when the save started
+  //      (refocusAfterSaveRef), so we only put back what we took away;
+  //   3. focus is still unclaimed (activeElement is <body> or null) — if the
+  //      user has clicked something else since, leave it alone.
   useEffect(() => {
-    if (renaming && !renameSaving) renameInputRef.current?.focus();
+    const opening = renaming && !wasRenamingRef.current;
+    const returning = wasSavingRef.current && !renameSaving && renaming;
+
+    if (opening) {
+      renameInputRef.current?.focus();
+    } else if (returning && refocusAfterSaveRef.current) {
+      if (document.activeElement === document.body || document.activeElement === null) {
+        renameInputRef.current?.focus();
+      }
+    }
+    if (returning) refocusAfterSaveRef.current = false;
+
+    wasRenamingRef.current = renaming;
+    wasSavingRef.current = renameSaving;
   }, [renaming, renameSaving]);
 
-  useEffect(() => {
-    let cancelled = false;
-    auth
-      .me()
-      .then((r) => {
-        if (!cancelled) {
-          setCurrentUserId(r.user.id);
-          // Same resolution the API does in lib/locker.ts: which locker am
-          // I acting in? A collaborator's own id is never the locker's id.
-          setLockerOwnerId(r.user.lockerOwnerId ?? r.user.id);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // May act on this locker's library: add tracks, reorder, rename, share.
-  const canManage = !!playlist && !!lockerOwnerId && playlist.ownerId === lockerOwnerId;
+  const canManage = !!playlist && !!lockerId && playlist.ownerId === lockerId;
 
   // Owns the locker outright. Gates publishing only — a collaborator may
   // share a playlist but may not put it on the open web (DL, 2026-08-07).
-  const isOwner = !!playlist && !!currentUserId && playlist.ownerId === currentUserId;
+  // Both halves are required: the server checks locker membership first and
+  // ownership second, and this is that pair.
+  const isOwner = canManage && isLockerOwner;
 
   async function commitRename() {
     if (!playlist) return;
@@ -104,6 +140,8 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     }
 
     renameInFlightRef.current = true;
+    // Read while the input is still enabled and still holds focus, if it does.
+    refocusAfterSaveRef.current = document.activeElement === renameInputRef.current;
     setRenameSaving(true);
     try {
       const r = await api.update(playlist.id, { name: next });
@@ -133,12 +171,23 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     load();
   }
 
-  const load = useCallback(() => {
-    api.get(playlistId).then((r) => {
+  // auth.me() rides along with the playlist rather than sitting in an effect of
+  // its own — the pattern Home.tsx uses. Who the viewer is decides which
+  // controls the page may show, so learning it separately meant a failure on
+  // one of the two could silently strip the other's affordances; folded
+  // together, either failure lands in the same visible loadError.
+  const load = useCallback(async () => {
+    try {
+      const [r, me] = await Promise.all([api.get(playlistId), auth.me()]);
       setPlaylist(r.playlist);
       setTracks(r.tracks);
       player.setPlaylist(r.tracks);
-    });
+      setLockerId(me.user.lockerOwnerId ?? me.user.id);
+      setIsLockerOwner(me.user.lockerOwnerId === null);
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "failed to load");
+    }
   }, [playlistId]);
 
   useEffect(() => {
@@ -158,28 +207,78 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   }
 
   async function handleReorder(trackIds: string[]) {
+    const before = tracks;
     const reordered = trackIds
       .map((id) => tracks.find((t) => t.id === id)!)
       .filter(Boolean);
+    // Optimistic: the drag has already happened on screen and re-rendering the
+    // old order under the pointer would be worse than a brief lie.
     setTracks(reordered);
     player.setPlaylist(reordered);
-    await api.reorder(playlistId, trackIds);
+    try {
+      await api.reorder(playlistId, trackIds);
+      setWriteError("");
+    } catch (err) {
+      // Put it back. A refused reorder that silently stuck would leave the
+      // page showing an order the server does not have, until the next load.
+      setTracks(before);
+      player.setPlaylist(before);
+      setWriteError(err instanceof Error ? err.message : "couldn't reorder those tracks");
+    }
   }
 
   async function togglePublic() {
     if (!playlist) return;
-    const updated = await api.update(playlist.id, { isPublic: !playlist.isPublic });
-    setPlaylist(updated.playlist);
+    try {
+      const updated = await api.update(playlist.id, { isPublic: !playlist.isPublic });
+      setPlaylist(updated.playlist);
+      setWriteError("");
+    } catch (err) {
+      // The one refusal the API goes out of its way to make readable — "only
+      // the locker owner can publish a playlist", the whole point of the
+      // documented exception to the blanket 404 — and it was being dropped as
+      // an unhandled rejection, so the toggle just did nothing.
+      setWriteError(err instanceof Error ? err.message : "couldn't change that playlist");
+    }
   }
 
   const selectedTrack = tracks.find((t) => t.id === selectedTrackId);
 
   if (!playlist) {
+    // A failure BEFORE anything is on screen: say so rather than sitting on
+    // "loading..." forever.
+    if (loadError) {
+      return (
+        <div style={{ padding: "2rem" }}>
+          <div role="alert" style={{ color: "#f44", fontSize: "12px" }}>
+            {loadError}
+          </div>
+          <button onClick={onBack} style={{ marginTop: "1rem" }}>
+            [back]
+          </button>
+        </div>
+      );
+    }
     return <div style={{ padding: "2rem", color: "var(--fg-dim)" }}>loading...</div>;
   }
 
   return (
     <div style={{ padding: "2rem", paddingBottom: "5rem" }}>
+      {/* A failure AFTER the page is up. The stale view stays — losing it
+          would cost more than it saves — but the controls it decides are now
+          out of date, and the owner who has just lost [rename], [make public]
+          and the rest is owed an explanation rather than a page that quietly
+          reads as "you are a listener now". */}
+      {loadError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginBottom: "0.75rem" }}>
+          {loadError}
+        </div>
+      )}
+      {writeError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginBottom: "0.75rem" }}>
+          {writeError}
+        </div>
+      )}
       <div style={{ marginBottom: "1rem" }}>
         <button onClick={onBack} style={linkStyle}>
           [&lt; back]

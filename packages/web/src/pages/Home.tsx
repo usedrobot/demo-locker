@@ -8,6 +8,7 @@ import {
   type Track,
   type Share,
   setToken,
+  isAuthFailure,
 } from "../lib/api";
 import { player } from "../lib/audio";
 import { cycleAccent } from "../lib/theme";
@@ -67,18 +68,39 @@ export default function Home({ onSelect, onLogout }: Props) {
   // Resolved in the same load() as the lists, so rows are never painted before
   // it is known which of their delete controls belong on screen.
   const [isOwner, setIsOwner] = useState<boolean | null>(null);
+  // Mirrors "we have resolved who this session is" for load(), which is a
+  // useCallback with no dependencies and so cannot read the state above.
+  const identityKnownRef = useRef(false);
   const [playlistError, setPlaylistError] = useState("");
   const [trackError, setTrackError] = useState("");
+  // Refusals from the access panel's three writes. They used to be unhandled
+  // rejections: the row simply did not change and nothing said why.
+  const [accessError, setAccessError] = useState("");
 
   async function openAccess() {
-    const r = await sharesApi.listAll();
-    setAccessShares(r.shares);
-    setShowAccess(true);
+    setAccessError("");
+    try {
+      const r = await sharesApi.listAll();
+      setAccessShares(r.shares);
+      setShowAccess(true);
+    } catch (err) {
+      setAccessError(err instanceof Error ? err.message : "couldn't load your links");
+      setShowAccess(true);
+    }
   }
 
   async function toggleEdit(share: Share) {
     const next = share.permission === "edit" ? "listen" : "edit";
-    const r = await sharesApi.setPermission(share.id, next);
+    setAccessError("");
+    let r;
+    try {
+      r = await sharesApi.setPermission(share.id, next);
+    } catch (err) {
+      // Local state is left alone: the row keeps showing what the server
+      // still believes, rather than a permission that was refused.
+      setAccessError(err instanceof Error ? err.message : "couldn't change that link");
+      return;
+    }
     setAccessShares(
       accessShares.map((s) =>
         s.id === share.id ? { ...s, permission: r.share.permission } : s
@@ -87,7 +109,13 @@ export default function Home({ onSelect, onLogout }: Props) {
   }
 
   async function revokeShare(id: string) {
-    await sharesApi.revoke(id);
+    setAccessError("");
+    try {
+      await sharesApi.revoke(id);
+    } catch (err) {
+      setAccessError(err instanceof Error ? err.message : "couldn't revoke that link");
+      return;
+    }
     setAccessShares(accessShares.filter((s) => s.id !== id));
   }
 
@@ -111,15 +139,36 @@ export default function Home({ onSelect, onLogout }: Props) {
       // auth.me() rides along with the lists rather than in an effect of its
       // own: `isOwner` decides which delete controls each row may show, so
       // learning it a tick later would paint the wrong affordances first.
-      const [r, lib, me] = await Promise.all([api.list(), tracksApi.list(), auth.me()]);
+      //
+      // It rides the first load, and any later one that still does not know
+      // who this is (an earlier attempt having failed) — but not every focus
+      // refetch. Who you are does not change while the tab is in the
+      // background, and the one thing that would change it, being removed from
+      // the locker, deletes the session with it: the two list calls below then
+      // fail and the branch under this one catches that. A third request on
+      // every focus bought nothing.
+      const [r, lib, me] = await Promise.all([
+        api.list(),
+        tracksApi.list(),
+        background && identityKnownRef.current ? Promise.resolve(null) : auth.me(),
+      ]);
       setPlaylists(r.playlists);
       setLibrary(lib.tracks);
-      setIsOwner(me.user.lockerOwnerId === null);
-      setSavedName(me.user.displayName);
-      setAccountEmail(me.user.email);
+      if (me) {
+        setIsOwner(me.user.lockerOwnerId === null);
+        setSavedName(me.user.displayName);
+        setAccountEmail(me.user.email);
+        identityKnownRef.current = true;
+      }
       setLoadState("ready");
+      setLoadError("");
     } catch (err) {
-      if (background) return;
+      // A background refetch stays silent on a TRANSIENT failure — inserting
+      // an error mid-view over a blip that self-heals on the next focus is
+      // worse than nothing. An expired or revoked session is not transient:
+      // it does not self-heal, and staying silent left `isOwner` asserting
+      // affordances the server would now refuse. Surfaced either way.
+      if (background && !isAuthFailure(err)) return;
       setLoadError(err instanceof Error ? err.message : "failed to load");
       setLoadState("error");
     }
@@ -147,7 +196,16 @@ export default function Home({ onSelect, onLogout }: Props) {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!newName.trim()) return;
-    const { playlist } = await api.create(newName.trim());
+    setPlaylistError("");
+    let playlist;
+    try {
+      ({ playlist } = await api.create(newName.trim()));
+    } catch (err) {
+      // Notably the playlist cap: the server refuses with a readable message
+      // and the form used to just sit there with the name still in it.
+      setPlaylistError(err instanceof Error ? err.message : "couldn't create that playlist");
+      return;
+    }
     setPlaylists([...playlists, playlist]);
     setNewName("");
   }
@@ -425,6 +483,11 @@ export default function Home({ onSelect, onLogout }: Props) {
       {showAccess && (
         <div style={{ marginBottom: "2rem" }}>
           <div className="box-header">access — who can reach your locker</div>
+          {accessError && (
+            <div role="alert" style={{ color: "#f44", fontSize: "12px", padding: "0.5rem 0" }}>
+              {accessError}
+            </div>
+          )}
           <div style={{ borderTop: "1px solid var(--border)" }}>
             {accessShares.length === 0 && (
               <div style={{ color: "var(--fg-dim)", padding: "0.75rem 0" }}>

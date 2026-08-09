@@ -108,7 +108,16 @@ export default function Comments({
   }
 
   async function handleResolve(comment: Comment) {
-    await api.resolve(comment.id);
+    // Same surface the delete path already uses. Without a catch a refused
+    // resolve was an unhandled rejection: the marker did not move and nothing
+    // said why — and a refusal here is reachable, since `canModerate` is drawn
+    // from data that can be stale by the time the click lands.
+    try {
+      await api.resolve(comment.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "couldn't change that comment");
+      return;
+    }
     load();
     window.dispatchEvent(
       new CustomEvent("comments:updated", { detail: { trackId, playlistId } })

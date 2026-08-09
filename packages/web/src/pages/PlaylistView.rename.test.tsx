@@ -433,6 +433,51 @@ describe("playlist rename", () => {
     expect(updateMock).toHaveBeenNthCalledWith(2, "pl-1", { name: "free name" });
   });
 
+  // Restoring focus is not the same as claiming it. The original effect
+  // refocused on every render where the editor was open and not saving, so a
+  // save that resolved while the user had moved to another control yanked
+  // focus back out from under them mid-typing — the parked Task 9 item. The
+  // restore is now gated on the input having been the thing that was blurred
+  // AND on focus still being unclaimed, the pattern SharePanel.tsx uses for
+  // the identical situation.
+  it("does not steal focus back from a control the user moved to while saving", async () => {
+    const first = deferred<{ playlist: Playlist }>();
+    updateMock.mockReturnValueOnce(first.promise);
+
+    render();
+    await flush();
+
+    act(() => renameButton()!.click());
+    const input = nameInput()!;
+    expect(document.activeElement).toBe(input);
+
+    act(() => typeValue(input, "taken name"));
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+    expect(input.disabled).toBe(true);
+
+    // The browser blurs the disabled input, and then the user clicks somewhere
+    // else entirely while the request is still out.
+    act(() => browserBlurOnDisable());
+    const elsewhere = document.createElement("input");
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    expect(document.activeElement).toBe(elsewhere);
+
+    act(() => first.reject(new Error("name already taken")));
+    await flush();
+
+    // The field is back and editable — the draft is not lost — but focus stays
+    // where the user put it.
+    expect(nameInput()).toBe(input);
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(elsewhere);
+
+    elsewhere.remove();
+  });
+
   // The property this whole task has been protecting: a failed rename must
   // never cost the user their typed name. On failure the field comes back to
   // life with the draft still in it and the error visible, so the fix is a

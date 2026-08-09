@@ -58,6 +58,9 @@ function ProgressBar({ trackId }: { trackId: string }) {
 export default function TrackList({ tracks, onReorder, onRemove, selectedId, onSelect }: Props) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  // A refused detach used to be an unhandled rejection — the row simply stayed
+  // put with nothing on screen.
+  const [removeError, setRemoveError] = useState("");
   const [playerState, setPlayerState] = useState(player.getState());
 
   useEffect(() => player.subscribe(setPlayerState), []);
@@ -89,9 +92,19 @@ export default function TrackList({ tracks, onReorder, onRemove, selectedId, onS
     }
     // Detach, don't destroy: playlistId null sends it back to the library with
     // both the master and the rendition intact.
-    await tracksApi.attach(trackId, null);
+    try {
+      await tracksApi.attach(trackId, null);
+    } catch (err) {
+      // The row is left where it is and the confirm state cleared, so the
+      // control returns to rest rather than staying armed over a track that
+      // did not move.
+      setConfirmRemoveId(null);
+      setRemoveError(err instanceof Error ? err.message : "couldn't remove that track");
+      return;
+    }
     if (player.getState().track?.id === trackId) player.clear();
     setConfirmRemoveId(null);
+    setRemoveError("");
     onRemove?.(trackId);
   }
 
@@ -105,6 +118,11 @@ export default function TrackList({ tracks, onReorder, onRemove, selectedId, onS
 
   return (
     <div>
+      {removeError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", padding: "0.5rem 0" }}>
+          {removeError}
+        </div>
+      )}
       {tracks.map((track, i) => {
         const isPlaying = playerState.track?.id === track.id && playerState.playing;
         const isSelected = selectedId === track.id;

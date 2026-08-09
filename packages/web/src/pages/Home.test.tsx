@@ -38,6 +38,18 @@ vi.mock("../lib/api", () => ({
     setDisplayName: vi.fn(async () => ({ displayName: null })),
   },
   setToken: vi.fn(),
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(message: string, status: number) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+    }
+  },
+  // The real predicate's shape: only a response-carrying failure counts, and
+  // only a 401. A fetch that never reached the server has no status.
+  isAuthFailure: (err: unknown) =>
+    typeof err === "object" && err !== null && (err as { status?: number }).status === 401,
 }));
 
 vi.mock("../lib/audio", () => ({
@@ -695,5 +707,83 @@ describe("Home — the name panel", () => {
     // The route is not owner-only on purpose: this is how someone fixes a name
     // the owner mistyped when inviting them.
     expect(nameInput()!.value).toBe("Jmimy");
+  });
+});
+
+// The focus refetch, and what it is allowed to stay quiet about.
+//
+// Home refetches when the tab regains focus, deliberately without a visible
+// loading state — a "loading..." row inserted mid-click used to shift the
+// layout so the click landed on the wrong element. That refetch swallowed
+// every failure, which is right for a transient blip that self-heals and wrong
+// for a session that has ended: `isOwner` kept asserting affordances the
+// server would now refuse, with nothing on screen.
+//
+// The same refetch also carried auth.me() every time. Who you are does not
+// change while the tab is away, and the one thing that would change it —
+// being removed from the locker — deletes the session, which the list calls
+// surface anyway.
+describe("Home — the focus refetch", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({ playlists: [] });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({ tracks: [] });
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: OWNER });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  async function refocus() {
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("does not ask who you are again on every focus", async () => {
+    render();
+    await flush();
+    expect(meMock).toHaveBeenCalledTimes(1);
+
+    await refocus();
+    await refocus();
+
+    // The lists were refetched — that is the point of the refocus — while the
+    // identity call was not repeated.
+    expect(listPlaylistsMock.mock.calls.length).toBeGreaterThan(1);
+    expect(meMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent when a background refetch hits a transient failure", async () => {
+    render();
+    await flush();
+    expect(container.textContent).not.toContain("network hiccup");
+
+    listPlaylistsMock.mockRejectedValueOnce(new Error("network hiccup"));
+    await refocus();
+
+    // Nothing on screen: this is the case the silence exists for.
+    expect(container.textContent).not.toContain("network hiccup");
+  });
+
+  it("surfaces an expired session instead of leaving stale owner controls up", async () => {
+    listTracksMock.mockResolvedValue({ tracks: [track({ uploadedByMe: false })] });
+    render();
+    await flush();
+    // The owner's affordances are on screen, which is what a silent 401 would
+    // have left there.
+    expect(deleteButtons("permanently").length).toBe(1);
+
+    const expired = Object.assign(new Error("unauthorized"), { status: 401 });
+    listPlaylistsMock.mockRejectedValueOnce(expired);
+    await refocus();
+
+    expect(container.textContent).toContain("unauthorized");
   });
 });

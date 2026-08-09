@@ -44,6 +44,28 @@ export function getApiOrigin(): string {
   return API_URL || window.location.origin;
 }
 
+// A failed request, carrying the status alongside the server's message.
+//
+// Callers used to have only the message string, which cannot distinguish "the
+// network blipped, try again shortly" from "this session is over". Home's
+// background refetch needs exactly that distinction: it stays silent on the
+// first and must not stay silent on the second.
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+// Whether a rejection means the session is over rather than the request having
+// had bad luck. 401 is the API's answer to a missing or expired session; a
+// fetch that never reached the server has no status at all and is not this.
+export function isAuthFailure(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
@@ -64,7 +86,7 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `request failed: ${res.status}`);
+    throw new ApiError(body.error || `request failed: ${res.status}`, res.status);
   }
 
   return res.json();

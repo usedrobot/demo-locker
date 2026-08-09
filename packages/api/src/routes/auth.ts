@@ -121,11 +121,12 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
   const capped = isLimited(limits.maxCollaborators);
   const lockerFull = async (ownerId: string) =>
     capped && (await countLockerMembers(db, ownerId)) >= limits.maxCollaborators;
-  const fullResponse = () =>
-    c.json(
-      { error: `this locker is full — it allows ${limits.maxCollaborators} collaborators` },
-      403
-    );
+  // The SAME body every other refusal on this route uses. A distinct "this
+  // locker is full" told the holder of a guessed token that the token was real
+  // — every other refusal collapses to one message precisely so it cannot —
+  // and named the instance's seat cap while it was at it. The person who can
+  // act on a full locker is the owner, who is not the one making this request.
+  const fullResponse = () => c.json({ error: "this invite is not valid" }, 403);
 
   let pending: PendingInvite | null = null;
   if (inviteToken) {

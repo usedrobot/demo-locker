@@ -956,7 +956,10 @@ describe("MAX_COLLABORATORS at redemption", () => {
     );
     expect(res.status).toBe(403);
     const { error } = (await res.json()) as { error: string };
-    expect(error).toContain("full");
+    // The SAME body an invalid token gets. A distinct "this locker is full"
+    // would confirm to the holder of a guessed token that the token was real,
+    // and disclose the seat cap.
+    expect(error).toBe("this invite is not valid");
 
     const [none] = await db.select().from(users).where(eq(users.email, "over-cap@test.dev"));
     expect(none).toBeUndefined();
@@ -1222,7 +1225,10 @@ describe("a locker that fills up mid-request", () => {
 
     expect(res.status).toBe(403);
     const { error } = (await res.json()) as { error: string };
-    expect(error).toContain("full");
+    // The SAME body an invalid token gets. A distinct "this locker is full"
+    // would confirm to the holder of a guessed token that the token was real,
+    // and disclose the seat cap.
+    expect(error).toBe("this invite is not valid");
 
     const [none] = await db.select().from(users).where(eq(users.email, "too-late@test.dev"));
     expect(none).toBeUndefined();

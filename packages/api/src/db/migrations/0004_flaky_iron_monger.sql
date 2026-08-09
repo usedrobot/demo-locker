@@ -1,7 +1,10 @@
 -- HAND-PATCHED, same trap as 0003: drizzle-kit 0.31.10 drops FK actions
 -- (ON DELETE ...) from `ALTER TABLE ... ADD COLUMN` on SQLite while still
 -- recording them in meta/0004_snapshot.json. It generated
---   ALTER TABLE `shares` ADD `created_by` text REFERENCES users(id);
+--   ALTER TABLE `shares` ADD `created_by` text REFERENCES users(id)
+-- (the trailing semicolon is left off this quoted line deliberately: it sits in
+-- the same pre-breakpoint chunk as the real statement below, and a splitter
+-- that is not comment-aware would cut the file here)
 -- and the ` ON DELETE CASCADE` below was added by hand to match what the
 -- snapshot already claims is true. Do not regenerate this migration — that
 -- would silently drop the patch, and the whole guarantee (a collaborator's

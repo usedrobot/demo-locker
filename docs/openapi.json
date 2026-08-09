@@ -600,7 +600,7 @@
             }
           },
           "403": {
-            "description": "Registration is closed, or the supplied inviteToken is not valid. Without an invite, signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true. With one, unknown, already-redeemed and expired tokens are refused identically, and are checked before the duplicate-email 409 so signup cannot be used to confirm an address. A valid invite is also refused when the locker has no seat left, since MAX_COLLABORATORS is re-checked at redemption and may have been lowered since the invite was minted; that refusal leaves the invite unspent and redeemable once room is made, and like every other invite refusal it is answered before the duplicate-email 409, so a full locker cannot be used to confirm an address.",
+            "description": "Registration is closed, or the supplied inviteToken is not valid. Without an invite, signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true. With one, unknown, already-redeemed and expired tokens are refused identically, and are checked before the duplicate-email 409 so signup cannot be used to confirm an address. A valid invite is also refused when the locker has no seat left, since MAX_COLLABORATORS is re-checked at redemption and may have been lowered since the invite was minted; that refusal leaves the invite unspent and redeemable once room is made, and like every other invite refusal it is answered before the duplicate-email 409, so a full locker cannot be used to confirm an address. It also carries the SAME body as an invalid token, so the holder of a guessed token cannot tell a real invite from a fake one, nor learn the instance's seat cap.",
             "content": {
               "application/json": {
                 "schema": {
@@ -669,21 +669,7 @@
                   "type": "object",
                   "properties": {
                     "user": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "format": "uuid"
-                        },
-                        "email": {
-                          "type": "string",
-                          "format": "email"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "email"
-                      ]
+                      "$ref": "#/components/schemas/User"
                     },
                     "token": {
                       "type": "string"

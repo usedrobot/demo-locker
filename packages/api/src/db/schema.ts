@@ -147,7 +147,11 @@ export const shares = sqliteTable("shares", {
   // a purge in the revoke handler so it holds on every deletion path,
   // including ones nobody has written yet. Migration 0004 backfills existing
   // rows with their playlist's owner (provably correct: before this branch,
-  // only the owner could mint), so NULL is not a state that occurs.
+  // only the owner could mint), so NULL is all but unreachable — the backfill
+  // is `WHERE created_by IS NULL` joined through playlists, which leaves NULL
+  // only on a shares row whose playlist is already gone, and that is an orphan
+  // that could only have been written with foreign_keys off. lib/public-share.ts
+  // guards it rather than assuming it away.
   createdBy: text("created_by").references(() => users.id, { onDelete: "cascade" }),
 });
 

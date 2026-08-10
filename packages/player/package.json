@@ -1,6 +1,6 @@
 {
   "name": "@demo-locker/player",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Embeddable music player web component for Demo Locker — self-hosted music streaming. Works with any instance serving /public/v1.",
   "license": "MIT",
   "type": "module",

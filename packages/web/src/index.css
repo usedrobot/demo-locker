@@ -435,12 +435,38 @@ button:active {
 
 /* mobile player */
 /* Home header: logo on the left, account controls on the right. */
+/* Logo on its own line, account controls in a horizontal row beneath it — at
+   every width. This used to be a side-by-side row that only stacked below
+   560px, so desktop and mobile had two different arrangements; now there is
+   one. The controls keep the right alignment they had in both layouts.
+
+   Wrapping matters on the row: five controls in brackets are wider than a
+   narrow screen, and without flex-wrap the last one is pushed out of the
+   viewport rather than dropping to a second line. */
 .page-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   margin-bottom: 1.5rem;
-  gap: 1rem;
+  gap: 0.75rem;
+}
+
+/* Logo is a size container, so it cannot size itself from its own content —
+   it needs a definite width from here or it collapses to zero and the art
+   disappears. `align-items: stretch` above already gives it one; this is
+   explicit so a future change to the parent cannot silently remove it. */
+.page-header-logo {
+  width: 100%;
+  min-width: 0;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 /* The ascii title is a size container; the rename input stands in for it
@@ -484,20 +510,18 @@ button:active {
   margin-bottom: 1.5rem;
 }
 
-/* On a narrow screen the sibling (account controls / artwork) takes enough of
-   the row that the ascii art can't fit even at its 4px floor, and clips. Stack
-   instead, so the art gets the full width. */
+/* On a narrow screen the artwork alongside the title takes enough of the row
+   that the ascii art cannot fit, and clips. Stack instead, so the art gets the
+   full width.
+
+   .page-header is no longer here: it stacks at every width now, so the
+   override that forced its controls back into a row (with two !importants) is
+   gone with it. That pair of rules existed only to undo this one. */
 @media (max-width: 560px) {
-  .page-header,
   .playlist-header {
     flex-direction: column;
     align-items: stretch;
     gap: 0.75rem;
-  }
-  .page-header > div:last-child {
-    flex-direction: row !important;
-    align-items: center !important;
-    justify-content: flex-end;
   }
 }
 

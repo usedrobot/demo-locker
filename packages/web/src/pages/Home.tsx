@@ -291,13 +291,14 @@ export default function Home({ onSelect, onLogout }: Props) {
   return (
     <div style={{ padding: "2rem" }}>
       <div className="page-header">
-        {/* flex:1 + minWidth:0 is load-bearing: Logo is a size container and
-            cannot size itself from its own content. Without a definite width
-            here it collapses to zero and the art disappears. */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        {/* .page-header-logo gives Logo a definite width. That is load-bearing:
+            Logo is a size container and cannot size itself from its own
+            content, so without one it collapses to zero and the art
+            disappears. */}
+        <div className="page-header-logo">
           <Logo />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.5rem" }}>
+        <div className="page-header-actions">
           <button onClick={handleLogout} style={linkStyle}>
             [logout]
           </button>

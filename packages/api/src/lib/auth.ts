@@ -1,10 +1,26 @@
-// Web Crypto API — works in Cloudflare Workers
+// Web Crypto API — works in Cloudflare Workers, WITHIN THE LIMITS BELOW.
 
-// OWASP's current floor for PBKDF2-SHA256. The original 100k shipped in 0.1 and
-// every hash written before this release is still at that cost, so verify()
-// reads the cost out of the stored string and the login route silently rehashes
-// on the next successful sign-in. Nobody has to reset a password.
-export const PBKDF2_ITERATIONS = 600_000;
+// The most PBKDF2 work this codebase can ask for, because it is the most
+// Cloudflare Workers will do. Measured, not reasoned: the deployed Worker
+// answers a higher count with
+//
+//   NotSupportedError: Pbkdf2 failed: iteration counts above 100000 are not
+//   supported (requested 600000).
+//
+// This was 600_000 (OWASP's floor for PBKDF2-SHA256) from ff8136b on
+// 2026-07-30 until the live walkthrough on 2026-08-10 found it. Every call
+// that hashes a password on the deployed instance — signup/invite redemption,
+// the password-change route, and login's opportunistic rehash — threw a 500
+// for eleven days. It stayed invisible because registration closes once an
+// instance has an owner, so /auth/signup never reached the hash until
+// collaborator invites made that path reachable again.
+//
+// The API test suite runs under vitest's default NODE environment, where
+// Node's WebCrypto accepts 600_000 happily. No test can catch this by running;
+// the tripwire is the assertion in auth.test.ts that pins this constant at or
+// below the platform cap. If Cloudflare ever raises the limit, raise this
+// with it — and verify against the deployed Worker, not against Node.
+export const PBKDF2_ITERATIONS = 100_000;
 const LEGACY_ITERATIONS = 100_000;
 
 // New format: pbkdf2$<iterations>$<salt>$<hash>

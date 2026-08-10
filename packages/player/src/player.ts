@@ -37,6 +37,40 @@ function formatTime(secs: number | null): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/** Narrowest a waveform column may be drawn, in CSS px, before columns merge. */
+const MIN_COL_W = 2;
+
+/**
+ * Peak magnitude per drawn column, normalised to 0..1, with exactly as many
+ * columns as the canvas can show — so they tile its width precisely and a
+ * click at x maps to the fraction of the track drawn at x.
+ *
+ * DUPLICATE, DELIBERATELY. packages/web/src/lib/waveform-columns.ts is the
+ * same function with the same reasoning; this package publishes standalone and
+ * has no shared module to import from. Change one, change the other.
+ */
+function waveformColumns(peaks: number[], cssWidth: number): number[] {
+  if (peaks.length === 0 || cssWidth <= 0) return [];
+  const cols = Math.max(1, Math.min(peaks.length, Math.floor(cssWidth / MIN_COL_W)));
+  const out: number[] = new Array(cols);
+  let max = 0;
+  for (let j = 0; j < cols; j++) {
+    // Computed from j rather than accumulated, so rounding cannot drift and the
+    // last column always ends exactly at peaks.length.
+    const start = Math.floor((j * peaks.length) / cols);
+    const end = Math.max(start + 1, Math.floor(((j + 1) * peaks.length) / cols));
+    let peak = 0;
+    for (let k = start; k < end && k < peaks.length; k++) {
+      const v = Math.abs(peaks[k]);
+      if (v > peak) peak = v;
+    }
+    out[j] = peak;
+    if (peak > max) max = peak;
+  }
+  if (max > 0) for (let j = 0; j < cols; j++) out[j] /= max;
+  return out;
+}
+
 const SPECTRUM_BARS = 12;
 const SPECTRUM_BLOCKS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const FLAT_SPECTRUM = "▁".repeat(SPECTRUM_BARS);
@@ -333,16 +367,23 @@ export class DemoLockerPlayer extends HTMLElement {
       return;
     }
 
-    // segmented "LED cell" bars, matching the demo-locker app player
-    const maxPeak = Math.max(...peaks.map(Math.abs)) || 1;
+    // segmented "LED cell" bars, matching the demo-locker app player.
+    //
+    // Columns come from the canvas width, not from peaks.length, so they tile
+    // it exactly and a click at x seeks to the fraction of the track drawn at
+    // x. The previous `Math.max(cssWidth / peaks.length, 2)` drew
+    // peaks.length * 2 pixels wide whatever the canvas was — 800px for the 400
+    // peaks the app stores — so on any narrower canvas the tail was clipped
+    // while the seek handler still mapped the full width to the full duration.
+    // Embeds are the narrow case by definition.
+    const cols = waveformColumns(peaks, cssWidth);
     const cellH = 4; // 3px lit + 1px gap
-    const colW = Math.max(cssWidth / peaks.length, 2);
-    for (let i = 0; i < peaks.length; i++) {
+    const colW = cssWidth / cols.length;
+    for (let i = 0; i < cols.length; i++) {
       const x = i * colW;
-      const normalized = Math.abs(peaks[i]) / maxPeak;
-      const barHeight = normalized * (cssHeight * 0.9);
+      const barHeight = cols[i] * (cssHeight * 0.9);
       const cells = Math.max(1, Math.round(barHeight / cellH));
-      ctx.fillStyle = i / peaks.length < progress ? accent : dim;
+      ctx.fillStyle = i / cols.length < progress ? accent : dim;
       const top = cssHeight / 2 - (cells * cellH) / 2;
       for (let cIdx = 0; cIdx < cells; cIdx++) {
         ctx.fillRect(x, top + cIdx * cellH, Math.max(colW - 1, 1), cellH - 1);

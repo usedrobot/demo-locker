@@ -3,6 +3,8 @@ import { player } from "../lib/audio";
 import { playlists as playlistsApi, comments as commentsApi, type Comment } from "../lib/api";
 import { avatarColor } from "../lib/avatar";
 import { spectrumFrame } from "../lib/visualizer";
+import { waveformColumns } from "../lib/waveform-columns";
+import { isPlayPauseKey } from "../lib/playback-hotkey";
 
 function formatTime(s: number): string {
   if (!s || isNaN(s)) return "00:00";
@@ -167,17 +169,21 @@ export default function Player() {
       return;
     }
 
-    // segmented "LED cell" bars — reads like stacked terminal block chars
-    const maxPeak = Math.max(...peaks.map(Math.abs)) || 1;
+    // segmented "LED cell" bars — reads like stacked terminal block chars.
+    //
+    // Columns are derived from the canvas width, not from peaks.length, so they
+    // tile it exactly — that is what makes a click at x seek to the fraction of
+    // the track drawn at x. See lib/waveform-columns.ts for what went wrong
+    // when they did not.
+    const cols = waveformColumns(peaks, cssWidth);
     const cellH = 4; // 3px lit + 1px gap
-    const colW = Math.max(cssWidth / peaks.length, 2);
+    const colW = cssWidth / cols.length;
 
-    for (let i = 0; i < peaks.length; i++) {
+    for (let i = 0; i < cols.length; i++) {
       const x = i * colW;
-      const normalized = Math.abs(peaks[i]) / maxPeak;
-      const barHeight = normalized * (cssHeight * 0.85);
+      const barHeight = cols[i] * (cssHeight * 0.85);
       const cells = Math.max(1, Math.round(barHeight / cellH));
-      const barProgress = i / peaks.length;
+      const barProgress = i / cols.length;
       ctx.fillStyle = barProgress < progress ? accent : "#3f3f3f";
       const top = cssHeight / 2 - (cells * cellH) / 2;
       for (let cIdx = 0; cIdx < cells; cIdx++) {
@@ -188,6 +194,26 @@ export default function Player() {
     // restore it is a fresh, blank element that needs drawing again, and a
     // paused track produces no progress change to trigger that on its own.
   }, [waveformData, progress, minimized]);
+
+  // Space toggles playback, the way every other player behaves. Bound to the
+  // window rather than to anything focusable, because the point is that it
+  // works without first clicking the transport — which is exactly why the
+  // guards in isPlayPauseKey matter. They are tested there.
+  //
+  // preventDefault only when we actually act: Space scrolls the page by
+  // default, and swallowing that unconditionally would break normal scrolling.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!isPlayPauseKey(e)) return;
+      // Nothing to toggle before a track is chosen. Read live rather than from
+      // a closure, so this effect never needs re-binding.
+      if (!player.getState().track) return;
+      e.preventDefault();
+      player.toggle();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function handleScrub(e: React.MouseEvent<HTMLDivElement>) {
     if (!duration) return;

@@ -486,7 +486,13 @@ describe("Home — attribution on rows", () => {
   }
 
   function titles(): string[] {
-    return Array.from(container.querySelectorAll("span")).map((el) => el.textContent ?? "");
+    // Titles are BUTTONS, not spans: a track row has to be reachable and
+    // firable by keyboard, and a plain <div onClick> is none of those things.
+    // Kept as a query over both so this helper describes "the row's text"
+    // rather than pinning one tag.
+    return Array.from(container.querySelectorAll("span, button")).map(
+      (el) => el.textContent ?? ""
+    );
   }
 
   it('reads "you" on the caller\'s own upload, never their own name', async () => {
@@ -809,5 +815,43 @@ describe("Home — the focus refetch", () => {
     await refocus();
 
     expect(container.textContent).toContain("unauthorized");
+  });
+});
+
+// The library list is the OTHER track-row callsite (TrackList is the one used
+// by PlaylistView and Invite). Both were plain <div onClick> with a decorative
+// glyph — unfocusable, deaf to Enter and Space, and absent from the
+// accessibility tree — so neither could start playback without a mouse. Fixing
+// one and not the other would leave half the app unreachable, which is why
+// this is asserted at both callsites rather than once.
+describe("Home — library rows are reachable without a mouse", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({ playlists: [] });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({
+      tracks: [track({ id: "t-lib", title: "a rough mix" })],
+    });
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: OWNER });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  function titleButton(): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "a rough mix"
+    );
+  }
+
+  it("exposes the track title as a real button, with a label saying what it does", async () => {
+    render();
+    await flush();
+
+    const btn = titleButton();
+    expect(btn, "the title is not a button — a div is not keyboard reachable").toBeDefined();
+    expect(btn!.getAttribute("aria-label")).toBe("Play a rough mix");
   });
 });

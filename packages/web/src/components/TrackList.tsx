@@ -164,15 +164,35 @@ export default function TrackList({ tracks, onReorder, onRemove, selectedId, onS
               {String(i + 1).padStart(2, "0")}
             </span>
 
-            {/* Playing indicator */}
-            <span style={{ width: "1.5ch", color: "var(--accent)", fontSize: "12px" }}>
+            {/* Playing indicator. Decorative — the button below announces the
+                same state in its label. */}
+            <span aria-hidden style={{ width: "1.5ch", color: "var(--accent)", fontSize: "12px" }}>
               {isPlaying ? "▶" : ""}
             </span>
 
-            {/* Title. minWidth:0 so it gives up space to the row's secondary
-                items rather than forcing the row past its container — the
-                other half of Attribution's contract. */}
-            <span style={{ flex: 1, minWidth: 0, color: "var(--fg)" }}>{track.title}</span>
+            {/* Title, as a real button so the row can be reached and fired by
+                keyboard — see .row-title-btn. This list is also what the
+                anonymous invite view renders (pages/Invite.tsx), so without it
+                someone following a share link has no way to play anything
+                without a mouse.
+                The row keeps its own click handler for mouse users and for
+                drag; stopPropagation keeps a click here from firing both.
+                minWidth:0 comes from the class, so the title still gives up
+                space to the row's secondary items rather than forcing the row
+                past its container — the other half of Attribution's contract. */}
+            <button
+              type="button"
+              className="row-title-btn"
+              aria-label={`${isPlaying ? "Pause" : "Play"} ${track.title}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect?.(track.id);
+                player.play(track.id);
+              }}
+              style={{ color: "var(--fg)" }}
+            >
+              {track.title}
+            </button>
 
             {/* Whose demo. Renders nothing for a reader with no locker session,
                 which is what this same list serves on the anonymous invite

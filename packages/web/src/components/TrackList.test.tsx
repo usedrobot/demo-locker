@@ -31,6 +31,9 @@ vi.mock("../lib/audio", () => ({
 
 import { tracks as tracksApi } from "../lib/api";
 
+import { player } from "../lib/audio";
+
+const playMock = vi.mocked(player.play);
 const attachMock = vi.mocked(tracksApi.attach);
 const deleteMock = vi.mocked(tracksApi.delete);
 
@@ -119,7 +122,13 @@ describe("TrackList attribution", () => {
   }
 
   function rowTitles(): string[] {
-    return Array.from(container.querySelectorAll("span")).map((el) => el.textContent ?? "");
+    // Titles are BUTTONS, not spans: a track row has to be reachable and
+    // firable by keyboard, and a plain <div onClick> is none of those things.
+    // Kept as a query over both so this helper describes "the row's text"
+    // rather than pinning one tag.
+    return Array.from(container.querySelectorAll("span, button")).map(
+      (el) => el.textContent ?? ""
+    );
   }
 
   const withAttribution = (over: Partial<Track>): Track =>
@@ -146,5 +155,55 @@ describe("TrackList attribution", () => {
     expect(attributions()).toEqual([]);
     expect(attributionElements()).toHaveLength(0);
     expect(container.textContent).not.toContain("unknown");
+  });
+});
+
+// A track row was a plain <div onClick> with a decorative glyph: not focusable,
+// deaf to Enter and Space, and absent from the accessibility tree entirely.
+// There was no way to start playback without a mouse — which also made the
+// Space play/pause shortcut unreachable for exactly the people who need it.
+//
+// This list is what pages/Invite.tsx renders too, so the same gap applied to
+// anyone following a share link.
+describe("TrackList — reachable without a mouse", () => {
+  beforeEach(() => {
+    playMock.mockReset();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  function titleButton(): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === track.title
+    );
+  }
+
+  it("exposes the track title as a real button", () => {
+    render();
+    const btn = titleButton();
+    expect(btn, "the title is not a button — a div is not keyboard reachable").toBeDefined();
+    expect(btn!.tagName).toBe("BUTTON");
+  });
+
+  it("says what activating it does, not just what the track is called", () => {
+    // A button labelled only with the title tells a screen-reader user nothing
+    // about what pressing it will do.
+    render();
+    expect(titleButton()!.getAttribute("aria-label")).toBe(`Play ${track.title}`);
+  });
+
+  it("plays the track when the button is activated", () => {
+    render();
+    act(() => titleButton()!.click());
+    expect(playMock).toHaveBeenCalledWith(track.id);
+  });
+
+  it("plays once, not twice, even though the row is clickable too", () => {
+    // The row keeps its own handler for mouse users. Without stopPropagation a
+    // click on the button fires both.
+    render();
+    act(() => titleButton()!.click());
+    expect(playMock).toHaveBeenCalledTimes(1);
   });
 });

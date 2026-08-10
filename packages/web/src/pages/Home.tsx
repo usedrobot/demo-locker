@@ -748,19 +748,29 @@ export default function Home({ onSelect, onLogout }: Props) {
                 gap: "0.75rem",
               }}
             >
-              <span style={{ color: "var(--accent)", width: "2ch", flex: "none" }}>
+              {/* Decorative: the state it shows is announced by the button's
+                  own label below, so a screen reader reading this too would
+                  just repeat itself. */}
+              <span aria-hidden style={{ color: "var(--accent)", width: "2ch", flex: "none" }}>
                 {isPlaying ? "⏸" : "▶"}
               </span>
-              {/* minWidth:0 — see the playlist row above. */}
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  color: isPlaying ? "var(--accent)" : "var(--fg)",
+              {/* A real button, so the row can be reached and fired by keyboard
+                  — see .row-title-btn. The row keeps its own click handler for
+                  mouse users; stopPropagation keeps a click here from firing
+                  both. minWidth:0 comes from the class — see the playlist row
+                  above for why it matters. */}
+              <button
+                type="button"
+                className="row-title-btn"
+                aria-label={`${isPlaying ? "Pause" : "Play"} ${t.title}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  playLibraryTrack(t.id);
                 }}
+                style={{ color: isPlaying ? "var(--accent)" : "var(--fg)" }}
               >
                 {t.title}
-              </span>
+              </button>
               <Attribution mine={t.uploadedByMe} name={t.uploadedByName} verb="Uploaded" />
               <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {formatDuration(t.duration)}

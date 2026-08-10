@@ -163,6 +163,45 @@ a {
   }
 }
 
+/* The track title, as a real button.
+
+   Track rows are click-to-play divs. That works for a mouse and is invisible to
+   everything else: a plain <div onClick> is not focusable, takes no Enter or
+   Space, and does not appear in the accessibility tree at all — so there was no
+   way to start playback without a mouse, which also made the Space shortcut
+   unreachable for the people most likely to want it.
+
+   The TITLE carries it rather than the row, because the row is `draggable` and
+   already contains [↓] and [x] buttons; making the row itself a button would
+   nest interactive elements inside an interactive element. The title is the
+   row's primary content, so it is the natural target — one tab stop per track.
+
+   Styled to be indistinguishable from the span it replaced: the row keeps its
+   own click handler for mouse users, and this changes nothing visually. */
+.row-title-btn {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Focus must be VISIBLE — a focusable control nobody can see the focus on is
+   only half the fix. The app sets `outline: none` on buttons globally, so this
+   puts a real ring back for keyboard users only. */
+.row-title-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* TUI box */
 .box {
   border: 1px solid var(--border);

@@ -94,6 +94,26 @@ export const PACKAGED_ASSETS_FOR_UPGRADE = PACKAGED_ASSETS;
 // broke create-playlist, list-playlists and the track library on every fresh
 // Cloudflare install of 0.2.0, while every sub-path looked fine. Collection
 // endpoints live at the bare paths, so leaving one out silently breaks a verb.
+//
+// THIS LIST IS DERIVED, NOT AUTHORED. On Cloudflare the assets layer answers
+// ahead of the Worker, so a prefix missing from here is not a degraded route —
+// it is a route that returns the SPA index with a 200 while every other route
+// looks perfectly healthy. `/collab` was mounted in the API and never added
+// here, which left the entire collaborators feature silently dead on every
+// Cloudflare install: the 0.2.0 bug again, in a new shape, and invisible to a
+// review because both files were individually correct.
+//
+// The list is now pinned against the router itself: test/plan.test.ts reads
+// packages/api/src/index.ts, extracts every `app.route("<prefix>", …)` mount,
+// and fails if any is missing either form. Add a mount there and this list
+// fails until it is updated. Keep the order matching index.ts so the two read
+// side by side.
+//
+// `/health` is here without a wildcard: it is an `app.get`, not a mount, there
+// is no `/health/*`, and no static asset shadows it. `/embed.js` and
+// `/openapi.json` are `app.get`s too and are deliberately ABSENT — real files
+// of the same name ship in `assets/public/`, so the assets layer serving them
+// is correct rather than a fall-through. Do not "fix" that by adding them.
 const API_PATHS = [
   "/health",
   "/auth",
@@ -104,6 +124,8 @@ const API_PATHS = [
   "/comments/*",
   "/shares",
   "/shares/*",
+  "/collab",
+  "/collab/*",
   "/tracks",
   "/tracks/*",
   "/public/v1",

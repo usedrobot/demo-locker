@@ -12,6 +12,7 @@ import {
   requestCanAccessPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
+import { lockerIdForUserId } from "../lib/locker.js";
 import type { Env } from "../types.js";
 
 const commentsRouter = new Hono<Env>();
@@ -32,9 +33,79 @@ async function resolveAuthedUser(c: any) {
 }
 
 // Strip server-only fields from a comment row before returning to clients.
+//
+// `resolvedBy` is one of them. It is a real audit record and the column stays,
+// but it holds a RAW internal user id — and once collaborators could resolve
+// (Task 11c), that id stopped being the locker owner's (already on the wire as
+// `playlists.ownerId`) and became any member's, which has never been
+// serialized anywhere. These lists are readable with a share token, so it must
+// not leave the server. Nothing renders it; `resolvedAt` is what the UI shows.
+// If who-resolved-it is ever wanted on the wire, this branch's own precedent
+// (`uploadedByMe`, `createdByMe`, `createdByName`) is how to add it: a
+// computed value, never the id.
 function publicComment(row: any) {
-  const { deleteToken, ...rest } = row;
+  const { deleteToken, resolvedBy, ...rest } = row;
   return rest;
+}
+
+// What a comment hangs off, for the moderation guards: which LOCKER owns it,
+// and which playlist (if any) it is readable through.
+//
+// `playlists.ownerId` and `tracks.ownerId` hold the locker id, never the id of
+// whoever created the row — which is why a collaborator matches here exactly
+// as the owner does, and why moderation survives a member's removal.
+//
+// The track fallback mirrors POST /comments (above): a library track in no
+// playlist belongs to its locker directly. Without it the product could create
+// comments on such a track that nobody, not even the owner, could ever resolve
+// or delete.
+type CommentTarget = { lockerId: string; playlistId: string | null };
+
+async function commentTarget(
+  db: ReturnType<typeof getDb>,
+  comment: { playlistId: string | null; trackId: string | null }
+): Promise<CommentTarget | null> {
+  let playlistId = comment.playlistId;
+  if (!playlistId && comment.trackId) {
+    const [track] = await db
+      .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
+      .from(tracks)
+      .where(eq(tracks.id, comment.trackId))
+      .limit(1);
+    if (!track) return null;
+    if (!track.playlistId) {
+      return { lockerId: track.ownerId, playlistId: null };
+    }
+    playlistId = track.playlistId;
+  }
+  if (!playlistId) return null;
+
+  const [playlist] = await db
+    .select({ ownerId: playlists.ownerId })
+    .from(playlists)
+    .where(eq(playlists.id, playlistId))
+    .limit(1);
+  if (!playlist) return null;
+  return { lockerId: playlist.ownerId, playlistId };
+}
+
+// The refusal a non-moderator gets.
+//
+// Non-enumerable by default: a caller who cannot even READ the comment learns
+// nothing about whether the id exists — the same 404 a nonexistent comment
+// gets. The documented exception applies to a caller who has already
+// demonstrated read access (a share holder, who can list these very comments):
+// for them existence is not a secret, and a 404 would only mislead.
+//
+// A library track in no playlist has no reader class beyond its locker
+// members, so every refusal there is a 404.
+async function refuseModeration(c: any, target: CommentTarget) {
+  const readable = target.playlistId
+    ? await requestCanAccessPlaylist(c, target.playlistId)
+    : false;
+  return readable
+    ? c.json({ error: "forbidden" }, 403)
+    : c.json({ error: "not found" }, 404);
 }
 
 commentsRouter.post("/", async (c) => {
@@ -67,10 +138,11 @@ commentsRouter.post("/", async (c) => {
 
   const db = getDb(c.env.DB);
 
-  // Resolve the playlist this comment targets, then gate on it: only the
-  // owner's session or a valid share token may comment (the invite-listener
-  // flow). Anonymous without a token is indistinguishable from a nonexistent
-  // target -> the same non-enumerable 404.
+  // Resolve the playlist this comment targets, then gate on it: only a
+  // session acting in the locker (the owner, or a collaborator) or a valid
+  // share token may comment (the invite-listener flow). Anonymous without a
+  // token is indistinguishable from a nonexistent target -> the same
+  // non-enumerable 404.
   let allowed = false;
   if (trackId) {
     const [track] = await db
@@ -81,8 +153,11 @@ commentsRouter.post("/", async (c) => {
     if (track?.playlistId) {
       allowed = await requestCanAccessPlaylist(c, track.playlistId);
     } else if (track) {
-      // library track outside any playlist — owner only
-      allowed = (await requestSessionUserId(c)) === track.ownerId;
+      // library track outside any playlist — locker only (owner or collaborator)
+      const actingUserId = await requestSessionUserId(c);
+      allowed =
+        !!actingUserId &&
+        (await lockerIdForUserId(db, actingUserId)) === track.ownerId;
     }
   } else if (playlistId) {
     allowed = await requestCanAccessPlaylist(c, playlistId);
@@ -121,9 +196,16 @@ commentsRouter.get("/track/:trackId", async (c) => {
     .from(tracks)
     .where(eq(tracks.id, trackId))
     .limit(1);
-  const canAccess = track?.playlistId
-    ? await requestCanAccessPlaylist(c, track.playlistId)
-    : !!track && (await requestSessionUserId(c)) === track.ownerId;
+  let canAccess = false;
+  if (track?.playlistId) {
+    canAccess = await requestCanAccessPlaylist(c, track.playlistId);
+  } else if (track) {
+    // library track outside any playlist — locker only (owner or collaborator)
+    const actingUserId = await requestSessionUserId(c);
+    canAccess =
+      !!actingUserId &&
+      (await lockerIdForUserId(db, actingUserId)) === track.ownerId;
+  }
   if (!canAccess) {
     return c.json({ error: "not found" }, 404);
   }
@@ -172,7 +254,8 @@ commentsRouter.get("/playlist/:playlistId", async (c) => {
   return c.json({ comments: threaded });
 });
 
-// Toggle resolved state — owner of the comment's playlist only.
+// Toggle resolved state — any member of the comment's locker (the owner, or a
+// collaborator). Moderation is band work, not administration (DL, 2026-08-08).
 commentsRouter.patch("/:id/resolve", async (c) => {
   const id = c.req.param("id");
   const user = await resolveAuthedUser(c);
@@ -180,8 +263,6 @@ commentsRouter.patch("/:id/resolve", async (c) => {
 
   const db = getDb(c.env.DB);
 
-  // Look up the comment and resolve its playlist (via comment.playlistId or
-  // via the comment's track → playlist).
   const [comment] = await db
     .select()
     .from(comments)
@@ -189,24 +270,10 @@ commentsRouter.patch("/:id/resolve", async (c) => {
     .limit(1);
   if (!comment) return c.json({ error: "not found" }, 404);
 
-  let playlistId = comment.playlistId;
-  if (!playlistId && comment.trackId) {
-    const [track] = await db
-      .select({ playlistId: tracks.playlistId })
-      .from(tracks)
-      .where(eq(tracks.id, comment.trackId))
-      .limit(1);
-    playlistId = track?.playlistId ?? null;
-  }
-  if (!playlistId) return c.json({ error: "not found" }, 404);
-
-  const [playlist] = await db
-    .select({ ownerId: playlists.ownerId })
-    .from(playlists)
-    .where(eq(playlists.id, playlistId))
-    .limit(1);
-  if (!playlist || playlist.ownerId !== user.id) {
-    return c.json({ error: "forbidden" }, 403);
+  const target = await commentTarget(db, comment);
+  if (!target) return c.json({ error: "not found" }, 404);
+  if ((await lockerIdForUserId(db, user.id)) !== target.lockerId) {
+    return refuseModeration(c, target);
   }
 
   const nowResolved = comment.resolvedAt == null;
@@ -214,6 +281,8 @@ commentsRouter.patch("/:id/resolve", async (c) => {
     .update(comments)
     .set({
       resolvedAt: nowResolved ? new Date() : null,
+      // An audit field about a PERSON, so it records the acting user — not the
+      // locker id the guard above compares against.
       resolvedBy: nowResolved ? user.id : null,
     })
     .where(eq(comments.id, id))
@@ -223,7 +292,8 @@ commentsRouter.patch("/:id/resolve", async (c) => {
 });
 
 // Delete a comment. Allowed if:
-//   - Bearer-authed user owns the playlist this comment belongs to, OR
+//   - The Bearer-authed user is a member of the comment's locker (the owner,
+//     or a collaborator), OR
 //   - The request supplies the matching X-Delete-Token (anonymous author).
 commentsRouter.delete("/:id", async (c) => {
   const id = c.req.param("id");
@@ -236,39 +306,21 @@ commentsRouter.delete("/:id", async (c) => {
     .limit(1);
   if (!comment) return c.json({ error: "not found" }, 404);
 
-  let allowed = false;
-
-  // Anon delete via per-comment token
+  // Anon delete via per-comment token — orthogonal to membership, and the one
+  // path an anonymous author has to their own words.
   const supplied = c.req.header("X-Delete-Token");
-  if (supplied && comment.deleteToken && supplied === comment.deleteToken) {
-    allowed = true;
-  }
+  const ownsToken =
+    !!supplied && !!comment.deleteToken && supplied === comment.deleteToken;
 
-  // Owner delete via Bearer
-  if (!allowed) {
+  if (!ownsToken) {
+    const target = await commentTarget(db, comment);
+    if (!target) return c.json({ error: "not found" }, 404);
     const user = await resolveAuthedUser(c);
-    if (user) {
-      let playlistId = comment.playlistId;
-      if (!playlistId && comment.trackId) {
-        const [track] = await db
-          .select({ playlistId: tracks.playlistId })
-          .from(tracks)
-          .where(eq(tracks.id, comment.trackId))
-          .limit(1);
-        playlistId = track?.playlistId ?? null;
-      }
-      if (playlistId) {
-        const [playlist] = await db
-          .select({ ownerId: playlists.ownerId })
-          .from(playlists)
-          .where(eq(playlists.id, playlistId))
-          .limit(1);
-        if (playlist?.ownerId === user.id) allowed = true;
-      }
+    const actingLockerId = user ? await lockerIdForUserId(db, user.id) : null;
+    if (actingLockerId !== target.lockerId) {
+      return refuseModeration(c, target);
     }
   }
-
-  if (!allowed) return c.json({ error: "forbidden" }, 403);
 
   // Cascade delete replies first (no FK between parent/child, so do it manually)
   await db.delete(comments).where(eq(comments.parentId, id));

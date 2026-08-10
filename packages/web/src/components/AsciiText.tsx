@@ -1,5 +1,6 @@
 import figlet from "figlet";
 import dosRebel from "figlet/importable-fonts/DOS Rebel.js";
+import PixelArt from "./PixelArt";
 
 figlet.parseFont("DOS Rebel", dosRebel);
 
@@ -28,22 +29,22 @@ export default function AsciiText({ text }: Props) {
     .filter((line) => line.trim().length > 0)
     .map((line) => line.replace(/\s+$/, ""))
     .join("\n");
-  // Publish the rendered width as --cols and let CSS size the type against the
-  // real viewport. Sizing against a hardcoded desktop column here instead meant
-  // phones got glyphs scaled for a screen four times wider, and the title
-  // overflowed sideways. CSS also re-solves this on rotate and resize for free.
-  const cols = Math.max(...trimmed.split("\n").map((l) => l.length));
+  // Drawn as cells rather than text — see PixelArt. The floor is what makes a
+  // long title drift sideways instead of shrinking, and it is kept at the same
+  // 7px the CSS used so the drift animation is unchanged. Its ORIGINAL reason
+  // is gone, though: 7px was where block glyphs stopped tiling and the name
+  // turned to mush. Cells do not mush. It now means "do not shrink a title
+  // below legible", which is a readability floor, not a rendering one.
   return (
-    <div className="ascii-fit">
-      <pre
-        className="ascii-logo ascii-title"
-        style={{ "--cols": cols } as React.CSSProperties}
-        role="heading"
-        aria-level={2}
-        aria-label={text}
-      >
-        {trimmed}
-      </pre>
+    <div className="ascii-fit ascii-fit-title">
+      <PixelArt
+        className="ascii-title"
+        art={trimmed}
+        label={text}
+        capPx={8}
+        floorPx={7}
+        headingLevel={2}
+      />
     </div>
   );
 }

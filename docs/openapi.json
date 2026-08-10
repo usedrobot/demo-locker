@@ -68,12 +68,29 @@
               null
             ],
             "description": "Owner accent colour, one of the shipped palette. Null when never set — clients fall back to #fc0."
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name this account's work is attributed to across the locker (Track.uploadedByName, Playlist.createdByName). Set by the account holder via POST /auth/display-name, or seeded from the invite label the owner typed when inviting a collaborator. Null means unset, in which case attribution falls back to the email address — an empty name is stored as null, never as \"\". Returned by /auth/signup, /auth/login and /auth/me so a client can render the current value."
+          },
+          "lockerOwnerId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null when this account owns its locker. Set to that owner's user id when this account is a collaborator on that owner's locker instead."
           }
         },
         "required": [
           "id",
           "email",
-          "accent"
+          "accent",
+          "displayName",
+          "lockerOwnerId"
         ]
       },
       "Playlist": {
@@ -86,6 +103,17 @@
           "ownerId": {
             "type": "string",
             "format": "uuid"
+          },
+          "createdByMe": {
+            "type": "boolean",
+            "description": "Attribution, NOT permission: whether the requesting session created this playlist. Computed per request. The raw creator id (playlists.created_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id; the same rule as tracks.uploaded_by. Do not build a delete control from this field alone: DELETE /playlists/{id} lets the locker owner delete any playlist, so the owner gets false on every collaborator-created playlist they are nonetheless allowed to delete. The client-side rule is createdByMe OR locker ownership. The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else created this\": it also means no creator is recorded (rows predating the column), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
+          },
+          "createdByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Attribution by NAME: who created this playlist. Resolved server-side from the creator's users.display_name — the label the locker owner typed when minting that person's invite — falling back to their email address when they have none (the locker owner has no invite, and so has none). The raw creator id is still never serialized: this is a name, not the id under another key. createdByMe alone could not answer this — it says \"mine / not mine\", which in a locker holding two collaborators never identifies WHICH of them. Null when no creator is recorded (rows predating the column), null when the creator is not a member of this locker, and null for every reader who is not a member either: an anonymous share or invite holder is outside the locker, and so is a signed-in account belonging to a different locker that happens to hold a share token for this one. Both are served no names at all. Present on the caller's own rows too — rendering those as \"you\" is the client's decision. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\". A collaborator who is REMOVED from the locker no longer blanks this: their account is deleted (so created_by goes null), but the name they were going by is copied onto their rows at that moment and served here instead. The live account always wins while it exists, so renaming yourself still propagates everywhere; the snapshot is a tombstone, not a second source of truth, and it is served under the same membership gate — a reader outside the locker is given no name by either path."
           },
           "name": {
             "type": "string"
@@ -111,11 +139,14 @@
         "required": [
           "id",
           "ownerId",
+          "createdByMe",
           "name",
           "isPublic",
           "createdAt",
-          "updatedAt"
-        ]
+          "updatedAt",
+          "createdByName"
+        ],
+        "description": "A playlist as returned by every route that serves one. created_by is never serialized: it is replaced by the per-request createdByMe boolean, so the shape is identical for a locker session and for an anonymous share/invite holder (who simply always gets false). One serializer, not two — see lib/public-playlist.ts."
       },
       "Track": {
         "type": "object",
@@ -153,6 +184,17 @@
           "hasStream": {
             "type": "boolean",
             "description": "Whether a streaming rendition exists yet. Replaces originalKey/streamKey, which were bucket coordinates and are no longer exposed to clients."
+          },
+          "uploadedByMe": {
+            "type": "boolean",
+            "description": "Attribution, NOT permission: whether the requesting session uploaded this track. Computed per request. The raw uploader id (tracks.uploaded_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id. Do not build a delete control from this field alone: DELETE /tracks/{id} lets the locker owner delete any track, so the owner gets false on every collaborator upload they are nonetheless allowed to delete. The client-side rule is uploadedByMe OR locker ownership. (For a collaborator the two now coincide — they may delete exactly the tracks they uploaded — but the field is still attribution that happens to match, not the authority itself.) The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous and must not be rendered as \"someone else uploaded this\": it also means no uploader is recorded (rows predating the column, or an uploader since deleted — the column is ON DELETE SET NULL), or that the requester has no identity to compare, which includes an anonymous share/invite holder."
+          },
+          "uploadedByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Attribution by NAME: who uploaded this track. The exact counterpart of Playlist.createdByName, with the same resolution (users.display_name, copied from the uploader's invite label at redemption, falling back to their email) and the same rules. The raw uploader id is still never serialized on any route. Null when no uploader is recorded — rows predating the column, an anonymous edit-share upload, which has no user id to record, and an edit-share upload by a signed-in account that is NOT a member of this locker, which is credited the same way — and null for every reader who is not a member of the locker, which means an anonymous share/invite holder AND a signed-in account belonging to some other locker. Names are locker-internal: they are resolved only for accounts inside the locker being read, and only for a reader inside it. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\". A collaborator who is REMOVED from the locker no longer blanks this: their account is deleted (so uploaded_by goes null), but the name they were going by is copied onto their rows at that moment and served here instead. The live account always wins while it exists, so renaming yourself still propagates everywhere; the snapshot is a tombstone, not a second source of truth, and it is served under the same membership gate — a reader outside the locker is given no name by either path."
           }
         },
         "required": [
@@ -161,7 +203,9 @@
           "title",
           "position",
           "uploadedAt",
-          "hasStream"
+          "hasStream",
+          "uploadedByMe",
+          "uploadedByName"
         ]
       },
       "PublicTrackSummary": {
@@ -243,14 +287,8 @@
               "string",
               "null"
             ],
-            "format": "date-time"
-          },
-          "resolvedBy": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
+            "format": "date-time",
+            "description": "When the comment was resolved, or null if open. WHO resolved it is recorded in the database (comments.resolved_by) as an audit field but is deliberately never serialized: it is a raw internal user id, and any locker member may resolve, so putting it on the wire would disclose collaborator ids to share holders. comments.ts strips it via publicComment()."
           },
           "deleteToken": {
             "type": "string",
@@ -319,6 +357,10 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "mintedByMe": {
+            "type": "boolean",
+            "description": "Attribution, NOT permission: whether the requesting session minted this share link. Computed per request. The raw minter id (shares.created_by) is never serialized to any client on any route — a locker may hold several collaborators, and none of them may learn another's user id; the same rule as tracks.uploaded_by and playlists.created_by. Do not build a control gate from this field: share links are locker-level state, so any member of the locker may revoke or re-permission any link regardless of who minted it. It exists so the owner can tell their own links from a collaborator's — which matters because removing a collaborator deletes every link they minted (shares.created_by is ON DELETE CASCADE). The server never reads this field back — authorisation is decided from stored columns on every request. False is ambiguous: it also means no minter is recorded (a state migration 0004 backfilled away), or that the requester has no identity to compare."
           }
         },
         "required": [
@@ -326,7 +368,73 @@
           "playlistId",
           "token",
           "permission",
+          "createdAt",
+          "mintedByMe"
+        ]
+      },
+      "CollaboratorInvite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string",
+            "description": "Owner-supplied name for the person invited. Not an email — nothing is sent; the owner delivers the link themselves. This label BECOMES that person's display name when they redeem the invite (users.display_name), so it is shown to every member of the locker on every track and playlist they touch — it is not a private note. Stored trimmed, and held to the same rules as POST /auth/display-name: at most 100 characters measured after trimming, and no line breaks or control characters."
+          },
+          "token": {
+            "type": "string",
+            "description": "The one-shot redemption secret. 32 lowercase hex characters."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "acceptedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Null while the invite is still pending."
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "token",
           "createdAt"
+        ]
+      },
+      "CollaboratorMember": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name this member's uploads and playlists are attributed to elsewhere in the API (Track.uploadedByName, Playlist.createdByName): the label the owner typed when minting their invite, copied onto the account at redemption. Null for a member who redeemed before the column existed, in which case their attribution falls back to the email above. Attribution, not permission — every collaborator has identical rights regardless of this field."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "createdAt",
+          "displayName"
         ]
       }
     }
@@ -443,6 +551,10 @@
                   "password": {
                     "type": "string",
                     "minLength": 8
+                  },
+                  "inviteToken": {
+                    "type": "string",
+                    "description": "A collaborator invite token, from POST /collab/invites. An invite is its own authorisation to create an account, so a valid unredeemed one creates the account even where registration is otherwise closed, and binds it to the inviting owner's locker. Each invite is good for exactly one account: unknown, already-redeemed and expired tokens all fail with 403 and never fall through to ordinary signup."
                   }
                 },
                 "required": [
@@ -462,21 +574,7 @@
                   "type": "object",
                   "properties": {
                     "user": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "format": "uuid"
-                        },
-                        "email": {
-                          "type": "string",
-                          "format": "email"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "email"
-                      ]
+                      "$ref": "#/components/schemas/User"
                     },
                     "token": {
                       "type": "string",
@@ -502,7 +600,7 @@
             }
           },
           "403": {
-            "description": "Registration is closed. Signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true.",
+            "description": "Registration is closed, or the supplied inviteToken is not valid. Without an invite, signup is permitted only while the instance has no accounts, unless ALLOW_SIGNUP=true. With one, unknown, already-redeemed and expired tokens are refused identically, and are checked before the duplicate-email 409 so signup cannot be used to confirm an address. A valid invite is also refused when the locker has no seat left, since MAX_COLLABORATORS is re-checked at redemption and may have been lowered since the invite was minted; that refusal leaves the invite unspent and redeemable once room is made, and like every other invite refusal it is answered before the duplicate-email 409, so a full locker cannot be used to confirm an address. It also carries the SAME body as an invalid token, so the holder of a guessed token cannot tell a real invite from a fake one, nor learn the instance's seat cap.",
             "content": {
               "application/json": {
                 "schema": {
@@ -512,7 +610,7 @@
             }
           },
           "409": {
-            "description": "Email already registered.",
+            "description": "Email already registered. Also returned when two concurrent signups contend for one address and this one loses at the insert; if it carried an invite, that invite is handed back unspent.",
             "content": {
               "application/json": {
                 "schema": {
@@ -571,21 +669,7 @@
                   "type": "object",
                   "properties": {
                     "user": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "format": "uuid"
-                        },
-                        "email": {
-                          "type": "string",
-                          "format": "email"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "email"
-                      ]
+                      "$ref": "#/components/schemas/User"
                     },
                     "token": {
                       "type": "string"
@@ -840,7 +924,7 @@
     "/playlists/{id}": {
       "get": {
         "summary": "Get a playlist and its tracks",
-        "description": "Gated: requires the owner's session OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404.",
+        "description": "Gated: requires a session acting in the playlist's locker (owner or collaborator) OR a valid share/invite token for this playlist, via Bearer header or `?token=`. A private/nonexistent/inaccessible playlist all return the same non-enumerable 404. Because this route admits anonymous share holders as well as locker sessions, neither the playlist's created_by nor any track's uploaded_by is serialized; createdByMe and uploadedByMe are computed from the caller's session instead — both false when there is none. The same applies to the attribution NAMES (createdByName, uploadedByName): a caller who is not a MEMBER of this playlist's locker is served null for every one of them, whether they are an anonymous share holder or a signed-in account belonging to another locker that also holds a share token for this one. Share links go to people outside the locker, and the band's names are not part of what a listen link grants.",
         "operationId": "getPlaylist",
         "security": [
           {
@@ -910,7 +994,7 @@
       },
       "patch": {
         "summary": "Update a playlist",
-        "description": "Owner session only. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1).",
+        "description": "Requires a session in the playlist's locker: the owner or one of their collaborators may rename it. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1). isPublic is the locker owner's to change — a collaborator changing it in either direction is refused with 403.",
         "operationId": "updatePlaylist",
         "security": [
           {
@@ -982,8 +1066,18 @@
               }
             }
           },
+          "403": {
+            "description": "isPublic is the locker owner's field to change — a collaborator attempting to publish or un-publish is refused. Unlike the 404 below, this is deliberately not non-enumerable: the caller can already read this playlist, so hiding its existence would only mislead them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
-            "description": "Not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Outside the caller's locker, or does not exist (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -996,7 +1090,7 @@
       },
       "delete": {
         "summary": "Delete a playlist",
-        "description": "Owner session only.",
+        "description": "Locker-scoped, then narrowed by who created the playlist. The session must act in the playlist's locker, otherwise 404. Within the locker: the owner may delete any playlist; a collaborator may delete only one whose created_by is their own user id, and a null created_by reads as the owner's. Deleting a playlist does not delete its tracks — the FK is ON DELETE SET NULL, so they are detached back into the locker's library.",
         "operationId": "deletePlaylist",
         "security": [
           {
@@ -1044,7 +1138,7 @@
             }
           },
           "404": {
-            "description": "Not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Non-enumerable. Three causes, indistinguishable to the caller: the playlist does not exist; it belongs to another locker; or it is in the caller's locker but the caller is a collaborator who did not create it (including any playlist with a null created_by).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1059,7 +1153,7 @@
     "/playlists/{id}/reorder": {
       "patch": {
         "summary": "Reorder a playlist's tracks",
-        "description": "Owner session only. Sets each track's position to its index in trackIds.",
+        "description": "Locker-scoped: the playlist's locker owner or a collaborator session, or an `edit` share token for this playlist (Bearer header or `?token=`, no session required). Sets each track's position to its index in trackIds.",
         "operationId": "reorderPlaylistTracks",
         "security": [
           {
@@ -1309,10 +1403,55 @@
         }
       }
     },
+    "/tracks": {
+      "get": {
+        "summary": "List the locker's track library",
+        "description": "Every track in the caller's locker — in a playlist or not, uploaded by the locker owner or by any collaborator on that locker — newest first. Scoped by locker, not by uploader: a collaborator sees the owner's uploads and vice versa. Each row's uploadedByMe says whether the caller uploaded it; the uploader's user id itself is never returned. uploadedByName says WHOSE it is by name, which the boolean cannot: with two collaborators in one locker, \"not mine\" does not identify which of them.",
+        "operationId": "listTracks",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The locker's tracks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tracks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Track"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tracks"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tracks/upload": {
       "post": {
         "summary": "Upload a track",
-        "description": "Multipart upload. With `playlistId` the caller must be able to edit that playlist (owner session or an \"edit\" share token); without it the track lands in the caller's library and a session is required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes.",
+        "description": "Multipart upload. With `playlistId` the caller must be able to edit that playlist: the locker owner or a collaborator session, or an \"edit\" share token (Bearer header or `?token=`, no session required); without it the track lands in the caller's library and a session is required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes. ATTRIBUTION: the upload is credited (tracks.uploaded_by, surfaced as uploadedByName) only when the acting session is a member of the playlist's locker. An anonymous edit-share upload has no id to record, and an edit-share upload by a signed-in account from a DIFFERENT locker is recorded the same way — with no uploader — so an outsider holding an edit link cannot write a name of their choosing into the locker's attribution. Who may upload is unaffected.",
         "operationId": "uploadTrack",
         "security": [
           {
@@ -1363,7 +1502,7 @@
         },
         "responses": {
           "201": {
-            "description": "Track created and appended to the end of the playlist.",
+            "description": "Track created — appended to the end of the playlist, or added to the locker's library when no playlistId was given. Note that an anonymous edit-share uploader has no user id to record, so uploadedBy is stored as null and this response carries uploadedByMe: false even though the caller just uploaded the track.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1426,7 +1565,7 @@
     "/tracks/{id}/stream": {
       "get": {
         "summary": "Stream a track (private)",
-        "description": "Gated by the parent playlist: owner session or a valid share token, via Bearer or `?token=` (an <audio> tag cannot send an Authorization header). Supports byte-range requests. Anonymous access to public playlists' tracks goes through the separate /public/v1/tracks/{id}/stream route instead.",
+        "description": "A track in a playlist is gated by the parent playlist: a session acting in the playlist's locker (the owner, or a collaborator) or a valid share token, via Bearer or `?token=` (an <audio> tag cannot send an Authorization header). A library track (no playlist) is gated on the locker directly: the owner's session or a collaborator's session, not the raw acting user. Supports byte-range requests. Anonymous access to public playlists' tracks goes through the separate /public/v1/tracks/{id}/stream route instead.",
         "operationId": "streamTrack",
         "security": [
           {
@@ -1503,7 +1642,7 @@
     "/tracks/{id}/download": {
       "get": {
         "summary": "Download the original upload",
-        "description": "Returns the original file byte-for-byte — the untouched master, not the lossy streaming rendition. Gated identically to /tracks/{id}/stream: a track in a playlist needs owner session or a valid share token; a library track (no playlist) is owner-only. Accepts the token via Bearer or the `?token=` query parameter, so a plain `<a download>` link works. Responds with `Content-Disposition: attachment` naming the stored filename — both an ASCII-sanitized `filename=` and an RFC 5987 percent-encoded `filename*=UTF-8''...` are emitted, since uploaded titles routinely contain non-Latin1 characters. Does not support Range requests.",
+        "description": "Returns the original file byte-for-byte — the untouched master, not the lossy streaming rendition. Gated identically to /tracks/{id}/stream: a track in a playlist needs a session acting in the playlist's locker (the owner, or a collaborator) or a valid share token; a library track (no playlist) is gated on the locker directly — the owner's session or a collaborator's session, not the raw acting user. Accepts the token via Bearer or the `?token=` query parameter, so a plain `<a download>` link works. Responds with `Content-Disposition: attachment` naming the stored filename — both an ASCII-sanitized `filename=` and an RFC 5987 percent-encoded `filename*=UTF-8''...` are emitted, since uploaded titles routinely contain non-Latin1 characters. Does not support Range requests.",
         "operationId": "downloadTrack",
         "security": [
           {
@@ -1559,9 +1698,93 @@
       }
     },
     "/tracks/{id}": {
+      "patch": {
+        "summary": "Move a track into or out of a playlist",
+        "description": "Sets the track's parent playlist. `playlistId: null` moves it back to the bare library. Both the track and the destination playlist must belong to the caller's locker; either failing returns the same non-enumerable 404. The track is appended to the end of the destination's order.",
+        "operationId": "moveTrack",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "playlistId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid",
+                    "description": "Destination playlist, or null to move the track to the bare library."
+                  }
+                },
+                "required": [
+                  "playlistId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The moved track.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "track": {
+                      "$ref": "#/components/schemas/Track"
+                    }
+                  },
+                  "required": [
+                    "track"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Track or destination playlist is outside the caller's locker, or does not exist (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "summary": "Delete a track",
-        "description": "Session-authenticated caller must own the track's parent playlist. Deletes the original (and stream, if distinct) object from storage, then the row.",
+        "description": "Locker-scoped, then narrowed by who uploaded the track. The caller's session must act in the track's locker (its ownerId), otherwise 404; library tracks with no parent playlist are covered by the same check. This locker check is what changed for collaborators: it previously compared the track's ownerId against the raw session user id, which no collaborator ever matched, so a collaborator was refused on every track in the locker. For an owner it is unchanged. Within the locker: the owner may delete any track; a collaborator may delete only a track whose uploaded_by is their own user id, and is 404'd otherwise. A null uploaded_by (rows predating the column, an uploader since removed — the column is ON DELETE SET NULL — or an upload by an anonymous edit-share holder) reads as the owner's, so a collaborator may not delete it. The guard runs before any storage call: a refused delete leaves both the row and the stored objects intact. On success this deletes the original (and stream, if distinct) object from storage, then the row — the original is the lossless master, and there is no soft delete or undo.",
         "operationId": "deleteTrack",
         "security": [
           {
@@ -1609,7 +1832,7 @@
             }
           },
           "404": {
-            "description": "Track or its parent playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Non-enumerable. Three causes, indistinguishable to the caller: the track does not exist; it belongs to another locker; or it is in the caller's locker but the caller is a collaborator who did not upload it (including any track with a null uploaded_by). No parent-playlist check is performed — this route reads tracks.owner_id and tracks.uploaded_by only, so library tracks with no playlist are covered by the same rule.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1864,7 +2087,7 @@
     "/comments/{id}/resolve": {
       "patch": {
         "summary": "Toggle a comment's resolved state",
-        "description": "Bearer session required and must own the comment's playlist. Unlike the other comment routes this is NOT accessible via share token or `?token=` — it returns 401 if unauthenticated and 403 (not 404) if authenticated but not the owner, since the comment's existence is already implied by the caller having its id.",
+        "description": "Bearer session required, and the caller must be a member of the comment's locker — the owner, or a collaborator whose `users.lockerOwnerId` points at them. Moderation is library work, not locker administration (DL, 2026-08-08). The locker is resolved from the comment's playlist, or — for a comment on a library track in no playlist — from the track itself, the same fallback POST /comments uses. Not accessible via share token: it returns 401 if unauthenticated. A refusal is a non-enumerable 404 unless the caller has already demonstrated read access to the comment's playlist (e.g. by also presenting a valid share token), in which case it is 403 — for them the comment's existence is not a secret and a 404 would only mislead. The database records the acting USER (not the locker) as the resolver, but that id is never returned — see the Comment schema's resolvedAt.",
         "operationId": "resolveComment",
         "security": [
           {
@@ -1912,7 +2135,7 @@
             }
           },
           "403": {
-            "description": "Authenticated but does not own the comment's playlist.",
+            "description": "Authenticated, and can read the comment's playlist, but is not a member of its locker.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1922,7 +2145,7 @@
             }
           },
           "404": {
-            "description": "Comment (or its resolvable playlist) does not exist.",
+            "description": "Comment does not exist, has no resolvable playlist or track, or the caller is not a member of its locker and cannot read it (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1937,7 +2160,7 @@
     "/comments/{id}": {
       "delete": {
         "summary": "Delete a comment",
-        "description": "Allowed if the request supplies the matching `X-Delete-Token` header (anonymous author, issued at creation), OR if the Bearer-authed caller owns the comment's playlist. Deletes any replies first, then the comment itself.",
+        "description": "Allowed if the request supplies the matching `X-Delete-Token` header (anonymous author, issued at creation), OR if the Bearer-authed caller is a member of the comment's locker — the owner, or a collaborator (DL, 2026-08-08). The locker is resolved from the comment's playlist, or — for a comment on a library track in no playlist — from the track itself. Deletes any replies first, then the comment itself. A refusal is a non-enumerable 404 unless the caller has already demonstrated read access to the comment's playlist (e.g. a share token via `?token=` or Bearer), in which case it is 403.",
         "operationId": "deleteComment",
         "security": [
           {
@@ -1985,7 +2208,7 @@
             }
           },
           "403": {
-            "description": "Neither a valid X-Delete-Token nor playlist ownership.",
+            "description": "Can read the comment's playlist, but has neither a valid X-Delete-Token nor membership of its locker.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1995,7 +2218,7 @@
             }
           },
           "404": {
-            "description": "Comment does not exist.",
+            "description": "Comment does not exist, or the caller may neither moderate nor read it (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2010,7 +2233,7 @@
     "/shares": {
       "post": {
         "summary": "Create a share/invite for a playlist",
-        "description": "Owner session only. Issues a random unguessable token granting `listen` or `edit` access to the playlist, optionally tied to an email for reference.",
+        "description": "Locker-scoped: any session acting in the playlist's locker — its owner or a collaborator — may call this. Issues a random unguessable token granting `listen` or `edit` access to the playlist, optionally tied to an email for reference.",
         "operationId": "createShare",
         "security": [
           {
@@ -2091,7 +2314,7 @@
             }
           },
           "403": {
-            "description": "Collaborator limit reached (MAX_COLLABORATORS).",
+            "description": "Per-playlist share-link limit reached (MAX_SHARE_LINKS). Not MAX_COLLABORATORS — that caps collaborator seats, and the two were split in 0.2.13.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2101,7 +2324,7 @@
             }
           },
           "404": {
-            "description": "Playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Playlist not in the caller's locker, or does not exist (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2116,7 +2339,7 @@
     "/shares/playlist/{playlistId}": {
       "get": {
         "summary": "List shares for a playlist",
-        "description": "Owner session only.",
+        "description": "Locker-scoped: any session acting in the playlist's locker — its owner or a collaborator — may call this.",
         "operationId": "listPlaylistShares",
         "security": [
           {
@@ -2167,7 +2390,7 @@
             }
           },
           "404": {
-            "description": "Playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Playlist not in the caller's locker, or does not exist (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2182,7 +2405,7 @@
     "/shares/{id}": {
       "delete": {
         "summary": "Revoke a share",
-        "description": "Owner (of the share's playlist) session only.",
+        "description": "Locker-scoped: any session acting in the share's playlist's locker — its owner or a collaborator — may revoke it, including a link a different collaborator or the owner created.",
         "operationId": "deleteShare",
         "security": [
           {
@@ -2230,7 +2453,7 @@
             }
           },
           "404": {
-            "description": "Share does not exist, or its playlist is not owned by the caller (non-enumerable).",
+            "description": "Share does not exist, or its playlist is not in the caller's locker (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2591,6 +2814,407 @@
           },
           "401": {
             "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/display-name": {
+      "post": {
+        "summary": "Set your own display name",
+        "description": "Open to ANY authenticated session, not just the locker owner. The owner has no invite to take a name from, so without this their login address was shown on every row they uploaded, to every collaborator, permanently; a collaborator uses the same route to correct a name the owner mistyped when inviting them. The value is trimmed; empty or whitespace-only stores null (unset) rather than an empty string, because null is what falls back to the email. Names longer than 100 characters after trimming — the same cap the invite label carries, since that label becomes this value at redemption — are rejected, as are line breaks and control characters: the name is rendered as text content, so this is a layout and impersonation limit rather than an escaping one. Both rules are applied to the TRIMMED value, so a pasted trailing newline is trimmed away rather than refused, while an interior one is still refused. A non-string is rejected outright. The stored value is returned so the client can show what was actually saved.",
+        "operationId": "setDisplayName",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "description": "The name to show on this account's uploads and playlists, measured after trimming. Send \"\" (or any whitespace-only string) to unset it, which stores null and returns attribution to the email address."
+                  }
+                },
+                "required": [
+                  "displayName"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Name stored. `displayName` is the value as stored — trimmed, or null when it was cleared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "displayName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "displayName"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a string, longer than 100 characters after trimming, or containing line breaks or control characters. Nothing is stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/invites": {
+      "post": {
+        "summary": "Mint a collaborator invite",
+        "description": "Owner-only. Creates a one-shot invite link that lets one person sign up as a collaborator on this locker, sharing the owner's library rather than getting one of their own. A collaborator calling this gets 404: invites do not chain. Nothing is emailed — the owner delivers the token themselves.",
+        "operationId": "createCollaboratorInvite",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "description": "The name the owner is giving this person. It identifies the pending invite in the owner's access list, and at redemption it is copied onto the new account as its display name, from where it is shown to the whole locker as the attribution on that person's uploads. Trimmed before storage; whitespace-only is refused as missing (unlike POST /auth/display-name, where whitespace means unset, because an owner naming someone else must have typed something). Refused with 400 if it exceeds 100 characters after trimming, or contains line breaks or control characters — the same rules POST /auth/display-name applies, because both write the same column."
+                  }
+                },
+                "required": [
+                  "label"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invite created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invite": {
+                      "$ref": "#/components/schemas/CollaboratorInvite"
+                    }
+                  },
+                  "required": [
+                    "invite"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Label missing, blank, or longer than 100 characters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Collaborator limit reached (MAX_COLLABORATORS counts current members plus pending invites).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller is not this locker's owner, or the target is not in their locker (non-enumerable — collaborators get the same 404 as strangers).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List this locker's collaborator invites",
+        "description": "Owner-only. Both pending and already-redeemed invites; `acceptedAt` distinguishes them.",
+        "operationId": "listCollaboratorInvites",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invites.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CollaboratorInvite"
+                      }
+                    }
+                  },
+                  "required": [
+                    "invites"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller is not this locker's owner, or the target is not in their locker (non-enumerable — collaborators get the same 404 as strangers).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/invites/{id}": {
+      "delete": {
+        "summary": "Revoke a collaborator invite",
+        "description": "Owner-only. Deletes the invite so its token can no longer be redeemed. Revoking an already-redeemed invite removes the record but does not remove the collaborator — use DELETE /collab/members/{id} for that.",
+        "operationId": "deleteCollaboratorInvite",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invite does not exist or belongs to another locker (non-enumerable).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/members": {
+      "get": {
+        "summary": "List this locker's collaborators",
+        "description": "Owner-only. The people who have redeemed an invite and now share this library. Ids are returned here because the owner needs them to remove a member; they are not exposed anywhere else. Each member carries the displayName their uploads are attributed to, plus their email — the address is kept here because this is the owner's own member-management view, where it is the identifier that removes the right account.",
+        "operationId": "listCollaborators",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CollaboratorMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "members"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller is not this locker's owner, or the target is not in their locker (non-enumerable — collaborators get the same 404 as strangers).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collab/members/{id}": {
+      "delete": {
+        "summary": "Remove a collaborator",
+        "description": "Owner-only. Deletes the collaborator's account: their sessions are dropped, so they are signed out everywhere. Their music STAYS — tracks and playlists they added keep belonging to the locker (`uploadedBy`/`createdBy` go null) while KEEPING THE DEPARTED MEMBER'S NAME: the name they were going by is written onto their tracks and playlists immediately before the account is deleted, so `uploadedByName`/`createdByName` still read \"Jimmy\" on the demos they left behind instead of going blank. The snapshot is their display_name ONLY: a member who never had one (no invite label, and they never called POST /auth/display-name) leaves those rows with no attribution at all rather than their email address. Elsewhere a nameless account falls back to its address, but this write is permanent — no route can edit it once the account is gone — so an address would be frozen into the locker forever. What does not stay is anything they handed out: every share link they minted, listen and edit alike, is deleted with them. A share link never expires on its own and a listen link can download the lossless master, so removing the person has to remove their grants too.",
+        "operationId": "deleteCollaborator",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user, or that user is not a collaborator on the caller's locker (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {

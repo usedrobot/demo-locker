@@ -2,13 +2,14 @@
 // track, and comment routes. Phase B publishes playlist IDs on the open web,
 // so an unguessable ID is no longer a capability. A request may read/write
 // private playlist data iff it presents a valid, unexpired session or
-// share/invite token that maps to the playlist (a session token only grants
-// access when it belongs to the playlist's owner).
+// share/invite token that maps to the playlist (a session token grants
+// access when it acts in the playlist's locker — either the owner, or a
+// collaborator whose `users.lockerOwnerId` points at that owner).
 //
-// NOTE on the data model: `shares` has no user column — "collaborators" are
-// represented entirely by share tokens (shares.playlistId -> token), which map
-// 1:1 to a playlist. There is no collaborator-*user* relation, so the only
-// session-based access is ownership; every other grant is via a share token.
+// NOTE on the data model: `shares` has no user column — share/invite tokens
+// (shares.playlistId -> token) map 1:1 to a playlist and grant access to
+// anyone holding the token, collaborator or not. The locker resolution for
+// session tokens is done via `lib/locker.ts`'s `lockerIdForUserId`.
 //
 // Callers must translate a `false` result into the same non-enumerable
 // `{ error: "not found" }` 404 the public API uses — never 401/403.
@@ -18,6 +19,7 @@ import type { Context } from "hono";
 import { getDb, type Database } from "../db/index.js";
 import { playlists, shares } from "../db/schema.js";
 import { bearerToken, findSession } from "./session.js";
+import { lockerIdForUserId } from "./locker.js";
 import type { Env } from "../types.js";
 
 type AccessCreds = {
@@ -54,19 +56,22 @@ export async function canAccessPlaylist(
     return true;
   }
 
-  // token as a session token whose user owns the playlist
+  // token as a session token acting in the playlist's locker (the owner, or a
+  // collaborator on that owner's locker)
   const session = await findSession(db, token);
-  if (session && session.expiresAt >= new Date() && session.userId === playlist.ownerId) {
-    return true;
+  if (session && session.expiresAt >= new Date()) {
+    const lockerId = await lockerIdForUserId(db, session.userId);
+    if (lockerId === playlist.ownerId) return true;
   }
 
   return false;
 }
 
-// EDIT capability: the playlist owner's session, or a share token whose
-// permission is "edit" (and not expired). Grants upload + reorder on that
-// playlist. Returns the ownerId when allowed (uploads by collaborators are
-// attributed to the locker owner), or null when denied.
+// EDIT capability: a session acting in the playlist's locker (the owner, or a
+// collaborator on that owner's locker), or a share token whose permission is
+// "edit" (and not expired). Grants upload + reorder on that playlist. Returns
+// the ownerId when allowed (uploads by collaborators are attributed to the
+// locker owner), or null when denied.
 export async function requestCanEditPlaylist(
   c: Context<Env>,
   playlistId: string
@@ -86,12 +91,9 @@ export async function requestCanEditPlaylist(
     if (!token) continue;
 
     const session = await findSession(db, token);
-    if (
-      session &&
-      session.expiresAt >= new Date() &&
-      session.userId === playlist.ownerId
-    ) {
-      return playlist.ownerId;
+    if (session && session.expiresAt >= new Date()) {
+      const lockerId = await lockerIdForUserId(db, session.userId);
+      if (lockerId === playlist.ownerId) return playlist.ownerId;
     }
 
     const [share] = await db
@@ -112,7 +114,11 @@ export async function requestCanEditPlaylist(
 
 // Resolve the request's session user (from `?token=` or Bearer), if any.
 // Used for resources gated on ownership alone, e.g. library tracks that are
-// not in any playlist.
+// not in any playlist. Returns who is acting, NOT which locker they act in —
+// callers that need to compare against a locker (e.g. attributing an upload
+// to the owner while recording who actually did it) must resolve that
+// themselves via `lockerIdForUserId`; this function must keep returning the
+// raw acting user id.
 export async function requestSessionUserId(
   c: Context<Env>
 ): Promise<string | null> {

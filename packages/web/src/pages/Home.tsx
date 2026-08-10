@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   playlists as api,
   tracks as tracksApi,
@@ -8,10 +8,13 @@ import {
   type Track,
   type Share,
   setToken,
+  isAuthFailure,
 } from "../lib/api";
 import { player } from "../lib/audio";
 import { cycleAccent } from "../lib/theme";
 import Logo from "../components/Logo";
+import CollabPanel from "../components/CollabPanel";
+import Attribution from "../components/Attribution";
 import Upload from "../components/Upload";
 import PendingTrackRow from "../components/PendingTrackRow";
 import { useUploadQueue } from "../lib/use-upload-queue";
@@ -42,17 +45,62 @@ export default function Home({ onSelect, onLogout }: Props) {
   const [pwError, setPwError] = useState("");
   const [pwDone, setPwDone] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
+  const [showName, setShowName] = useState(false);
+  // What the field holds while the panel is open, kept apart from `savedName`
+  // so a background refetch (the tab regaining focus) cannot overwrite what
+  // someone is halfway through typing.
+  const [nameDraft, setNameDraft] = useState("");
+  const [savedName, setSavedName] = useState<string | null>(null);
+  const [accountEmail, setAccountEmail] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [nameDone, setNameDone] = useState(false);
+  const [nameBusy, setNameBusy] = useState(false);
+  // Dedupes a double submit synchronously, since `nameBusy` is not visible
+  // until the next render. Deliberately NOT a `disabled`: a disabled control
+  // blurs to <body> in a real browser and nothing puts focus back, so disabling
+  // would owe a refocus effect (SharePanel.tsx has one) — disable-and-refocus
+  // is one pattern, and this form has no other reason to need either half.
+  // Same choice, for the same reason, as pages/Join.tsx.
+  const nameBusyRef = useRef(false);
   const [accessShares, setAccessShares] = useState<Share[]>([]);
+  // Null until the session is resolved. Owner-only surfaces render on `true`
+  // alone, never on "not false", so a collaborator never sees them flash.
+  // Resolved in the same load() as the lists, so rows are never painted before
+  // it is known which of their delete controls belong on screen.
+  const [isOwner, setIsOwner] = useState<boolean | null>(null);
+  // Mirrors "we have resolved who this session is" for load(), which is a
+  // useCallback with no dependencies and so cannot read the state above.
+  const identityKnownRef = useRef(false);
+  const [playlistError, setPlaylistError] = useState("");
+  const [trackError, setTrackError] = useState("");
+  // Refusals from the access panel's three writes. They used to be unhandled
+  // rejections: the row simply did not change and nothing said why.
+  const [accessError, setAccessError] = useState("");
 
   async function openAccess() {
-    const r = await sharesApi.listAll();
-    setAccessShares(r.shares);
-    setShowAccess(true);
+    setAccessError("");
+    try {
+      const r = await sharesApi.listAll();
+      setAccessShares(r.shares);
+      setShowAccess(true);
+    } catch (err) {
+      setAccessError(err instanceof Error ? err.message : "couldn't load your links");
+      setShowAccess(true);
+    }
   }
 
   async function toggleEdit(share: Share) {
     const next = share.permission === "edit" ? "listen" : "edit";
-    const r = await sharesApi.setPermission(share.id, next);
+    setAccessError("");
+    let r;
+    try {
+      r = await sharesApi.setPermission(share.id, next);
+    } catch (err) {
+      // Local state is left alone: the row keeps showing what the server
+      // still believes, rather than a permission that was refused.
+      setAccessError(err instanceof Error ? err.message : "couldn't change that link");
+      return;
+    }
     setAccessShares(
       accessShares.map((s) =>
         s.id === share.id ? { ...s, permission: r.share.permission } : s
@@ -61,7 +109,13 @@ export default function Home({ onSelect, onLogout }: Props) {
   }
 
   async function revokeShare(id: string) {
-    await sharesApi.revoke(id);
+    setAccessError("");
+    try {
+      await sharesApi.revoke(id);
+    } catch (err) {
+      setAccessError(err instanceof Error ? err.message : "couldn't revoke that link");
+      return;
+    }
     setAccessShares(accessShares.filter((s) => s.id !== id));
   }
 
@@ -82,12 +136,39 @@ export default function Home({ onSelect, onLogout }: Props) {
       setLoadError("");
     }
     try {
-      const [r, lib] = await Promise.all([api.list(), tracksApi.list()]);
+      // auth.me() rides along with the lists rather than in an effect of its
+      // own: `isOwner` decides which delete controls each row may show, so
+      // learning it a tick later would paint the wrong affordances first.
+      //
+      // It rides the first load, and any later one that still does not know
+      // who this is (an earlier attempt having failed) — but not every focus
+      // refetch. Who you are does not change while the tab is in the
+      // background, and the one thing that would change it, being removed from
+      // the locker, deletes the session with it: the two list calls below then
+      // fail and the branch under this one catches that. A third request on
+      // every focus bought nothing.
+      const [r, lib, me] = await Promise.all([
+        api.list(),
+        tracksApi.list(),
+        background && identityKnownRef.current ? Promise.resolve(null) : auth.me(),
+      ]);
       setPlaylists(r.playlists);
       setLibrary(lib.tracks);
+      if (me) {
+        setIsOwner(me.user.lockerOwnerId === null);
+        setSavedName(me.user.displayName);
+        setAccountEmail(me.user.email);
+        identityKnownRef.current = true;
+      }
       setLoadState("ready");
+      setLoadError("");
     } catch (err) {
-      if (background) return;
+      // A background refetch stays silent on a TRANSIENT failure — inserting
+      // an error mid-view over a blip that self-heals on the next focus is
+      // worse than nothing. An expired or revoked session is not transient:
+      // it does not self-heal, and staying silent left `isOwner` asserting
+      // affordances the server would now refuse. Surfaced either way.
+      if (background && !isAuthFailure(err)) return;
       setLoadError(err instanceof Error ? err.message : "failed to load");
       setLoadState("error");
     }
@@ -115,7 +196,16 @@ export default function Home({ onSelect, onLogout }: Props) {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!newName.trim()) return;
-    const { playlist } = await api.create(newName.trim());
+    setPlaylistError("");
+    let playlist;
+    try {
+      ({ playlist } = await api.create(newName.trim()));
+    } catch (err) {
+      // Notably the playlist cap: the server refuses with a readable message
+      // and the form used to just sit there with the name still in it.
+      setPlaylistError(err instanceof Error ? err.message : "couldn't create that playlist");
+      return;
+    }
     setPlaylists([...playlists, playlist]);
     setNewName("");
   }
@@ -129,16 +219,51 @@ export default function Home({ onSelect, onLogout }: Props) {
     player.play(id);
   }
 
+  async function handleNameSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (nameBusyRef.current) return;
+    nameBusyRef.current = true;
+    setNameBusy(true);
+    setNameError("");
+    setNameDone(false);
+    try {
+      // The server trims, and stores NULL for an empty name — so the response
+      // is what was actually saved, and the field adopts it rather than what
+      // was typed.
+      const { displayName } = await auth.setDisplayName(nameDraft);
+      setSavedName(displayName);
+      setNameDraft(displayName ?? "");
+      setNameDone(true);
+    } catch (err) {
+      setNameError(err instanceof Error ? err.message : "couldn't save that name");
+    } finally {
+      nameBusyRef.current = false;
+      setNameBusy(false);
+    }
+  }
+
+  // Both deletes catch. request() throws on any non-2xx, and the server refuses
+  // a collaborator deleting someone else's row — so without this the user gets
+  // an unhandled rejection and a list that silently does not change. The
+  // control is gated on the same rule below, which makes a refusal unlikely
+  // rather than impossible: the gate is drawn from data that can be stale by
+  // the time the click lands.
   async function handleTrackDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
     if (confirmTrackDeleteId !== id) {
       setConfirmTrackDeleteId(id);
       return;
     }
-    await tracksApi.delete(id);
+    setConfirmTrackDeleteId(null);
+    setTrackError("");
+    try {
+      await tracksApi.delete(id);
+    } catch (err) {
+      setTrackError(err instanceof Error ? err.message : "couldn't delete that track");
+      return;
+    }
     if (player.getState().track?.id === id) player.clear();
     setLibrary(library.filter((t) => t.id !== id));
-    setConfirmTrackDeleteId(null);
   }
 
   async function handleDelete(e: React.MouseEvent, id: string) {
@@ -147,9 +272,15 @@ export default function Home({ onSelect, onLogout }: Props) {
       setConfirmDeleteId(id);
       return;
     }
-    await api.delete(id);
-    setPlaylists(playlists.filter((p) => p.id !== id));
     setConfirmDeleteId(null);
+    setPlaylistError("");
+    try {
+      await api.delete(id);
+    } catch (err) {
+      setPlaylistError(err instanceof Error ? err.message : "couldn't delete that playlist");
+      return;
+    }
+    setPlaylists(playlists.filter((p) => p.id !== id));
   }
 
   function handleLogout() {
@@ -185,6 +316,22 @@ export default function Home({ onSelect, onLogout }: Props) {
             style={{ ...linkStyle, color: showPassword ? "var(--accent)" : "var(--fg-dim)" }}
           >
             [password]
+          </button>
+          <button
+            onClick={() => {
+              if (showName) {
+                setShowName(false);
+                return;
+              }
+              // Seeded on open, from the last value the session reported.
+              setNameDraft(savedName ?? "");
+              setNameError("");
+              setNameDone(false);
+              setShowName(true);
+            }}
+            style={{ ...linkStyle, color: showName ? "var(--accent)" : "var(--fg-dim)" }}
+          >
+            [name]
           </button>
           <button
             onClick={() => {
@@ -286,9 +433,61 @@ export default function Home({ onSelect, onLogout }: Props) {
         </div>
       )}
 
+      {showName && (
+        <div style={{ marginBottom: "2rem" }}>
+          <div className="box-header">your name</div>
+          <form
+            onSubmit={handleNameSubmit}
+            style={{
+              borderTop: "1px solid var(--border)",
+              paddingTop: "0.75rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.5rem",
+              maxWidth: "22rem",
+            }}
+          >
+            <input
+              aria-label="display name"
+              placeholder="your name"
+              style={fieldStyle}
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+            />
+            {/* Unset is not "no name": it is the login address, on every row
+                this account uploaded, to everyone in the locker. Someone
+                deciding whether to fill this in has to be told which address
+                they are otherwise showing. */}
+            <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+              shown on your uploads and playlists — leave it empty to show{" "}
+              {accountEmail} instead
+            </span>
+            <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+              <button type="submit" style={linkStyle}>
+                {nameBusy ? "[saving...]" : "[save]"}
+              </button>
+              {/* role="alert" like the other error surfaces on this page: a
+                  refusal that only changes colour somewhere below the button is
+                  a refusal a screen reader never announces. */}
+              {nameError && (
+                <span role="alert" style={{ color: "var(--error)" }}>
+                  {nameError}
+                </span>
+              )}
+              {nameDone && <span style={{ color: "var(--fg-dim)" }}>saved</span>}
+            </div>
+          </form>
+        </div>
+      )}
+
       {showAccess && (
         <div style={{ marginBottom: "2rem" }}>
           <div className="box-header">access — who can reach your locker</div>
+          {accessError && (
+            <div role="alert" style={{ color: "#f44", fontSize: "12px", padding: "0.5rem 0" }}>
+              {accessError}
+            </div>
+          )}
           <div style={{ borderTop: "1px solid var(--border)" }}>
             {accessShares.length === 0 && (
               <div style={{ color: "var(--fg-dim)", padding: "0.75rem 0" }}>
@@ -312,6 +511,28 @@ export default function Home({ onSelect, onLogout }: Props) {
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {s.email || `link …${s.token.slice(-6)}`}
                 </span>
+                {/* Which of these links the viewer minted themselves. Anyone
+                    in the locker may mint one, so without this the owner
+                    cannot tell a link they handed out from one a collaborator
+                    did — and removing that collaborator silently takes theirs
+                    away (shares.created_by cascades).
+
+                    Marks the POSITIVE case only. `mintedByMe` is false for
+                    several different reasons (no minter recorded, no identity
+                    to compare, or someone else minted it), so rendering
+                    anything on false states more than the field knows — the
+                    invariant lib/public-share.ts spells out. It is also read
+                    by a collaborator: this panel is not owner-gated and
+                    GET /shares is locker-scoped, so a collaborator sees the
+                    OWNER's links here with mintedByMe false. Labelling those
+                    "shared by a collaborator" — which an earlier version of
+                    this row did — was simply wrong.
+
+                    Attribution only: every control on this row works on every
+                    row regardless of the marker. */}
+                {s.mintedByMe && (
+                  <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>yours</span>
+                )}
                 <span
                   style={{
                     color: s.permission === "edit" ? "var(--accent)" : "var(--fg-dim)",
@@ -337,6 +558,26 @@ export default function Home({ onSelect, onLogout }: Props) {
               </div>
             ))}
           </div>
+
+          {/* Owner-only, and on `true` alone: a collaborator may not see who
+              else is in the locker, let alone invite anyone. Every /collab
+              route enforces the same rule with a non-enumerable 404 — this is
+              the UI half, not the guard.
+
+              Lives INSIDE the access panel, under the share links, because
+              both answer one question: who can reach this locker. That means
+              it is now gated twice — the panel must be open AND the viewer
+              must be the owner — but only the inner `isOwner` check is load
+              bearing. The access panel itself is deliberately NOT owner-gated
+              (a collaborator opens it to manage share links, and GET /shares
+              is locker-scoped), so this check is the only thing between a
+              collaborator and the members list. Do not hoist it out of here
+              on the assumption that the enclosing panel is owner-only. */}
+          {isOwner === true && (
+            <div style={{ marginTop: "2rem" }}>
+              <CollabPanel />
+            </div>
+          )}
         </div>
       )}
 
@@ -395,26 +636,44 @@ export default function Home({ onSelect, onLogout }: Props) {
                   />
                 )}
               </div>
-              <span style={{ flex: 1 }}>{p.name}</span>
-              <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
+              {/* minWidth:0 is the other half of Attribution's contract: a
+                  flex item defaults to min-content width, so without this the
+                  name below pushes the row wider than the viewport instead of
+                  the title giving up space. */}
+              <span style={{ flex: 1, minWidth: 0 }}>{p.name}</span>
+              <Attribution mine={p.createdByMe} name={p.createdByName} verb="Created" />
+              <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {new Date(p.updatedAt).toLocaleDateString()}
               </span>
-              <button
-                onClick={(e) => handleDelete(e, p.id)}
-                onMouseLeave={() => setConfirmDeleteId(null)}
-                title={confirmDeleteId === p.id ? "Click again to delete" : "Delete playlist"}
-                aria-label={`Delete playlist ${p.name}`}
-                style={{
-                  ...linkStyle,
-                  color: confirmDeleteId === p.id ? "var(--error)" : "var(--fg-dim)",
-                }}
-              >
-                {confirmDeleteId === p.id ? "[delete?]" : "[x]"}
-              </button>
+              {/* `createdByMe || isOwner` — the client rule stated in
+                  lib/public-playlist.ts. createdByMe alone is wrong for the
+                  owner (false on every collaborator-created playlist they may
+                  nonetheless delete); isOwner alone is wrong for a
+                  collaborator (the server refuses anything they did not
+                  create, and offering the control anyway just 404s). */}
+              {(p.createdByMe || isOwner === true) && (
+                <button
+                  onClick={(e) => handleDelete(e, p.id)}
+                  onMouseLeave={() => setConfirmDeleteId(null)}
+                  title={confirmDeleteId === p.id ? "Click again to delete" : "Delete playlist"}
+                  aria-label={`Delete playlist ${p.name}`}
+                  style={{
+                    ...linkStyle,
+                    color: confirmDeleteId === p.id ? "var(--error)" : "var(--fg-dim)",
+                  }}
+                >
+                  {confirmDeleteId === p.id ? "[delete?]" : "[x]"}
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+      {playlistError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginTop: "0.5rem" }}>
+          {playlistError}
+        </div>
+      )}
 
       <form
         onSubmit={handleCreate}
@@ -495,32 +754,50 @@ export default function Home({ onSelect, onLogout }: Props) {
               <span style={{ color: "var(--accent)", width: "2ch", flex: "none" }}>
                 {isPlaying ? "⏸" : "▶"}
               </span>
-              <span style={{ flex: 1, color: isPlaying ? "var(--accent)" : "var(--fg)" }}>
-                {t.title}
-              </span>
-              <span style={{ color: "var(--fg-dim)", fontSize: "12px" }}>
-                {formatDuration(t.duration)}
-              </span>
-              <button
-                onClick={(e) => handleTrackDelete(e, t.id)}
-                onMouseLeave={() => setConfirmTrackDeleteId(null)}
-                title={
-                  confirmTrackDeleteId === t.id
-                    ? "Click again to delete permanently — this erases the original file"
-                    : "Delete this track and its files for good"
-                }
-                aria-label={`Delete ${t.title} permanently, including the original file`}
+              {/* minWidth:0 — see the playlist row above. */}
+              <span
                 style={{
-                  ...linkStyle,
-                  color: confirmTrackDeleteId === t.id ? "var(--error)" : "var(--fg-dim)",
+                  flex: 1,
+                  minWidth: 0,
+                  color: isPlaying ? "var(--accent)" : "var(--fg)",
                 }}
               >
-                {confirmTrackDeleteId === t.id ? "[delete?]" : "[x]"}
-              </button>
+                {t.title}
+              </span>
+              <Attribution mine={t.uploadedByMe} name={t.uploadedByName} verb="Uploaded" />
+              <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
+                {formatDuration(t.duration)}
+              </span>
+              {/* `uploadedByMe || isOwner` — see lib/public-track.ts. The
+                  server refuses a collaborator deleting someone else's upload,
+                  so an ungated control was offered and then silently 404'd. */}
+              {(t.uploadedByMe || isOwner === true) && (
+                <button
+                  onClick={(e) => handleTrackDelete(e, t.id)}
+                  onMouseLeave={() => setConfirmTrackDeleteId(null)}
+                  title={
+                    confirmTrackDeleteId === t.id
+                      ? "Click again to delete permanently — this erases the original file"
+                      : "Delete this track and its files for good"
+                  }
+                  aria-label={`Delete ${t.title} permanently, including the original file`}
+                  style={{
+                    ...linkStyle,
+                    color: confirmTrackDeleteId === t.id ? "var(--error)" : "var(--fg-dim)",
+                  }}
+                >
+                  {confirmTrackDeleteId === t.id ? "[delete?]" : "[x]"}
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+      {trackError && (
+        <div role="alert" style={{ color: "#f44", fontSize: "12px", marginTop: "0.5rem" }}>
+          {trackError}
+        </div>
+      )}
     </div>
   );
 }

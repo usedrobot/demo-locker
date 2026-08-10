@@ -62,7 +62,9 @@ afterwards and register; the first account in wins — literally, since 0.2.8:
 registration closes as soon as an instance has one account, and later signups
 get `403 {"error":"registration is closed on this instance"}`. Set
 `ALLOW_SIGNUP=true` on the deployment if you actually want open registration
-(you usually don't — collaborators arrive by share link and need no account).
+(you usually don't — listeners arrive by share link and need no account, and
+collaborators get an account through an invite link rather than open signup —
+see **Collaborators** below).
 
 **A freshly deployed custom domain 500s for a few seconds** while the route and
 certificate propagate. The wizard's health poll retries for 60s and absorbs it.
@@ -270,6 +272,110 @@ echo "<demo-locker-player playlist=\"$PLAYLIST_ID\"></demo-locker-player>"
 
 Drop those two lines into any page. See [docs/embed.md](docs/embed.md) for
 theming, `::part()` hooks, and the full public API reference.
+
+## Collaborators
+
+Most people who need access to the music want a **share link** — no account,
+nothing to manage. Collaborators are the other case: a bandmate or engineer who
+should be able to *add* to the library, not just listen to it. A collaborator
+signs in with their own account but has no locker of their own; they work
+inside the owner's library, so every playlist and track stays owned by the
+owner no matter who created it.
+
+Registration is closed on an instance once it has an owner, so an invite is the
+only way a second account can exist. Every route below is **owner-only** — a
+collaborator calling any of them gets the same non-enumerable 404 a stranger
+does. Invites do not chain, and collaborators cannot remove each other.
+
+```bash
+# Mint an invite. `label` is the NAME you are giving this person: it becomes
+# their display name when they redeem the invite, and every member of the
+# locker then sees it on every track and playlist they touch. It is not a
+# private note to yourself. They can change it afterwards (POST
+# /auth/display-name) — you cannot, once they have joined. Nothing is emailed;
+# you hand the link over yourself.
+#
+# At most 100 characters after trimming, and no line breaks or control
+# characters — the same rules the display-name route applies, since both write
+# the same column.
+INVITE=$(curl -fsS -X POST "$BASE/collab/invites" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"label":"Jimmy (drums)"}' | jq -re .invite.token)
+echo "$BASE/join/$INVITE"
+```
+
+expect: `201` with `{"invite":{"id":"…","label":"Jimmy (drums)","token":"…"}}`.
+
+A `403` means `MAX_COLLABORATORS` is set and you are at it — the cap counts
+people already in the locker **plus** invites still outstanding, so unredeemed
+invites hold a seat until you revoke them. Invites do not expire, so an owner
+who mints the full allowance and never has them accepted has to revoke one to
+mint another.
+
+`MAX_COLLABORATORS` is seats only. The separate per-playlist share-link ceiling
+is `MAX_SHARE_LINKS` — before 0.2.13 both were `MAX_COLLABORATORS`, so an
+operator who set it to cap share links should copy that value across, leaving
+`MAX_COLLABORATORS` to be decided on its own merits as a seat cap.
+
+```bash
+curl -fsS "$BASE/collab/invites" -H "Authorization: Bearer $TOKEN" | jq .
+curl -fsS "$BASE/collab/members" -H "Authorization: Bearer $TOKEN" | jq .
+
+curl -fsS -X DELETE "$BASE/collab/invites/$INVITE_ID" -H "Authorization: Bearer $TOKEN"
+curl -fsS -X DELETE "$BASE/collab/members/$MEMBER_ID" -H "Authorization: Bearer $TOKEN"
+```
+
+`acceptedAt` on an invite is null while it is pending and set once redeemed.
+Revoking a redeemed invite only removes the record; it does not remove the
+person.
+
+**What removing a collaborator does, precisely** — this is the part worth
+reading before you do it:
+
+- **Their music stays, and so does their name on it.** Tracks and playlists
+  they added belong to the locker, not to them. The name they were going by is
+  copied onto those rows just before the account goes, so the demos keep
+  reading as *theirs* rather than going blank or turning into the owner's. A
+  member who never had a display name at all leaves those rows blank — the
+  snapshot is the display name only, deliberately, because it can never be
+  edited afterwards and freezing a login address into the locker forever is
+  worse than a blank.
+- **They are signed out everywhere.** Their account and sessions are deleted.
+- **Every share link they minted is deleted too** — listen links as well as
+  edit links. Nothing ever expires a share link on its own, so a leftover one
+  would be permanent access to a private playlist, and a listen link can
+  download the lossless master. Removing the person removes what they handed
+  out. The database enforces this, so it holds however the account is deleted.
+
+Links *you* minted are untouched.
+
+### Display names
+
+Every track and playlist carries the name of whoever added it, as
+`uploadedByName` / `createdByName`. The name resolves to the account's
+`display_name`, falling back to its email address when that is unset.
+
+```bash
+curl -fsS -X POST "$BASE/auth/display-name" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"displayName":"Dave"}'
+```
+
+expect: `200` with `{"displayName":"Dave"}` — the value as stored, trimmed.
+
+Worth knowing:
+
+- **The route is open to any account, not just the owner.** A collaborator
+  arrives with whatever the owner typed as their invite label and can correct
+  it here. The owner has no invite and therefore no name until they set one,
+  which is why this route exists: without it the owner's **login address** is
+  what every collaborator sees on every row the owner uploaded.
+- **Send `""` (or any whitespace) to unset it** and go back to the email
+  fallback. Over 100 characters after trimming is refused, as are line breaks
+  and control characters — a name has one row to live on.
+- **Names are locker-internal.** A share or invite link discloses none of them,
+  and neither does a session belonging to a different locker that happens to
+  hold one of your links. Only members of the locker see who added what.
 
 ## Troubleshooting
 

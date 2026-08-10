@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
-import { getDb } from "../db/index.js";
-import { users, sessions } from "../db/schema.js";
+import { getDb, type Database } from "../db/index.js";
+import { users, sessions, collaboratorInvites } from "../db/schema.js";
 import {
   hashPassword,
   verifyPassword,
@@ -16,14 +16,39 @@ import {
   findSession,
 } from "../lib/session.js";
 import { isValidAccent } from "../lib/accent.js";
-import { signupAllowed } from "../lib/signup.js";
+import { validateDisplayName } from "../lib/display-name.js";
+import {
+  signupAllowed,
+  resolveInvite,
+  claimInvite,
+  releaseInvite,
+  countLockerMembers,
+  isDuplicateEmailError,
+  type ClaimedInvite,
+  type PendingInvite,
+} from "../lib/signup.js";
+import { getLimits, isLimited } from "../lib/limits.js";
 import { rateLimit, LOGIN_RULE, SIGNUP_RULE } from "../lib/rate-limit.js";
 import type { Env } from "../types.js";
 
 const auth = new Hono<Env>();
 
+// Hand a claimed invite back after the account it was claimed for failed to
+// materialise. Best-effort on purpose: the error that triggered this is the one
+// worth reporting, and a release that cannot land leaves a spent invite — the
+// safe direction, since nobody got in.
+async function release(db: Database, invite: ClaimedInvite): Promise<void> {
+  try {
+    if (!(await releaseInvite(db, invite.id, invite.claimedAt))) {
+      console.error("invite", invite.id, "was not released — it may already be redeemed");
+    }
+  } catch (err) {
+    console.error("failed to release invite", invite.id, err);
+  }
+}
+
 auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
-  const { email, password } = await c.req.json();
+  const { email, password, inviteToken } = await c.req.json();
 
   if (!email || !password) {
     return c.json({ error: "email and password required" }, 400);
@@ -34,11 +59,85 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
 
   const db = getDb(c.env.DB);
 
-  // Registration closes automatically once the instance has an owner. A Demo
-  // Locker is one person's locker — collaborators arrive by share link, not by
-  // signing up — but every deployment used to accept registrations from the
-  // open internet forever, with no flag to turn it off.
-  if (!(await signupAllowed(db, c.env))) {
+  // Two ways in, and only two.
+  //
+  // A collaborator invite is its own authorisation to create an account, so it
+  // gets past the closed-registration gate — but an invalid, spent or expired
+  // token fails outright here. It must never fall through to the ordinary
+  // path, or a spent invite would quietly become a normal registration attempt
+  // on an instance that has reopened signup via ALLOW_SIGNUP.
+  //
+  // Registration otherwise closes automatically once the instance has an
+  // owner. A Demo Locker is one person's locker; every deployment used to
+  // accept registrations from the open internet forever, with no flag to turn
+  // it off.
+  //
+  // This is only a pre-flight look at the invite. It is checked before the
+  // duplicate-email query below so a caller holding a garbage token cannot use
+  // "email already registered" as an account-enumeration oracle; the binding
+  // claim itself happens after, once nothing else can refuse the request.
+  //
+  // A non-string token is refused rather than handed to the query layer, which
+  // would bind an object as a parameter and 500.
+  if (inviteToken != null && typeof inviteToken !== "string") {
+    return c.json({ error: "this invite is not valid" }, 403);
+  }
+
+  // Re-check the seat cap at redemption, not only where the invite was minted.
+  // getLimits reads the env per request, so an operator who lowers
+  // MAX_COLLABORATORS while invites are outstanding would otherwise see every
+  // one of them redeemed anyway and end up permanently over the cap they just
+  // set. Redemption is where a seat is actually taken.
+  //
+  // The count is read TWICE, at two positions, because they buy different
+  // things and neither alone is enough:
+  //
+  //   - Here, before the duplicate-email 409, so a caller holding a valid
+  //     invite to a full locker gets the same 403 whatever address they send.
+  //     Only here does that hold: after the 409, signup becomes a free,
+  //     repeatable registered/not-registered oracle for anyone with an invite,
+  //     since a refusal never spends the invite and can be run all day.
+  //   - Again below, immediately before claimInvite, so the interval between
+  //     the last count and the INSERT that consumes the seat does not span
+  //     PBKDF2 — which is by far the slowest thing on this route, and which
+  //     made "two invitees redeem at once" reliably reproducible rather than a
+  //     sub-millisecond race.
+  //
+  // Both sit BEFORE the claim, which is what keeps refusing free: nothing has
+  // been claimed, so nothing needs releasing, and release() is best-effort by
+  // design — a transient failure there would leave accepted_at set and
+  // accepted_by NULL, which resolveInvite refuses forever. An operator
+  // lowering a cap must not thereby void the invites already out.
+  //
+  // It remains a SOFT cap. Redemptions of DIFFERENT tokens interleaved between
+  // the second count and the INSERT can still both get in; claimInvite's
+  // conditional update does not help, being per-token. The mint-time check in
+  // routes/collab.ts has the same character. Closing it entirely would need a
+  // conditional INSERT ... SELECT ... WHERE (count) < n — which SQLite can in
+  // fact express — but a zero-row insert then has to release the claim it just
+  // made, putting the fragile compensation back on the path for the sake of an
+  // advisory limit. Two cheap counts get most of the benefit and none of that.
+  const limits = getLimits(c.env);
+  const capped = isLimited(limits.maxCollaborators);
+  const lockerFull = async (ownerId: string) =>
+    capped && (await countLockerMembers(db, ownerId)) >= limits.maxCollaborators;
+  // The SAME body every other refusal on this route uses. A distinct "this
+  // locker is full" told the holder of a guessed token that the token was real
+  // — every other refusal collapses to one message precisely so it cannot —
+  // and named the instance's seat cap while it was at it. The person who can
+  // act on a full locker is the owner, who is not the one making this request.
+  const fullResponse = () => c.json({ error: "this invite is not valid" }, 403);
+
+  let pending: PendingInvite | null = null;
+  if (inviteToken) {
+    pending = await resolveInvite(db, inviteToken);
+    if (!pending) {
+      return c.json({ error: "this invite is not valid" }, 403);
+    }
+    if (await lockerFull(pending.ownerId)) {
+      return fullResponse();
+    }
+  } else if (!(await signupAllowed(db, c.env))) {
     return c.json({ error: "registration is closed on this instance" }, 403);
   }
 
@@ -52,11 +151,96 @@ auth.post("/signup", rateLimit("signup", SIGNUP_RULE), async (c) => {
     return c.json({ error: "email already registered" }, 409);
   }
 
+  // Hash before claiming: PBKDF2 is the slowest thing on this path, and every
+  // step taken after the claim is a step that can burn the invite.
   const passwordHash = await hashPassword(password);
-  const [user] = await db
-    .insert(users)
-    .values({ email, passwordHash })
-    .returning({ id: users.id, email: users.email, accent: users.accent });
+
+  // The second seat count — see the note above. Still before the claim, so a
+  // refusal here is as free as the first one, and this is the position that
+  // keeps PBKDF2 out of the count-to-insert interval.
+  if (pending && (await lockerFull(pending.ownerId))) {
+    return fullResponse();
+  }
+
+  // Now take the invite. This is the atomic conditional update — the winner of
+  // two concurrent redemptions, not merely a caller who read the row while it
+  // was still open. The loser is refused exactly like a spent invite, and
+  // creates nothing.
+  //
+  // Claim before creating, not after, because the two orderings fail in very
+  // different directions. Claiming first means a failure leaves nobody in the
+  // locker and, at worst, a spent invite — which the release below undoes.
+  // Creating first would mean a lost race leaves an account already bound to
+  // someone else's locker, and if the cleanup delete then failed, that is
+  // standing access nobody granted. A lost seat is recoverable; unauthorised
+  // access is not.
+  let invite: ClaimedInvite | null = null;
+  if (inviteToken) {
+    invite = await claimInvite(db, inviteToken);
+    if (!invite) {
+      return c.json({ error: "this invite is not valid" }, 403);
+    }
+  }
+
+  // The binding is set in the INSERT, never in a follow-up UPDATE. There is no
+  // transaction here — D1 has none to offer across a request — so an account
+  // created unbound and bound afterwards is an account that survives with
+  // locker_owner_id NULL if anything in between fails. isLockerOwner() is
+  // exactly that test, so such an orphan would be a full independent locker
+  // owner, able to log in with the password it just chose and mint invites of
+  // its own, on an instance where registration is closed.
+  let user;
+  try {
+    [user] = await db
+      .insert(users)
+      // displayName comes from the label the owner typed when minting this
+      // invite — the human name they will read next to this person's uploads.
+      // Taken from the invite this signup actually claimed, not re-queried by
+      // token, and written in the same INSERT as the binding so an account can
+      // never exist bound-but-nameless. Null for an ordinary (non-invite)
+      // signup: the locker owner has no invite, and falls back to their email.
+      .values({
+        email,
+        passwordHash,
+        lockerOwnerId: invite?.ownerId ?? null,
+        displayName: invite?.label ?? null,
+      })
+      .returning({
+        id: users.id,
+        email: users.email,
+        accent: users.accent,
+        displayName: users.displayName,
+        lockerOwnerId: users.lockerOwnerId,
+      });
+  } catch (err) {
+    // The account did not happen, so the invite must not stay spent.
+    if (invite) await release(db, invite);
+
+    // The duplicate-email check above is a plain read with no transaction, so
+    // two concurrent signups on one address both pass it and the loser only
+    // finds out here. That is the same taken-address condition the check above
+    // answers with 409, and it is what the API documents, so it answers the
+    // same way rather than surfacing as an opaque 500.
+    if (isDuplicateEmailError(err)) {
+      return c.json({ error: "email already registered" }, 409);
+    }
+    throw err;
+  }
+
+  // From here the account exists and the claim must stand. Attribution is the
+  // only thing left, and it is not worth failing a successful signup over: the
+  // collaborator is already in the locker and shows up in GET /collab/members,
+  // which reads users.locker_owner_id rather than this column.
+  if (invite) {
+    try {
+      await db
+        .update(collaboratorInvites)
+        .set({ acceptedBy: user.id })
+        .where(eq(collaboratorInvites.id, invite.id));
+    } catch (err) {
+      console.error("failed to record who redeemed invite", invite.id, err);
+    }
+  }
 
   const token = generateToken();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -101,7 +285,13 @@ auth.post("/login", rateLimit("login", LOGIN_RULE), async (c) => {
   await createSession(db, user.id, token, expiresAt);
 
   return c.json({
-    user: { id: user.id, email: user.email, accent: user.accent },
+    user: {
+      id: user.id,
+      email: user.email,
+      accent: user.accent,
+      displayName: user.displayName,
+      lockerOwnerId: user.lockerOwnerId,
+    },
     token,
   });
 });
@@ -123,6 +313,42 @@ auth.post("/accent", requireAuth, async (c) => {
   await db.update(users).set({ accent }).where(eq(users.id, c.get("user").id));
 
   return c.json({ accent });
+});
+
+// Naming yourself. Open to ANY authenticated session, not owner-only: the owner
+// has no invite and so had no name at all (their email showed on every row they
+// uploaded, to every collaborator, permanently), and a collaborator whose name
+// the owner mistyped when inviting them can fix it here.
+auth.post("/display-name", requireAuth, async (c) => {
+  const { displayName } = await c.req.json();
+
+  // Same shape as the accent route's refusal of a value outside its palette:
+  // a non-string never reaches the query layer.
+  if (typeof displayName !== "string") {
+    return c.json({ error: "displayName must be a string" }, 400);
+  }
+
+  // Both rules — the cap and the refusal of line breaks and control characters
+  // — come from the one validator that POST /collab/invites also calls, because
+  // an invite label becomes a display name at redemption and a rule enforced at
+  // one door only is not enforced at all. Refused rather than stripped, so the
+  // value returned to the client is the value the client typed; silently
+  // mangling it would show a confirmation that does not match what was saved.
+  const checked = validateDisplayName(displayName, "name");
+  if ("error" in checked) return c.json({ error: checked.error }, 400);
+  const trimmed = checked.trimmed;
+
+  // Empty means UNSET, and unset is NULL. `displayName ?? email` reads NULL as
+  // "no name, fall back to the address"; an empty string is a name that renders
+  // as nothing at all, which is a blank row rather than a fallback.
+  const stored = trimmed === "" ? null : trimmed;
+
+  const db = getDb(c.env.DB);
+  await db.update(users).set({ displayName: stored }).where(eq(users.id, c.get("user").id));
+
+  // Returned so the client can show what was actually saved — trimmed, and null
+  // where it typed whitespace.
+  return c.json({ displayName: stored });
 });
 
 auth.post("/change-password", requireAuth, async (c) => {

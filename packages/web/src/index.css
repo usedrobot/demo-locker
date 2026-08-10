@@ -82,34 +82,34 @@ a {
   overflow: hidden;
 }
 
-.ascii-fit > .ascii-logo {
-  font-size: clamp(var(--floor, 4px), calc(100cqw / (var(--cols) * 0.61)), var(--cap));
-}
+/* The wordmark and the page titles are drawn as SVG cells on a viewBox
+   (components/PixelArt.tsx), not as block characters in a <pre>. Sizing moved
+   into that component because it depends on the art's own column count; what
+   stays here is colour, the wide/stacked breakpoint, and the title drift.
 
-.ascii-logo {
-  --cols: 110; /* logo-art.ts ART is 110 columns wide */
-  --cap: 11px;
-  color: var(--accent);
-  font-family: var(--font);
-  line-height: 1.2;
-  white-space: pre;
-  overflow: hidden;
+   This replaced a font-size clamp with a floor, a cap and a stacked variant —
+   all of which were managing the same defect rather than fixing it. Drawn as
+   text, the art depends on the space glyph and the block glyphs resolving to
+   one font at one advance, which on mobile they do not: rows land on different
+   subpixel boundaries and the letterforms come apart. Cells have no font and
+   no advance, so there is nothing left to drift. */
+.pixel-art {
+  display: block;
   user-select: none;
 }
 
-/* Two wordmarks ship; the breakpoint picks one. The one-line mark is 110
-   columns, which on a 412px phone solves to ~5.4px type — a 3.2px glyph cell.
-   DOS Rebel builds every letter from block characters that must tile exactly,
-   and at a fractional advance each one lands on a different subpixel boundary,
-   so the letterforms come apart. Stacking halves the columns to 60 and roughly
-   doubles the type, which is the whole fix — sizing it DOWN makes it worse. */
+/* Two wordmarks ship and the breakpoint picks one — now for LEGIBILITY, not
+   correctness. It used to be the fix: at 110 columns a phone drove the glyph
+   cell to ~3.2px, below which the blocks stopped tiling. Cells tile exactly at
+   any size, so this is purely about how bold the mark reads on a narrow
+   screen. Ordered after `.pixel-art` deliberately — same specificity, so this
+   `display` is the one that wins. */
+.logo-wide,
 .logo-stacked {
-  --cols: 60; /* logo-art.ts ART_STACKED */
-  /* Lower cap than the one-line mark: stacking doubles the row count from 8 to
-     16, so the same type size would make the wordmark ~210px tall and swallow
-     the top of a phone screen. 8px lands it at ~154px and the glyph advance is
-     still 4.8px, well clear of where the blocks stop tiling. */
-  --cap: 8px;
+  color: var(--accent);
+}
+
+.logo-stacked {
   display: none;
 }
 
@@ -122,24 +122,20 @@ a {
   }
 }
 
-/* ascii page titles (playlist names) — --cols is set inline per title, since it
-   depends on the rendered figlet width.
+/* ascii page titles (playlist names). The cap and floor are passed to PixelArt
+   as props, since they scale the art's own column count.
 
-   A long title used to shrink until it fit, bottoming out at a 4px floor where
-   the block glyphs stop tiling and the name turns to mush — the same failure as
-   the one-line logo on a phone. So the floor is 7px, which the letterforms
-   survive, and a title that no longer fits drifts instead of shrinking.
+   A title too long to fit drifts sideways instead of shrinking. The travel is
+   `100cqw - 100%`: the container width minus the title's own width, i.e.
+   exactly how much is hidden. `min(0px, ...)` makes that zero for a title that
+   already fits, so short names sit perfectly still and only the ones that
+   actually overflow move. No JS, no measurement, and it re-solves on rotate.
 
-   The travel is `100cqw - 100%`: the container width minus the title's own
-   content width, i.e. exactly how much is hidden. `min(0px, ...)` makes that
-   zero for a title that already fits, so short names sit perfectly still and
-   only the ones that actually overflow move. No JS, no measurement, and it
-   re-solves on rotate. */
+   The floor's ORIGINAL reason is gone — 7px was where block glyphs stopped
+   tiling and the name turned to mush. Cells do not mush, so it now only means
+   "do not shrink a title below legible". */
 .ascii-title {
-  --cap: 8px;
-  --floor: 7px;
   color: var(--accent);
-  width: max-content;
   animation: ascii-drift 14s ease-in-out infinite alternate;
 }
 
@@ -155,8 +151,15 @@ a {
 @media (prefers-reduced-motion: reduce) {
   .ascii-title {
     animation: none;
+  }
+  /* The drift is how an over-long title reveals its tail, so with the
+     animation off something else has to. It has to be the CONTAINER that
+     scrolls: the title is now an <svg> with a definite width, which is not a
+     scroll container for its own overflow the way the old `width: max-content`
+     <pre> was. Without this the tail is simply clipped by .ascii-fit and there
+     is no way to read it. */
+  .ascii-fit-title {
     overflow-x: auto;
-    width: auto;
   }
 }
 
@@ -214,8 +217,10 @@ button:active {
   flex: none;
 }
 
-/* Sharing action row: buttons first, hint text allowed to drop to its own line
-   rather than squeezing the buttons. */
+/* Sharing action row: a label input, a permission checkbox, and the mint
+   button. All three are `flex: none` (see .tui-btn above) so none of them
+   wraps mid-label into a different row height; the row itself wraps as a
+   whole at narrow widths instead. */
 .share-actions {
   display: flex;
   flex-wrap: wrap;
@@ -223,11 +228,33 @@ button:active {
   gap: 0.5rem;
   margin-top: 0.75rem;
 }
-.share-hint {
+.share-label-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 0.2rem 0.4rem;
+  flex: none;
+  /* Wide enough that the "who is this for?" placeholder (16 chars) — the
+     field's only visible affordance, since it's otherwise labelled by
+     aria-label alone — isn't clipped. `* { box-sizing: border-box }` (top of
+     this file) means `width` includes the padding and border set above, so
+     the usable content box is smaller than the declared width: 14ch clipped
+     it outright, and an initial pass at 18ch still clipped by a hair once
+     padding/border were subtracted. 20ch leaves real headroom; re-measure
+     (input.scrollWidth <= input.clientWidth) if this value or the padding
+     changes. */
+  width: 20ch;
+}
+.share-perm {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   color: var(--fg-dim);
-  font-size: 11px;
-  flex: 1 1 16rem;
-  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  flex: none;
 }
 
 /* comments
@@ -414,6 +441,38 @@ button:active {
   align-items: center;
   margin-bottom: 1.5rem;
   gap: 1rem;
+}
+
+/* The ascii title is a size container; the rename input stands in for it
+   rather than wrapping it, so the container never sizes itself from an
+   editable child. */
+.rename-input {
+  /* flex:1 + min-width:0 rather than width:100%: the input now shares a flex
+     row with the "saving" affordance, and a 100%-wide item would push that
+     out of the column. */
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;
+  padding: 0.3rem 0.4rem;
+}
+
+/* Disabled for the length of a rename request. Dimming it is what makes the
+   in-flight window legible — Escape and typing are both no-ops here, and the
+   user can see why. */
+.rename-input:disabled {
+  color: var(--fg-dim);
+  /* iOS Safari overrides `color` on disabled controls with its own
+     -webkit-text-fill-color and knocks the opacity down, so `color` alone
+     renders nothing like this on a phone — and font-size:16px above says
+     mobile is in scope. Setting both explicitly is what actually makes the
+     in-flight window legible there. */
+  -webkit-text-fill-color: var(--fg-dim);
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 /* Playlist header: ascii title on the left, artwork on the right. */

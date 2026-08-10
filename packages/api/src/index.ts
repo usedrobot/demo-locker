@@ -4,6 +4,7 @@ import auth from "./routes/auth.js";
 import playlists from "./routes/playlists.js";
 import comments from "./routes/comments.js";
 import shares from "./routes/shares.js";
+import collab from "./routes/collab.js";
 import tracks from "./routes/tracks.js";
 import publicRouter from "./routes/public.js";
 import type { Env } from "./types.js";
@@ -84,6 +85,7 @@ app.route("/auth", auth);
 app.route("/playlists", playlists);
 app.route("/comments", comments);
 app.route("/shares", shares);
+app.route("/collab", collab);
 app.route("/tracks", tracks);
 app.route("/public/v1", publicRouter);
 

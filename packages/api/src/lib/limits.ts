@@ -13,7 +13,14 @@ export function getLimits(env: Bindings) {
   return {
     maxPlaylists: parseInt(env.MAX_PLAYLISTS || "0", 10) || 0,
     maxStorageBytes: parseInt(env.MAX_STORAGE_BYTES || "0", 10) || 0,
+    // Seats in a locker (members + outstanding invites), enforced in
+    // routes/collab.ts.
     maxCollaborators: parseInt(env.MAX_COLLABORATORS || "0", 10) || 0,
+    // Share links on one playlist, enforced in routes/shares.ts. These two
+    // were the same binding until 0.2.13, which meant an operator allowing
+    // three bandmates also capped every playlist at three links and got a
+    // 403 about share links they had never configured.
+    maxShareLinks: parseInt(env.MAX_SHARE_LINKS || "0", 10) || 0,
     // Per-file ceiling. Falls back to the built-in rather than to "unlimited",
     // because MAX_STORAGE_BYTES spent four releases documented-but-unenforced
     // and the lesson is that an unset limit should still be a limit.

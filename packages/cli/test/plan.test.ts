@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildPlan, renderPlan, ASSETS_DIR } from "../src/plan.js";
 import type { Answers } from "../src/questions.js";
 
@@ -157,16 +160,10 @@ describe("buildPlan cloudflare", () => {
       "/playlists", "/playlists/*",
       "/comments", "/comments/*",
       "/shares", "/shares/*",
+      "/collab", "/collab/*",
       "/tracks", "/tracks/*",
       "/public/v1", "/public/v1/*",
     ]);
-
-    // Guard the actual invariant rather than just the literal list: every
-    // route prefix mounted in packages/api/src/index.ts must appear bare.
-    for (const prefix of ["/auth", "/playlists", "/comments", "/shares", "/tracks", "/public/v1"]) {
-      expect(cfg.assets.run_worker_first).toContain(prefix);
-      expect(cfg.assets.run_worker_first).toContain(`${prefix}/*`);
-    }
     expect(cfg.routes).toBeUndefined();
 
     const runs = p.steps.filter((s): s is Extract<typeof p.steps[number], { kind: "run" }> => s.kind === "run");
@@ -215,5 +212,92 @@ describe("renderPlan", () => {
     expect(text).toContain("S3_ACCESS_KEY=***");
     expect(text).not.toContain("AK");
     expect(text).toContain("S3_ENDPOINT=http://minio:9000");
+  });
+});
+
+// The list that decides whether the API exists at all on Cloudflare.
+//
+// Assets are served AHEAD of the Worker there, so a prefix missing from
+// `run_worker_first` does not degrade — it returns the SPA `index.html` with a
+// 200 while every other route looks healthy. 0.2.0 shipped that way because the
+// list carried the wildcard form and not the bare one, and every collection
+// endpoint answered with the SPA index. It took someone using the product to
+// find it.
+//
+// It happened AGAIN on the collaborators branch: `/collab` was mounted in the
+// API and never added here, so the entire collaborators feature — mint invite,
+// list invites, revoke, list members, remove member — was dead on every
+// Cloudflare install. The previous test could not catch it, because it pinned
+// the literal list and then "verified the invariant" against a second
+// hand-written list of prefixes. Both were correct about themselves. Neither
+// was tied to the router.
+//
+// So this reads the ROUTER. `packages/api/src/index.ts` is the single source of
+// truth for what is mounted; adding an `app.route()` there now fails this test
+// until the deployable's list is updated.
+//
+// Reading the source text rather than importing the Hono app is deliberate:
+// `@demo-locker/api` is not a dependency of this package and importing it would
+// pull the Worker entrypoint, drizzle and the D1/R2 bindings into the CLI's
+// test run to learn one fact that is plainly readable off the file. The parse
+// is anchored on the exact `app.route("` call shape, so a mount that does not
+// match it is not silently skipped — the count assertion below catches that.
+describe("run_worker_first covers every mounted API prefix", () => {
+  const indexPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "api",
+    "src",
+    "index.ts"
+  );
+  const source = readFileSync(indexPath, "utf8");
+  const mounted = [...source.matchAll(/app\.route\(\s*"([^"]+)"/g)].map((m) => m[1]);
+
+  const cfg = () => {
+    const p = buildPlan(cfBase);
+    const write = p.steps.find(
+      (s): s is Extract<typeof p.steps[number], { kind: "write" }> =>
+        s.kind === "write" && s.path.endsWith("wrangler.jsonc")
+    )!;
+    return JSON.parse(write.contents);
+  };
+
+  it("finds the mounts it is supposed to be checking", () => {
+    // If the regex ever stops matching — the file reformats, someone mounts
+    // with a template literal — this test must fail loudly rather than pass
+    // vacuously over an empty list.
+    expect(mounted.length).toBeGreaterThanOrEqual(7);
+    expect(mounted).toContain("/collab");
+    expect(mounted).toContain("/public/v1");
+  });
+
+  it("lists every mount in BOTH the bare and wildcard form", () => {
+    const list: string[] = cfg().assets.run_worker_first;
+    const missing = mounted.flatMap((prefix) =>
+      [prefix, `${prefix}/*`].filter((form) => !list.includes(form))
+    );
+    expect(
+      missing,
+      `mounted in packages/api/src/index.ts but absent from API_PATHS in packages/cli/src/plan.ts — ` +
+        `on Cloudflare these return the SPA index with a 200 instead of reaching the Worker`
+    ).toEqual([]);
+  });
+
+  // The other direction: an entry here that no longer corresponds to a mount is
+  // dead weight, and dead weight is how the list stops being read. `/health` is
+  // the one legitimate non-mount — an `app.get` with no static asset to shadow
+  // it. `/embed.js` and `/openapi.json` are `app.get`s too but are deliberately
+  // NOT in the list: real files of those names ship in assets/public/, so the
+  // assets layer answering them is correct.
+  it("carries nothing that is not mounted, apart from /health", () => {
+    const list: string[] = cfg().assets.run_worker_first;
+    const allowed = new Set(["/health", ...mounted, ...mounted.map((p) => `${p}/*`)]);
+    expect(list.filter((p) => !allowed.has(p))).toEqual([]);
+
+    // Pin the two deliberate omissions, so a future reader who notices them
+    // finds this test rather than "fixing" them.
+    expect(list).not.toContain("/embed.js");
+    expect(list).not.toContain("/openapi.json");
   });
 });

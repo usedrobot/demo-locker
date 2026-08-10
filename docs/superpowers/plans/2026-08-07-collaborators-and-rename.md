@@ -10,10 +10,14 @@
 
 ## Global Constraints
 
+- **🔴 WEB TESTS: `@testing-library/react` IS NOT A DEPENDENCY OF THIS PROJECT** (found 2026-08-08, before Task 9 was dispatched). Every web test snippet in Tasks 9, 10 and 11 below is written with `render` / `screen` / `fireEvent` / `waitFor` from that library. **None of it will run.** `packages/web` has only `vitest` and `happy-dom`, and the house pattern — see `packages/web/src/components/TrackList.test.tsx` — is: a `// @vitest-environment happy-dom` pragma at the top, `createRoot` from `react-dom/client` plus `act` from `react`, a local `render()` helper wrapping `root.render(...)` in `act()`, a fresh `container`/`root` per test in `beforeEach`, `vi.mock` for `../lib/api`, and DOM queries via `container.querySelector` with attribute selectors (e.g. `button[aria-label*="…"]`). **Follow the house pattern.** Do not add the dependency: this project keeps its dependency list deliberately short, and the existing pattern covers everything these tests need. Treat the snippets below as specifications of *what to assert*, not of the mechanics — the assertions are the requirement, the idiom is not.
+
 - **Spec:** `docs/superpowers/specs/2026-08-07-collaborators-rename-cli-design.md`. Read it before Task 1.
 - **Migrations are generated, never hand-written:** `npx drizzle-kit generate` from `packages/api` (config `drizzle.config.ts`, dialect sqlite, out `./src/db/migrations`). The next migration is `0003_*`; `0000`–`0002` exist.
-- **Additive columns only.** Every new column is nullable with no default backfill. Drizzle selects every column explicitly, so code deployed ahead of its migration breaks all reads of that table.
+- **ONE documented exception to the line above, ruled by DL 2026-08-07.** `drizzle-kit@0.31.10` emits foreign-key actions correctly in its SQLite `CREATE TABLE` path but **silently drops them from `ALTER TABLE ADD COLUMN`**. The three columns Task 1 adds therefore generate as bare `REFERENCES users(id)` with no `ON DELETE`, while `meta/0003_snapshot.json` records `set null` / `set null` / `cascade` — so drizzle already believes the database has actions the SQL never applies. Task 1 patches those three lines by hand to carry their clauses. **The exception is FOUR hand-patched lines across TWO files, not three in one:** `0004_flaky_iron_monger.sql` adds `shares.created_by` and hit the same trap, so its `ON DELETE CASCADE` is hand-patched too (documented in that file's own header). Neither `0003` nor `0004` may be regenerated — regenerating either silently drops its clauses. This *removes* the drift rather than creating it: the rule exists to keep schema.ts and the database in agreement, and the generated file is what breaks that agreement here. Verified on SQLite 3.53.2 that `ALTER TABLE t ADD c TEXT REFERENCES u(id) ON DELETE SET NULL` is accepted and enforced, and that without the clause the delete is refused with `FOREIGN KEY constraint failed`. **Any future additive FK column in this repo has the same trap — check the generated SQL against the snapshot.**
+- **Additive columns only.** Every new column is nullable with no default backfill. **One documented exception:** migration `0004` backfills `shares.created_by` from the playlist's owner, because leaving it NULL would make the column ambiguous and silently defeat the cascade it exists for. See Task 7 for the reasoning and the exact statement. Drizzle selects every column explicitly, so code deployed ahead of its migration breaks all reads of that table.
 - **Non-enumerable 404s.** A denied request returns `{ error: "not found" }` with 404 — never 401/403 — matching `lib/playlist-access.ts`'s existing contract. The one exception is `requireAuth` itself, which 401s on a missing/invalid session.
+- **SECOND exception, ruled by DL 2026-08-07: a collaborator refused an owner-only *field* gets 403 with a field-specific message, not 404.** The blanket rule exists to hide whether a resource exists. It does not fit here: a collaborator refused a publish **already has read access to that playlist** — they can list it, open it, and rename it — so 404 hides nothing and actively misleads. A client following this codebase's own convention (404 on a playlist route means gone) would navigate the collaborator out of a playlist they were using a second earlier. The test is whether the caller has already demonstrated read access to the resource: if yes, say what is actually wrong; if no, keep the 404. **A stranger hitting the same route still gets the non-enumerable 404**, because for them existence genuinely is the secret. Applies today to `isPublic` on `PATCH /playlists/:id`; apply the same reasoning to any future owner-only field.
 - **Tests insert sessions with raw tokens** (e.g. `db.insert(sessions).values({ userId, token: "sess-x", expiresAt: future })`). `findSession` matches those on its legacy fallback path. Follow the existing convention in `routes/legacy-access.test.ts`.
 - **Run the ROOT typecheck before every commit:** `npm run typecheck` from the repo root. CI is stricter than the workspace scripts, and `vitest` does not typecheck — a green suite says nothing about whether the tree compiles.
 - **Do not touch `site/`.** Brochure copy is out of scope until after launch (DL, 2026-08-07).
@@ -641,6 +645,186 @@ git commit -m "feat(api): playlists are locker-scoped, not owner-scoped"
 
 ---
 
+### Task 3b: The shared playlist-access gates (PLAN DEFECT, added 2026-08-07)
+
+**Why this task exists.** The plan's "14 ownership checks" came from a grep for `ownerId !== userId`, `ownerId, userId`, `eq(playlists.ownerId`, and `eq(tracks.ownerId`. That pattern **missed two more sites**, both in `packages/api/src/lib/playlist-access.ts`, because they are written `session.userId === playlist.ownerId`:
+
+- `canAccessPlaylist` (line ~59) — the read gate.
+- `requestCanEditPlaylist` (line ~92) — the write gate.
+
+These two functions back **15 route call sites** across `playlists.ts`, `tracks.ts` and `comments.ts`. Until they resolve the locker, a collaborator can list playlists but cannot open one, cannot reorder, cannot upload into a playlist, cannot stream or download a track that lives in one, and cannot read or post comments. That is essentially the entire collaborator experience.
+
+This is a plan defect, not a product question — it implements what was already approved, and changes no ruling. Task 4's note that `tracks.ts:86` needs no change was written on the same wrong assumption and is superseded by this task.
+
+**Files:**
+- Modify: `packages/api/src/lib/playlist-access.ts`
+- Test: `packages/api/src/routes/membership.test.ts` (extend)
+
+**Interfaces:**
+- Consumes: `users.lockerOwnerId` (Task 1); the fixture from Task 3.
+- Produces: both shared gates resolve the locker, so Tasks 4 and 6 inherit correct behaviour on every route that uses them.
+
+**Why a second resolver.** `lockerIdOf` is pure and takes a loaded `User`. These two gates take a raw token and a `db` — no `User` has been loaded, and `canAccessPlaylist` does not even receive a `Context`. So the session path needs one extra select. Keep it local to `playlist-access.ts`; do not make `lib/locker.ts` impure.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `packages/api/src/routes/membership.test.ts`:
+
+```ts
+describe("the shared playlist-access gates resolve the locker", () => {
+  it("lets a collaborator open the owner's playlist", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(collabToken) },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: { id: string } };
+    expect(body.playlist.id).toBe(ownerPlaylistId);
+  });
+
+  it("still 404s a stranger opening it", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}`,
+      { headers: auth(strangerToken) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("lets a collaborator reorder the owner's playlist", async () => {
+    const [a] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId: ownerPlaylistId,
+        title: "first",
+        position: 0,
+        originalKey: "lib/reorder-a",
+        uploadedBy: ownerId,
+      })
+      .returning();
+    const [b] = await db
+      .insert(tracks)
+      .values({
+        ownerId,
+        playlistId: ownerPlaylistId,
+        title: "second",
+        position: 1,
+        originalKey: "lib/reorder-b",
+        uploadedBy: ownerId,
+      })
+      .returning();
+
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [b.id, a.id] }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("still refuses a stranger reordering it", async () => {
+    const res = await app.request(
+      `/playlists/${ownerPlaylistId}/reorder`,
+      {
+        method: "PATCH",
+        headers: { ...auth(strangerToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIds: [] }),
+      },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+});
+```
+
+Add `tracks` to the schema import if this task runs before Task 4.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm test -w packages/api -- membership.test.ts`
+Expected: FAIL — the collaborator gets 404 on both open and reorder, because both gates compare the raw session user id against the owner id.
+
+- [ ] **Step 3: Resolve the locker in both gates**
+
+In `packages/api/src/lib/playlist-access.ts`, add `users` to the schema import and add this module-local helper:
+
+```ts
+// Which locker does this session act in?
+//
+// lib/locker.ts's lockerIdOf is the pure version, but it needs a loaded User
+// and these two gates receive only a raw token and a db — canAccessPlaylist
+// is not even given a Context. So the session path pays one extra select.
+// Share-token paths are unaffected and must stay untouched.
+async function lockerIdForSession(db: Database, userId: string): Promise<string> {
+  const [row] = await db
+    .select({ lockerOwnerId: users.lockerOwnerId })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row?.lockerOwnerId ?? userId;
+}
+```
+
+In `canAccessPlaylist`, replace the session branch:
+
+```ts
+  // token as a session token acting in the playlist's locker (the owner, or a
+  // collaborator on that owner's locker)
+  const session = await findSession(db, token);
+  if (session && session.expiresAt >= new Date()) {
+    const lockerId = await lockerIdForSession(db, session.userId);
+    if (lockerId === playlist.ownerId) return true;
+  }
+
+  return false;
+```
+
+In `requestCanEditPlaylist`, replace the session branch inside the token loop:
+
+```ts
+    const session = await findSession(db, token);
+    if (session && session.expiresAt >= new Date()) {
+      const lockerId = await lockerIdForSession(db, session.userId);
+      if (lockerId === playlist.ownerId) return playlist.ownerId;
+    }
+```
+
+Note both still return the **owner's** id, not the acting user's — uploads stay attributed to the locker. Task 4 records the acting user separately in `uploadedBy`.
+
+Update the file's header comment: its "there is no collaborator-*user* relation, so the only session-based access is ownership" note is now false and would mislead the next reader.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npm test -w packages/api`
+Expected: PASS. **`legacy-access.test.ts` must still pass unchanged** — it is the suite that pins stranger denial and share-token behaviour on these exact gates. If anything there breaks, access has been widened too far.
+
+- [ ] **Step 5: Mutation-check the stranger path**
+
+Change `lockerIdForSession` to `return userId` unconditionally, run `membership.test.ts`, and confirm the two collaborator cases FAIL. Then change it to `return playlist.ownerId`-equivalent (always grant) — confirm the two **stranger** cases FAIL. Restore, confirm green. Record both in the report. A gate that cannot fail closed is not a gate.
+
+- [ ] **Step 6: Root typecheck**
+
+Run: `npm run typecheck` from the repo root. Expected: clean.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/api/src/lib/playlist-access.ts packages/api/src/routes/membership.test.ts
+git commit -m "fix(api): the shared playlist-access gates resolve the locker
+
+Both gates compared the raw session user id against the playlist owner, so a
+collaborator could list playlists but not open, reorder, upload into, stream
+or comment on one. Missed by the plan's original call-site grep."
+```
+
+---
+
 ### Task 4: Widen the track routes and record who uploaded
 
 **Files:**
@@ -653,12 +837,71 @@ git commit -m "feat(api): playlists are locker-scoped, not owner-scoped"
 
 | Line | Today | Becomes |
 |---|---|---|
-| 86 | storage accounting `where(tracks.ownerId, ownerId)` | already the locker owner via `requestCanEditPlaylist` — confirm, no change expected |
+| 86 | storage accounting `where(tracks.ownerId, ownerId)` | correct once `ownerId` is the locker id on both paths — see the library-upload fix below. **The original note here ("already the locker owner, no change expected") was wrong and is superseded**; it assumed `requestCanEditPlaylist` resolved the locker, which it did not until Task 3b. |
 | 140 | `GET /` library list, `where(ownerId, user.id)` | `where(ownerId, lockerId)` |
 | 259 | `PATCH /:id` track owner check | `track.ownerId === lockerId` |
 | 270 | `PATCH /:id` target playlist check | `playlist.ownerId === lockerId` |
 
 `POST /upload` sets `uploadedBy`. Note the two paths differ: the playlist path resolves `ownerId` through `requestCanEditPlaylist` (which may be an anonymous edit-share holder with no session), the library path through `requestSessionUserId`. **`uploadedBy` is the session user when there is one, and null when the uploader is an anonymous share-token holder** — a share holder is not a user and has no id to record.
+
+**🔴 The library-upload path also has the wrong `ownerId`** (found by review of Task 3, 2026-08-07). `requestSessionUserId` returns the *acting* user, and the code writes that straight into `ownerId`. For a collaborator that means a library upload lands in a phantom library owned by them, which the locker owner can never see, and which `GET /tracks` will not return once that route is locker-scoped. The library path must resolve the locker for ownership while still recording the acting user for attribution:
+
+**`POST /tracks/upload` is NOT behind `requireAuth`** (`tracks.ts:33` registers it bare, deliberately, so anonymous edit-share holders can upload). So `c.get("user")` is **undefined** on this route and `lockerIdOf` must not be called here — it dereferences `user.lockerOwnerId` unconditionally and would throw, 500ing every upload. Resolve from the session user id instead.
+
+Compute the acting user **once**, before the branch, and use it for both ownership and attribution:
+
+```ts
+  // Who is acting, if anyone. Null for an anonymous edit-share holder — they
+  // are not a user and have no id to record.
+  const actingUserId = await requestSessionUserId(c);
+
+  let ownerId: string | null = null;
+  let position = 0;
+  if (playlistId) {
+    // owner session, collaborator session, or edit share token — all resolve
+    // to the locker owner's id
+    ownerId = await requestCanEditPlaylist(c, playlistId);
+    if (!ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
+    position = await nextPosition(db, playlistId);
+  } else {
+    // library upload — session required. ownerId is the LOCKER, not the
+    // uploader: a collaborator's library upload belongs to the owner's
+    // library, exactly as a playlist upload does. actingUserId carries who.
+    if (!actingUserId) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    ownerId = await lockerIdForUserId(db, actingUserId);
+  }
+```
+
+and the track insert takes `uploadedBy: actingUserId`.
+
+`lockerIdForUserId(db, userId)` is the one-select helper Task 3b introduces. **Do not write that query twice** — export it from a shared module (`lib/locker.ts` is the natural home even though the rest of that file is pure; keep the pure `lockerIdOf` alongside it) and have Task 3b's `playlist-access.ts` use the same function. If Task 3b has already landed with it module-local, promote it here and update Task 3b's call site.
+
+Add a test: a collaborator uploads with no `playlistId`, and the row must come back with `ownerId === ownerId` (the locker owner) and `uploadedBy === collabId`. Then assert it appears in the owner's `GET /tracks`.
+
+**Also in this task: two library-track gates in `comments.ts`** (found by review of Task 3b, 2026-08-07). `comments.ts:85` and `comments.ts:126` both read:
+
+```ts
+allowed = (await requestSessionUserId(c)) === track.ownerId;
+```
+
+That is the library-track branch — a track in no playlist. Tracks inside a playlist go through `requestCanAccessPlaylist`, which Task 3b already fixed, so today a collaborator can read and post comments on a playlist track but is 404'd on a library track in the same locker.
+
+**Do NOT "fix" this by changing `requestSessionUserId`.** It must keep returning the *acting* user — that is exactly what this task needs for `uploadedBy`, and what an earlier review suggested changing. Fix the two call sites instead:
+
+```ts
+const actingUserId = await requestSessionUserId(c);
+allowed =
+  !!actingUserId &&
+  (await lockerIdForUserId(getDb(c.env.DB), actingUserId)) === track.ownerId;
+```
+
+Add a test that a collaborator can read and post a comment on a **library** track in the owner's locker, and that a stranger still cannot.
+
+**One invariant for Task 8 to enforce, recorded here so it is not lost:** setting `lockerOwnerId` on a user who **already owns playlists or tracks** would make their own library 404 to them — `lockerIdOf` would start returning someone else's id while their rows still carry their own. Task 8's invite redemption creates a brand-new account, so this is unreachable as designed; the invariant exists so a future "convert an existing account to a collaborator" feature cannot introduce it silently.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -925,7 +1168,7 @@ Expected: clean.
 
 ```bash
 git add packages/api/src/routes/shares.ts packages/api/src/routes/membership.test.ts
-git commit -m "feat(api): share management is owner-only under collaboration"
+git commit -m "feat(api): share routes are locker-scoped — collaborators may share"
 ```
 
 ---
@@ -939,6 +1182,10 @@ git commit -m "feat(api): share management is owner-only under collaboration"
 **Interfaces:**
 - Consumes: `tracks.uploadedBy`, `playlists.createdBy` (Task 1), `lockerIdOf`/`isLockerOwner` (Task 2).
 - Produces: nothing new.
+
+**Also fix `membership.test.ts`'s file header** (found by review of Task 5). It already says a collaborator may not "destroy something they did not create", which implies they *may* destroy what they did create — true only once this task lands. Until then both delete guards compare against the raw acting user, so a collaborator 404s even on their own upload. That file is where a future reader looks for the delete contract, so make the header describe shipped behaviour the moment this task makes it true.
+
+**Docs this task must update in the same commit** (noted by Task 4's implementer, 2026-08-07): widening the delete guard makes three things stale at once — the `DELETE /tracks/{id}` description in `docs/openapi.json`, and the worked inversion example in `packages/api/src/lib/public-track.ts` which currently explains that `uploadedByMe` is *not* delete authority by pointing at today's owner-only guard. Once this task lands, the correct client rule becomes `uploadedByMe || isOwner`, and both places should say so. Also carry the two stale owner-only comments Task 3b deferred at `playlists.ts:200` and `:253`.
 
 **This is the task where a bug destroys someone's masters.** `DELETE /tracks/:id` erases `originalKey` (the lossless master) and `streamKey` from the bucket, then the row — no soft delete, no undo. The guard must fail closed.
 
@@ -1148,6 +1395,37 @@ Redemption is Task 8. This task ships the owner's side only.
 **On `MAX_COLLABORATORS`:** the binding already exists in `types.ts` and `lib/limits.ts`, where it currently caps share links per playlist. Reuse it here to cap `members + pending invites` per locker, so an instance operator has a lever. Unset (0) means unlimited, per `isLimited`.
 
 **Revoking a member deletes their user row.** Sessions cascade (they are logged out), and `uploaded_by`/`created_by` go SET NULL, so their music stays in the owner's library and reads as the owner's. That is deliberate: the files belong to the locker.
+
+### 🔴 Also in this task: a collaborator's share links must die with them (DL, 2026-08-07)
+
+Found by review of Task 5. Once collaborators can mint share links, a link **outlives its minter**: the ex-collaborator keeps upload and reorder on private playlists forever (nothing sets `expiresAt`), and the owner's access panel shows the link with nothing saying who created it. Before collaborators could mint, revoking a person removed every grant they held. This restores that property.
+
+It is not only an edit-link problem: **a listen link can download the lossless master**, so a leftover listen link is real access too. DL's ruling: *removing the person removes everything they minted, edit and listen alike.*
+
+**Add `shares.created_by`** (nullable FK → `users.id`, **`ON DELETE CASCADE`**). Cascade rather than an explicit purge in the handler: the database then enforces the rule for every deletion path, including ones nobody has written yet, and it cannot be forgotten.
+
+**🔴 The migration must BACKFILL, and this is an explicit exception to the "no backfill" Global Constraint** (found by review of Task 5, 2026-08-07). My first draft of this section said "rows predating the column have `created_by` NULL and are unaffected — correct, since they are all the owner's." That is **false**. Task 5 lands before this migration, so on any build between them a collaborator can already mint links; those rows get `created_by` NULL, and `ON DELETE CASCADE` will not touch them when that collaborator is revoked. NULL would then mean two different things — "an owner minted this before the column existed" and "a collaborator minted this during the gap" — and nothing could tell them apart.
+
+Close it by making NULL impossible instead. Before Task 5, `POST /shares` required the owner's own session, so **every share that existed before this branch was minted by its playlist's owner** — the backfill value is knowable and provably correct:
+
+```sql
+UPDATE shares
+SET created_by = (SELECT owner_id FROM playlists WHERE playlists.id = shares.playlist_id)
+WHERE created_by IS NULL;
+```
+
+Add that to migration `0004` after the `ALTER`. It is a one-row-per-share update assigning values that are true by construction — the "no backfill" rule exists to keep migrations cheap and non-destructive, and this is neither expensive nor lossy. Verify afterwards that no `shares` row has a NULL `created_by`.
+
+**This branch must also ship atomically.** Tasks 5 and 7 cannot be deployed separately, or the gap above reopens for the duration. The ledger already records that the branch is unmergeable between Tasks 3b and 6 for a different reason; this extends that to Task 7.
+
+**⚠️ This is a second additive FK column, so the drizzle-kit trap applies again.** Per the Global Constraints exception: `drizzle-kit@0.31.10` will generate `ALTER TABLE shares ADD created_by text REFERENCES users(id)` and **silently drop the `ON DELETE CASCADE`**, while recording it in the snapshot. Generate migration `0004`, then hand-patch that one line, then verify against `meta/0004_snapshot.json`. Do not skip the verification — the whole guarantee lives in that clause.
+
+**Populate it on mint.** `POST /shares` (in `shares.ts`, Task 5's file) must set `createdBy: user.id`. Owner-minted links carry the owner's id and are never affected, since the owner's row is never deleted.
+
+**Tests, and mutation-check the cascade:**
+- A collaborator mints an edit link and a listen link; the owner removes that collaborator; **both links are gone from the database**, and a request presenting either token is refused.
+- The owner's own links survive that removal untouched.
+- Remove ` ON DELETE CASCADE` from the patched migration line and confirm the first test FAILS. Restore, confirm green. Record both directions.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2208,7 +2486,9 @@ export const collab = {
 };
 ```
 
-`User` in `lib/api.ts` also gains `lockerOwnerId: string | null` so the UI can hide owner-only controls from a signed-in collaborator.
+`User` in `lib/api.ts` also gains `lockerOwnerId: string | null` so the UI can hide owner-only controls from a signed-in collaborator. **Check `me()`'s declared return type too** — it currently omits the field, so the client cannot read it even though `/auth/me` returns it (found by review of Task 6).
+
+**Delete controls must follow the per-row rule.** `Home.tsx`'s `handleTrackDelete` / `handleDelete` call the API with **no `catch`**, and `request()` throws on any non-2xx — so today a collaborator clicking delete on the owner's row gets an unhandled promise rejection and a list that silently does not change. Before this branch that was at least uniform (every collaborator delete failed); now it is per-row, which is worse to experience. Gate the control on `track.uploadedByMe || isLockerOwner` for tracks and `playlist.createdByMe || isLockerOwner` for playlists, **and** add a `catch` that surfaces a visible error rather than failing silently. Both computed fields exist for exactly this.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2299,6 +2579,8 @@ Use `copyText` from `lib/copy-text` rather than `navigator.clipboard` directly �
 
 Render `<CollabPanel />` in `Home.tsx` next to the existing `[access]` panel, and gate it on the signed-in user being an owner (`user.lockerOwnerId === null`).
 
+**🔴 Also gate Home's library delete control** (found by Task 6's implementer, 2026-08-07). `Home.tsx` renders the `[x]` delete affordance on every library track. The server now refuses a collaborator deleting someone else's upload, so today the control is offered and then silently 404s — the user clicks delete, confirms, and nothing happens, with no explanation. Show it only when `track.uploadedByMe || user.lockerOwnerId === null`. That is precisely the client rule Task 4's `uploadedByMe` exists to support, and Task 12's live verification step 5 checks it explicitly ("the control should not offer it").
+
 - [ ] **Step 6: Build the join page**
 
 Create `packages/web/src/pages/Join.tsx`: reads the token from the route, shows email + password fields, posts to `auth.signup` with `inviteToken`, and on success stores the session and lands on Home exactly as login does. On failure show the API's error text — an invite that has already been used must say so rather than appearing broken.
@@ -2360,6 +2642,9 @@ In a separate browser profile, so you are genuinely not signed in as DL:
 7. Confirm the collaborator **can** mint a share link, and that opening that link in a logged-out context works.
 8. Confirm the collaborator sees **no publish control** and **no collaborators panel** — and that `PATCH /playlists/:id` with `{isPublic:true}` 404s if called directly with their token.
 9. Rename a playlist from each account.
+9a. **The share panel's live regions, with an actual screen reader — or soften the claims.** Task 10 added `role="status"` and `role="alert"` to `SharePanel` and reasoned carefully about announcement behaviour across four review rounds **without ever running a screen reader**. Three specific claims are unverified and at least one is likely wrong: (a) the `.dots` CSS animation mutates the polite region's generated content roughly every 350ms, which by the commit's own premise is a text change and should produce repeated or garbled "minting" announcements; (b) the programmatic refocus fires immediately after `announce("share link created")`, and a focus move flushes the pending polite queue in NVDA, JAWS and VoiceOver — so the completion announcement may never be heard on exactly the keyboard path it was written for; (c) `role="alert"` is mounted with its text while `role="status"` was deliberately made always-present for the opposite reason. Run VoiceOver on macOS (free, already installed) through: tab to `[+ share link]`, press Enter, listen through the whole mint. If the announcements do not behave as the comments claim, **fix the code or delete the claims** — an unverified accessibility comment is worse than none, because it stops the next person checking.
+
+9b. **Rename failure path, in a real browser — the one claim the test suite cannot make.** `happy-dom` does not blur when a focused input is disabled, and `.blur()` on an already-disabled input is a no-op there, so every rename-focus test describes a state no browser is ever in. Stop the API (or point the client at a dead URL), start a rename, let it fail, then **type without clicking**. The correction must land in the field. Then click away and confirm it commits. If focus is on `<body>` instead, the keystrokes go nowhere and the retry path is unreachable by keyboard.
 10. As owner, remove the collaborator. Confirm they are signed out and **their uploaded track is still in the library**.
 
 - [ ] **Step 5: Record the result**

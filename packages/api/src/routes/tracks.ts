@@ -8,8 +8,10 @@ import {
   requestCanEditPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
+import { lockerIdOf, lockerIdForUserId, isLockerOwner } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
-import { publicTrack } from "../lib/public-track.js";
+import { publicTrack, type TrackRow } from "../lib/public-track.js";
+import { resolveDisplayNames } from "../lib/display-name.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { INERT_CONTENT_HEADERS, safeAudioType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
@@ -57,22 +59,46 @@ tracksRouter.post("/upload", async (c) => {
     );
   }
 
+  // Who is acting, if anyone. Null for an anonymous edit-share holder — they
+  // are not a user and have no id to record.
+  const actingUserId = await requestSessionUserId(c);
+  // Which locker that session belongs to — resolved once, because the library
+  // branch below needs it as the ownerId and the attribution below needs it to
+  // compare against whichever locker this upload actually landed in.
+  const actingLockerId = actingUserId ? await lockerIdForUserId(db, actingUserId) : null;
+
   let ownerId: string | null = null;
   let position = 0;
   if (playlistId) {
-    // owner session or edit share token — either resolves to the owner id
+    // owner session, collaborator session, or edit share token — all resolve
+    // to the locker owner's id
     ownerId = await requestCanEditPlaylist(c, playlistId);
     if (!ownerId) {
       return c.json({ error: "not found" }, 404);
     }
     position = await nextPosition(db, playlistId);
   } else {
-    // library upload — session required
-    ownerId = await requestSessionUserId(c);
-    if (!ownerId) {
+    // library upload — session required. ownerId is the LOCKER, not the
+    // uploader: a collaborator's library upload belongs to the owner's
+    // library, exactly as a playlist upload does. actingUserId carries who.
+    if (!actingUserId || !actingLockerId) {
       return c.json({ error: "unauthorized" }, 401);
     }
+    ownerId = actingLockerId;
   }
+
+  // WHO to credit — not simply "whoever is signed in". This route admits an
+  // edit-share token, and the token and the session are resolved independently
+  // above, so a signed-in account from ANOTHER locker can reach this insert by
+  // sending both. Recording their id would put an outsider's self-chosen
+  // display name (settable to a bandmate's) permanently onto the band's
+  // attribution, with no remedy: DELETE /collab/members/:id only matches
+  // accounts in the locker, and nothing else rewrites uploaded_by.
+  //
+  // So a cross-locker edit-share upload is credited exactly like the anonymous
+  // edit-share upload it resembles — NULL, no name. Who may UPLOAD is
+  // unchanged; only who gets the credit is.
+  const uploadedBy = actingLockerId === ownerId ? actingUserId : null;
 
   // Enforced here rather than trusted from config: MAX_STORAGE_BYTES was read
   // from the env and surfaced in the docs for four releases without a single
@@ -125,21 +151,36 @@ tracksRouter.post("/upload", async (c) => {
       waveformData: waveformData || null,
       duration: duration && isFinite(duration) ? duration : null,
       sizeBytes: uploadBytes,
+      uploadedBy,
     })
     .returning();
 
-  return c.json({ track: publicTrack(track) }, 201);
+  const names = await resolveDisplayNames(db, actingUserId, ownerId, [track.uploadedBy]);
+  return c.json({ track: publicTrack(track, actingUserId, names) }, 201);
 });
 
-// List the user's whole track library (every upload, in or out of playlists)
+// List the locker's whole track library (every upload, in or out of
+// playlists) — the owner's own uploads plus any collaborator's.
 tracksRouter.get("/", requireAuth, async (c) => {
   const db = getDb(c.env.DB);
+  const user = c.get("user");
   const rows = await db
     .select()
     .from(tracks)
-    .where(eq(tracks.ownerId, c.get("user").id))
+    .where(eq(tracks.ownerId, lockerIdOf(user)))
     .orderBy(desc(tracks.uploadedAt));
-  return c.json({ tracks: rows.map(publicTrack) });
+  // The reader is a locker member, but not necessarily the uploader of every
+  // row here — a locker can hold several collaborators, and none of them may
+  // learn each other's user id. publicTrack answers "is this mine" instead,
+  // and carries a resolved NAME for whose it is — one lookup for the whole
+  // page, not one per row (lib/display-name.ts).
+  const names = await resolveDisplayNames(
+    db,
+    user.id,
+    lockerIdOf(user),
+    rows.map((t: TrackRow) => t.uploadedBy)
+  );
+  return c.json({ tracks: rows.map((t: TrackRow) => publicTrack(t, user.id, names)) });
 });
 
 // Stream a track from R2 — gated by the parent playlist. <audio> can't send an
@@ -165,9 +206,10 @@ tracksRouter.get("/:id/stream", async (c) => {
       return c.json({ error: "not found" }, 404);
     }
   } else {
-    // Library track not in any playlist — owner only.
+    // Library track not in any playlist — locker only (owner or collaborator).
     const userId = await requestSessionUserId(c);
-    if (!userId || userId !== track.ownerId) {
+    const lockerId = userId && (await lockerIdForUserId(db, userId));
+    if (!lockerId || lockerId !== track.ownerId) {
       return c.json({ error: "not found" }, 404);
     }
   }
@@ -222,8 +264,10 @@ tracksRouter.get("/:id/download", async (c) => {
       return c.json({ error: "not found" }, 404);
     }
   } else {
+    // Library track not in any playlist — locker only (owner or collaborator).
     const userId = await requestSessionUserId(c);
-    if (!userId || userId !== track.ownerId) {
+    const lockerId = userId && (await lockerIdForUserId(db, userId));
+    if (!lockerId || lockerId !== track.ownerId) {
       return c.json({ error: "not found" }, 404);
     }
   }
@@ -249,14 +293,14 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");
   const { playlistId } = await c.req.json<{ playlistId: string | null }>();
   const db = getDb(c.env.DB);
-  const userId = c.get("user").id;
+  const lockerId = lockerIdOf(c.get("user"));
 
   const [track] = await db
     .select()
     .from(tracks)
     .where(eq(tracks.id, trackId))
     .limit(1);
-  if (!track || track.ownerId !== userId) {
+  if (!track || track.ownerId !== lockerId) {
     return c.json({ error: "not found" }, 404);
   }
 
@@ -267,7 +311,7 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
       .from(playlists)
       .where(eq(playlists.id, playlistId))
       .limit(1);
-    if (!playlist || playlist.ownerId !== userId) {
+    if (!playlist || playlist.ownerId !== lockerId) {
       return c.json({ error: "not found" }, 404);
     }
     position = await nextPosition(db, playlistId);
@@ -279,13 +323,18 @@ tracksRouter.patch("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .returning();
 
-  return c.json({ track: publicTrack(updated) });
+  const actingUserId = c.get("user").id;
+  const names = await resolveDisplayNames(db, actingUserId, lockerId, [updated.uploadedBy]);
+  return c.json({ track: publicTrack(updated, actingUserId, names) });
 });
 
-// Delete a track
+// Delete a track. The locker owner may delete anything in their locker; a
+// collaborator may only delete their own upload.
 tracksRouter.delete("/:id", requireAuth, async (c) => {
   const trackId = c.req.param("id");
   const db = getDb(c.env.DB);
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
 
   const [track] = await db
     .select()
@@ -293,7 +342,18 @@ tracksRouter.delete("/:id", requireAuth, async (c) => {
     .where(eq(tracks.id, trackId))
     .limit(1);
 
-  if (!track || track.ownerId !== c.get("user").id) {
+  // Wrong locker entirely — non-enumerable, same 404 a missing row gets.
+  if (!track || track.ownerId !== lockerId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  // Deleting a track erases the lossless master from the bucket with no undo,
+  // so a collaborator may only ever destroy their own upload. A null
+  // uploadedBy predates attribution (or its uploader has been removed, the FK
+  // being ON DELETE SET NULL, or the upload came from an anonymous edit-share
+  // holder) and reads as the owner's — which means a collaborator may not
+  // touch it. Fail closed: this runs before any bucket delete.
+  if (!isLockerOwner(user) && track.uploadedBy !== user.id) {
     return c.json({ error: "not found" }, 404);
   }
 

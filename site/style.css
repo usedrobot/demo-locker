@@ -108,10 +108,6 @@ a:focus-visible {
   padding: 2.5rem 1.625rem 4rem;
 }
 
-/* ascii logo — sized from its own column count against the container, so it
-   fits a phone instead of clipping. Same approach as the app: 100cqw is the
-   exact width available, where deriving it from the viewport minus an assumed
-   padding is not. Measured glyph width for the font stack is 0.602em. */
 /* NB `container-type: inline-size` makes this element's width independent of
    its contents, so it must never sit in a content-sized box — as a flex item it
    would collapse to zero and take the art with it. That shipped in the app once.
@@ -122,33 +118,33 @@ a:focus-visible {
   min-width: 0;
 }
 
-/* --fit is the fraction of the container the art is allowed to occupy. At 1 it
-   spans edge to edge, which on a phone squeezes the glyph cells and lets the
-   logo dominate the page — the mobile query below pulls it in. The pre is
-   width:fit-content so the art centres inside the leftover space rather than
-   hugging the left edge — and that is also what keeps the 4px floor safe. The
-   floor binds at and below a 320px viewport, but a fit-content pre shrinks to
-   the art instead of the box, so the art stays inside .ascii-fit and nothing
-   clips: measured 265px of art in a 268px box at 300px, the narrowest width
-   worth supporting. */
+/* The wordmark is an <svg> of cells now, not a <pre> of block characters, so
+   this is a width rather than a font-size. See the comment in index.html.
+
+   What that removed: a `clamp(4px, 100cqw / (cols * 0.61), 11px)` font-size, a
+   4px floor, and a note about measuring 265px of art into a 268px box. Every
+   one of those was managing the same defect — keeping the glyph cell large
+   enough that mismatched font advances were not obvious — and none of them
+   could fix it, because the cause was font metrics. An SVG has no glyphs to
+   mis-advance, scales exactly at any width, and cannot clip its own art.
+
+   738.1px is the old 11px cap expressed as a width: 110 columns x the 0.61
+   advance x 11px. Keeping it means the mark is the same size it has always
+   been on a desktop.
+
+   --fit is the fraction of the container the art may occupy. At 1 it spans
+   edge to edge, which on a phone lets the logo dominate the page; the mobile
+   query below pulls it in. margin-inline centres what is left over. */
 .ascii-fit > .ascii-logo {
-  --cols: 110;
   --fit: 1;
-  font-size: clamp(
-    4px,
-    calc(100cqw / (var(--cols) * 0.61) * var(--fit)),
-    11px
-  );
-  width: fit-content;
+  display: block;
+  width: min(calc(100% * var(--fit)), 738.1px);
+  height: auto;
   margin-inline: auto;
 }
 
 .ascii-logo {
   color: var(--accent);
-  font-family: var(--font);
-  line-height: 1.2;
-  white-space: pre;
-  overflow: hidden;
   user-select: none;
 }
 

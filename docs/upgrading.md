@@ -150,6 +150,7 @@ d1 list`):
       "/playlists", "/playlists/*",
       "/comments", "/comments/*",
       "/shares", "/shares/*",
+      "/collab", "/collab/*",
       "/tracks", "/tracks/*",
       "/public/v1", "/public/v1/*"
     ]
@@ -163,8 +164,10 @@ d1 list`):
 > Worker, so a prefix listed only as `/playlists/*` means `GET /playlists`
 > falls through to the SPA and returns HTML instead of JSON. Sub-paths keep
 > working, which makes it look healthy while every collection endpoint is
-> broken. Drop the `routes` block entirely if you installed without a custom
-> domain.
+> broken. `/collab` is new on that list in 0.2.13 — an upgrade that keeps an
+> older `run_worker_first` leaves the whole collaborators feature (invites,
+> members, removal) answering with the SPA index. Drop the `routes` block
+> entirely if you installed without a custom domain.
 
 **3. Apply migrations BEFORE deploying:**
 
@@ -230,6 +233,19 @@ wired it to a repo. Confirm your volume is still mounted at `/data`
 afterwards. See [deploy-templates.md](deploy-templates.md).
 
 ---
+
+## Special case: `MAX_COLLABORATORS` set before 0.2.13
+
+**Only affects you if you set `MAX_COLLABORATORS`.** It used to mean "share
+links per playlist". As of 0.2.13 it means what its name says — how many
+collaborators may share your library — and the per-playlist share-link ceiling
+moved to a new `MAX_SHARE_LINKS`.
+
+If you set it to limit share links, copy the value to `MAX_SHARE_LINKS` and
+decide separately whether you want a collaborator cap. Leaving it as-is is not
+dangerous — nothing breaks and nothing is exposed that was not before — but
+your playlists become unlimited for share links, and the number you chose now
+limits collaborators instead.
 
 ## Special case: databases from before the millisecond-timestamp change
 

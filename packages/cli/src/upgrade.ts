@@ -1,7 +1,7 @@
 // Upgrading an instance that already exists. Creates nothing.
 
 import { join } from "node:path";
-import { PACKAGED_ASSETS_FOR_UPGRADE, versionedImage, wranglerConfig } from "./plan.js";
+import { PACKAGED_ASSETS_FOR_UPGRADE, cliVersion, versionedImage, wranglerConfig } from "./plan.js";
 import type { DeployPlan, Step } from "./plan.js";
 import type { DiscoveredInstance } from "./discover.js";
 
@@ -12,6 +12,221 @@ export interface UpgradeOptions {
    * versioned tag is not published.
    */
   image?: string;
+}
+
+// ---------------------------------------------------------------------------
+// The MAX_COLLABORATORS meaning change (0.2.13)
+//
+// It used to cap share links per playlist; it now caps collaborator seats, and
+// MAX_SHARE_LINKS took over the old job. Upgrade re-passes the operator's env
+// verbatim, so an upgrade across that boundary is the moment their setting
+// silently starts doing something else — and the only moment we can say so
+// outside release notes.
+//
+// The notice is narrowly targeted, because a misfire is worse than silence:
+// telling someone already on the new meaning to move their value to
+// MAX_SHARE_LINKS would install a per-playlist cap they never wanted and start
+// 403ing share creation. Hence the three gates below, and the two wordings.
+//
+// The wording matters as much as the gating. Nothing here establishes what the
+// operator *meant* by MAX_COLLABORATORS — only that they set it. So even the
+// definite form says "if you set it to limit share links, move the value",
+// matching docs/self-hosting.md, rather than instructing them to move it.
+// ---------------------------------------------------------------------------
+
+/** The release in which MAX_COLLABORATORS stopped meaning "share links". */
+export const RENAME_VERSION: readonly number[] = [0, 2, 13];
+
+/**
+ * Past this, the rename is old news and an *undirected* pointer is just noise.
+ * Anyone still crossing the boundary by then has skipped the whole 0.3 line,
+ * and docs/upgrading.md keeps the instructions regardless.
+ *
+ * Applies to the two notices that cannot show their reader is affected: the
+ * Cloudflare pointer and the unreadable-version branch. Not to the notice that
+ * can — see noticeSunsetPassed.
+ */
+export const RENAME_NOTICE_SUNSET: readonly number[] = [0, 4, 0];
+
+/** `"0.2.10"` → `[0, 2, 10]`; null if it is not a semantic version. */
+export function parseVersion(text: string): number[] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(text);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** Numeric, not lexical — 0.10.0 is after 0.2.13, not before it. */
+function isBefore(v: readonly number[], than: readonly number[]): boolean {
+  for (let i = 0; i < than.length; i++) {
+    if (v[i]! !== than[i]!) return v[i]! < than[i]!;
+  }
+  return false;
+}
+
+/**
+ * Has the rename passed into history for the version being installed?
+ *
+ * Applies only to the notices that CANNOT establish the reader is affected —
+ * the Cloudflare pointer and the unreadable-version branch. A notice that has
+ * proven its reader is crossing the boundary stays correct however late they
+ * do it, and is not sunset.
+ */
+function noticeSunsetPassed(version: string): boolean {
+  const v = parseVersion(version);
+  return v !== null && !isBefore(v, RENAME_NOTICE_SUNSET);
+}
+
+/**
+ * The semantic version in a docker image reference, or null when it cannot be
+ * read — `:latest`, a digest pin, or no tag at all.
+ *
+ * Splits on the last path segment first so a registry host with a port
+ * (`localhost:5000/demo-locker:0.2.10`) does not read as a tag.
+ */
+export function imageVersion(image: string): number[] | null {
+  const ref = image.split("/").pop() ?? "";
+  const tag = ref.includes(":") ? ref.slice(ref.indexOf(":") + 1) : "";
+  return parseVersion(tag);
+}
+
+/**
+ * Is this instance old enough to be affected?
+ *
+ * Null (unknown) is NOT treated as "yes" — see renameNotes. `:latest` is the
+ * documented install and upgrade tag (README.md:52, docs/upgrading.md:69) and
+ * main.ts falls back to it whenever the registry cannot be reached, so
+ * unknown is a large share of live installs and stays unknown forever. What
+ * unknown gets is a weaker, non-directive wording, not a guess.
+ */
+export function predatesRename(image: string): boolean {
+  const v = imageVersion(image);
+  return v !== null && isBefore(v, RENAME_VERSION);
+}
+
+/** The value of `NAME=value` in a docker-style env list, or null if absent. */
+function envValue(env: readonly string[], name: string): string | null {
+  const hit = env.find((e) => e.startsWith(`${name}=`));
+  return hit === undefined ? null : hit.slice(name.length + 1);
+}
+
+export function renameNotes(
+  env: readonly string[],
+  image: string,
+  installing: string = cliVersion(),
+): Step[] {
+  // Gate 1 — was a cap actually in force? getLimits treats unset, empty and
+  // "0" identically (isLimited is `limit > 0`), so an empty or zero value
+  // never capped anything and there is nothing to tell the operator about.
+  const configured = Number.parseInt(envValue(env, "MAX_COLLABORATORS") ?? "", 10);
+  if (!(configured > 0)) return [];
+
+  // Gate 2 — have they already migrated? MAX_SHARE_LINKS is preserved across
+  // upgrades like any other app var, so its presence is the clearest signal
+  // available that this operator has seen the new variable and chosen values
+  // for both deliberately. Repeating the advice would talk them into
+  // overwriting a deliberate choice. Presence, not `> 0`, on purpose: the
+  // question here is "have they encountered this variable", not "is a cap in
+  // force" — someone who set it to 0 to mean unlimited has still migrated.
+  if (envValue(env, "MAX_SHARE_LINKS") !== null) return [];
+
+  // Gate 3 — are they crossing the boundary?
+  //
+  // Three outcomes, not two. An instance demonstrably on 0.2.13+ is silent: it
+  // set MAX_COLLABORATORS under the current meaning, deliberately, as a seat
+  // cap, and must not be nudged into moving it.
+  const from = imageVersion(image);
+  if (from !== null && !isBefore(from, RENAME_VERSION)) return [];
+
+  const changed: Step = {
+    kind: "note",
+    text: "note: MAX_COLLABORATORS is set here, and changed meaning in 0.2.13.",
+  };
+  // Shared by both wordings: what the variable means now. Split so that no
+  // line exceeds 80 columns once renderPlan has prefixed it with "# ".
+  const nowMeans: Step[] = [
+    {
+      kind: "note",
+      text: "  It caps collaborators — people who sign in and share your library.",
+    },
+    { kind: "note", text: "  Share links per playlist are capped by MAX_SHARE_LINKS." },
+  ];
+
+  // Unknown version. `:latest` is the documented install and upgrade tag, and
+  // main.ts falls back to it whenever the registry cannot be reached, so this
+  // is a large share of installs — and it never resolves, because the new
+  // container carries the same unreadable tag next time.
+  //
+  // So it gets the facts and no instruction. An operator on 0.3.1-as-:latest
+  // who set a deliberate seat cap and wants unlimited share links reaches this
+  // branch, and "copy the value to MAX_SHARE_LINKS" would hand them a cap that
+  // 403s their share creation — the exact harm the gates exist to prevent. The
+  // same reasoning as the Cloudflare path below: state it conditionally, and
+  // let the docs carry the instruction to whoever it actually applies to.
+  //
+  // Sunset applies here for the same reason it applies to Cloudflare: this
+  // branch cannot show the operator is affected, it never stops being reached
+  // (the tag stays unreadable), and an undirected pointer narrating a 0.2.13
+  // change during a 1.4.x upgrade is noise. The known-old branch below is
+  // deliberately NOT sunset — there the from-version proves the operator is
+  // crossing the boundary, and that stays true and actionable whenever they
+  // happen to do it.
+  if (from === null) {
+    if (noticeSunsetPassed(installing)) return [];
+    return [
+      changed,
+      ...nowMeans,
+      {
+        kind: "note",
+        text: "  This instance's version could not be read from its image tag;",
+      },
+      { kind: "note", text: "  if it predates 0.2.13, see docs/upgrading.md." },
+    ];
+  }
+
+  // Known to predate the rename. Even here the gates establish only that a cap
+  // was set, never that it was meant as a share-link cap — someone who set it
+  // as a seat cap and never made a share link would gain a ceiling they never
+  // had. So this stays conditional too.
+  //
+  // "copy", not "move": MAX_COLLABORATORS still has a live meaning (seats), so
+  // telling them to move it would quietly drop a collaborator cap.
+  // docs/upgrading.md has this right — copy the value across, then decide about
+  // a seat cap separately — and the three texts are now worded alike.
+  return [
+    changed,
+    ...nowMeans,
+    {
+      kind: "note",
+      text: "  If you set MAX_COLLABORATORS to limit share links, copy the value",
+    },
+    { kind: "note", text: "  to MAX_SHARE_LINKS. See docs/upgrading.md." },
+  ];
+}
+
+/**
+ * The Cloudflare pointer. Unconditional in content, because a Worker's vars
+ * live in the dashboard: no read-only wrangler command reports them, so
+ * CloudflareCandidate carries neither env nor a deployed version and there is
+ * nothing to condition on. Worded so it says nothing false to an operator who
+ * never set the variable.
+ *
+ * Bounded in time, though. "Undetectable" justifies printing it while the
+ * boundary is plausibly still being crossed — not narrating a 0.2.13 change
+ * during a 1.4.0 upgrade years later. Gated on the version being installed,
+ * which is the one version this code does know.
+ */
+export function cloudflareRenameNotes(version: string = cliVersion()): Step[] {
+  if (noticeSunsetPassed(version)) return [];
+  return [
+    {
+      kind: "note",
+      text: "note: if this instance sets MAX_COLLABORATORS, meaning changed in 0.2.13.",
+    },
+    {
+      kind: "note",
+      text: "  It now caps collaborators; MAX_SHARE_LINKS caps share links per playlist.",
+    },
+    { kind: "note", text: "  See docs/upgrading.md." },
+  ];
 }
 
 export function buildUpgradePlan(
@@ -70,6 +285,9 @@ function cloudflareUpgrade(
 
   const configPath = join(stagingDir, "wrangler.jsonc");
   const steps: Step[] = [
+    // See cloudflareRenameNotes: undetectable here, so unconditional in
+    // content, conditional in wording, and sunset by version.
+    ...cloudflareRenameNotes(),
     { kind: "copy", title: "Stage the new build", from: PACKAGED_ASSETS_FOR_UPGRADE, to: stagingDir },
     { kind: "write", title: "Write wrangler config for this instance", path: configPath, contents: config },
     // MUST precede deploy: the ORM selects every column explicitly, so a Worker
@@ -141,6 +359,7 @@ function dockerUpgrade(
   }
 
   const envArgs = dk.env.flatMap((e) => ["-e", e]);
+  const notes: Step[] = renameNotes(dk.env, dk.image);
   // `-p 127.0.0.1:8080:3001` is a deliberate "not on the LAN". Emitting the
   // two-part form instead would republish it on 0.0.0.0.
   const publish = dk.hostIp ? `${dk.hostIp}:${dk.port}:3001` : `${dk.port}:3001`;
@@ -149,6 +368,8 @@ function dockerUpgrade(
   // is still on disk under this name and can be renamed back and started.
   const preupgrade = `${dk.containerName}-preupgrade`;
   const steps: Step[] = [
+    ...notes,
+
     { kind: "run", title: "Pull the new image", cmd: "docker", args: ["pull", image] },
     { kind: "run", title: "Stop the running container", cmd: "docker", args: ["stop", dk.containerId] },
     {

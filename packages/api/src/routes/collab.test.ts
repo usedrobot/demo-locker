@@ -205,9 +205,19 @@ describe("DELETE /collab/members/:id", () => {
 
   // comments.resolved_by is the one FK to users with no ON DELETE action and
   // cannot be given one without a full table rebuild, so the handler nulls it
-  // by hand or the delete aborts on a foreign-key error. Nothing can write a
-  // collaborator's id there today (resolving is owner-only), so this test
-  // plants the row directly — it guards a landmine, not a live bug.
+  // by hand or the delete aborts on a foreign-key error.
+  //
+  // THIS IS A LIVE BUG GUARD, NOT A LANDMINE. This comment used to say the
+  // opposite — "nothing can write a collaborator's id there today (resolving is
+  // owner-only)" — which was true when it was written and stopped being true at
+  // Task 11c, when comment moderation started following locker membership.
+  // Whole-branch finding F5 caught the same stale claim in routes/collab.ts and
+  // it was corrected there; this copy was missed. Any collaborator who has ever
+  // resolved a comment now 500s the owner's removal request if that null-out
+  // line goes.
+  //
+  // The row is still planted directly rather than resolved through the API,
+  // because the point is the DELETE, not the route that got us there.
   it("survives a comment the departing member had resolved", async () => {
     const [resolver] = await db
       .insert(users)

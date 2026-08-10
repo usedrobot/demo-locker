@@ -855,3 +855,85 @@ describe("Home — library rows are reachable without a mouse", () => {
     expect(btn!.getAttribute("aria-label")).toBe("Play a rough mix");
   });
 });
+
+// The playlist list is the third row-shaped control on Home, and it was missed
+// when the two TRACK-row callsites were fixed in d6fe6ba. A playlist row was
+// still `<div onClick={() => onSelect(p.id)}>` with no button, role or
+// tabIndex, so opening a playlist — the only way into a playlist's tracks,
+// comments and share controls — could not be done without a mouse. Everything
+// downstream of the row was keyboard-reachable; the door to it was not.
+//
+// Same shape as the track rows and for the same reason: the NAME carries the
+// button, not the row. The row holds the artwork tile and the (conditional)
+// [x] delete control, so a row-level button would nest one interactive element
+// inside another.
+describe("Home — playlist rows are reachable without a mouse", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({
+      playlists: [playlist({ id: "p-open", name: "rough mixes" })],
+    });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({ tracks: [] });
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: OWNER });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  function renderWith(onSelect: (id: string) => void) {
+    act(() => {
+      root.render(<Home onSelect={onSelect} onLogout={() => {}} />);
+    });
+  }
+
+  function nameButton(): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "rough mixes"
+    );
+  }
+
+  it("exposes the playlist name as a real button, labelled with what it does", async () => {
+    renderWith(() => {});
+    await flush();
+
+    const btn = nameButton();
+    expect(btn, "the name is not a button — a div is not keyboard reachable").toBeDefined();
+    // "Open rough mixes", not "rough mixes": a control labelled only with the
+    // thing it points at says nothing about what pressing it will do.
+    expect(btn!.getAttribute("aria-label")).toBe("Open rough mixes");
+    expect(btn!.type).toBe("button");
+  });
+
+  it("opens the playlist ONCE per activation, not twice", async () => {
+    // The row keeps its own onClick for mouse users, so without
+    // stopPropagation a click on the name fires the button AND the row. The
+    // count is the assertion — a test that only checked "was it called" passes
+    // just as happily when it fires twice.
+    const onSelect = vi.fn();
+    renderWith(onSelect);
+    await flush();
+
+    act(() => {
+      nameButton()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onSelect.mock.calls).toEqual([["p-open"]]);
+  });
+
+  it("hides the artwork tile from the accessibility tree", async () => {
+    // Decorative: it duplicates the name the button already announces. The
+    // <img> carries alt="" when there is artwork; the empty tile that stands in
+    // for a playlist without any must not be announced either.
+    renderWith(() => {});
+    await flush();
+
+    const btn = nameButton()!;
+    const row = btn.closest("div")!;
+    const tile = row.querySelector("[data-artwork]");
+    expect(tile, "the artwork tile is not marked decorative").not.toBeNull();
+    expect(tile!.getAttribute("aria-hidden")).toBe("true");
+  });
+});

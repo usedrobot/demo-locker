@@ -615,7 +615,13 @@ export default function Home({ onSelect, onLogout }: Props) {
                 gap: "0.75rem",
               }}
             >
+              {/* Decorative: the artwork says nothing the name below does not
+                  already say, and the empty tile a playlist without artwork
+                  gets says nothing at all. aria-hidden on the tile rather than
+                  alt="" on the <img>, so the placeholder is covered too. */}
               <div
+                data-artwork
+                aria-hidden="true"
                 style={{
                   width: "40px",
                   height: "40px",
@@ -633,11 +639,32 @@ export default function Home({ onSelect, onLogout }: Props) {
                   />
                 )}
               </div>
-              {/* minWidth:0 is the other half of Attribution's contract: a
-                  flex item defaults to min-content width, so without this the
-                  name below pushes the row wider than the viewport instead of
-                  the title giving up space. */}
-              <span style={{ flex: 1, minWidth: 0 }}>{p.name}</span>
+              {/* A real button, for the same reason the track rows have one
+                  (d6fe6ba): a plain <div onClick> is not focusable, takes no
+                  Enter or Space, and is absent from the accessibility tree, so
+                  opening a playlist was impossible without a mouse — and the
+                  playlist is the door to its tracks, comments and share
+                  controls, all of which ARE reachable once you are inside.
+                  The NAME carries it, not the row: the row holds the artwork
+                  tile and a conditional [x], so a row-level button would nest
+                  interactive elements inside an interactive element.
+                  The row keeps its own click handler for mouse users;
+                  stopPropagation keeps a click here from firing both.
+                  minWidth:0 comes from .row-title-btn and is the other half of
+                  Attribution's contract: a flex item defaults to min-content
+                  width, so without it the name pushes the row wider than the
+                  viewport instead of giving up space. */}
+              <button
+                type="button"
+                className="row-title-btn"
+                aria-label={`Open ${p.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(p.id);
+                }}
+              >
+                {p.name}
+              </button>
               <Attribution mine={p.createdByMe} name={p.createdByName} verb="Created" />
               <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {new Date(p.updatedAt).toLocaleDateString()}

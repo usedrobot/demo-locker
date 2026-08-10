@@ -327,7 +327,7 @@ describe("Home — share attribution in the access panel", () => {
 
   async function openAccess() {
     const btn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "[access]"
+      (b) => b.textContent === "[settings]"
     );
     expect(btn).toBeDefined();
     act(() => btn!.click());
@@ -405,7 +405,7 @@ describe("Home — the collaborators panel", () => {
 
   async function openAccess() {
     const btn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "[access]"
+      (b) => b.textContent === "[settings]"
     );
     expect(btn).toBeDefined();
     act(() => btn!.click());
@@ -413,8 +413,8 @@ describe("Home — the collaborators panel", () => {
   }
 
   // Both halves in one test, because "hidden" and "shown" are the same claim:
-  // the panel lives inside [access] rather than standing on its own.
-  it("stays hidden until the owner opens the access panel", async () => {
+  // the panel lives inside [settings] rather than standing on its own.
+  it("stays hidden until the owner opens settings", async () => {
     render();
     await flush();
 
@@ -425,17 +425,17 @@ describe("Home — the collaborators panel", () => {
     expect(container.querySelector('[data-testid="collab-panel"]')).not.toBeNull();
   });
 
-  it("stays hidden from a collaborator WITH the access panel open", async () => {
+  it("stays hidden from a collaborator WITH settings open", async () => {
     meMock.mockResolvedValue({ user: COLLABORATOR });
 
     render();
     await flush();
     await openAccess();
 
-    // The panel really is open — assert that first. Without this the test
+    // Settings really is open — assert that first. Without this the test
     // passes on a closed panel and would keep passing with the owner gate
     // deleted outright, which is exactly what moving the panel inside
-    // [access] made possible.
+    // [settings] made possible.
     expect(container.textContent).toContain("access — who can reach your locker");
 
     // A collaborator may not see who else is in the locker, let alone invite
@@ -610,9 +610,9 @@ describe("Home — the name panel", () => {
 
   async function openPanel() {
     const btn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "[name]"
+      (b) => b.textContent === "[settings]"
     );
-    expect(btn, "no [name] control on the account row").toBeDefined();
+    expect(btn, "no [settings] control on the account row").toBeDefined();
     act(() => btn!.click());
     await flush();
   }

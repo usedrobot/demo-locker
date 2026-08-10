@@ -469,6 +469,20 @@ button:active {
   gap: 0.5rem;
 }
 
+/* "logged in as <name>" — states who you are so [settings] does not have to.
+   min-width:0 + ellipsis because this is an email address whenever no display
+   name is set, and a long address would otherwise push [settings] and [logout]
+   off the row. The controls matter more than the full address; the account
+   section inside settings shows it in full. */
+.page-header-identity {
+  color: var(--fg-dim);
+  margin-right: 0.5rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The ascii title is a size container; the rename input stands in for it
    rather than wrapping it, so the container never sizes itself from an
    editable child. */

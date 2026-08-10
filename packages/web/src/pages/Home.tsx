@@ -37,15 +37,13 @@ export default function Home({ onSelect, onLogout }: Props) {
   const [playerState, setPlayerState] = useState(player.getState());
   // bump to re-read the accent swatch color after a cycle
   const [, setAccentTick] = useState(0);
-  const [showAccess, setShowAccess] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [pwError, setPwError] = useState("");
   const [pwDone, setPwDone] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
-  const [showName, setShowName] = useState(false);
   // What the field holds while the panel is open, kept apart from `savedName`
   // so a background refetch (the tab regaining focus) cannot overwrite what
   // someone is halfway through typing.
@@ -77,15 +75,28 @@ export default function Home({ onSelect, onLogout }: Props) {
   // rejections: the row simply did not change and nothing said why.
   const [accessError, setAccessError] = useState("");
 
-  async function openAccess() {
+  // Everything account-shaped lives behind one [settings] control: the name,
+  // the password, the share links, and (for the owner) the collaborators. They
+  // used to be three independent toggles on the header row, which meant three
+  // controls competing for space and no single place to go looking.
+  //
+  // Opening seeds the forms and fetches the links. A failure to fetch still
+  // opens the panel — the other two sections work regardless, and the error is
+  // surfaced inside the access section rather than swallowing the whole panel.
+  async function openSettings() {
+    setShowSettings(true);
+    // Seeded on open, from the last value the session reported.
+    setNameDraft(savedName ?? "");
+    setNameError("");
+    setNameDone(false);
+    setPwError("");
+    setPwDone(false);
     setAccessError("");
     try {
       const r = await sharesApi.listAll();
       setAccessShares(r.shares);
-      setShowAccess(true);
     } catch (err) {
       setAccessError(err instanceof Error ? err.message : "couldn't load your links");
-      setShowAccess(true);
     }
   }
 
@@ -299,40 +310,22 @@ export default function Home({ onSelect, onLogout }: Props) {
           <Logo />
         </div>
         <div className="page-header-actions">
+          {/* Rendered only once the session has actually resolved. Before that
+              both values are empty and this would read "logged in as " with a
+              blank where the identity goes. */}
+          {accountEmail && (
+            <span className="page-header-identity">
+              logged in as {savedName || accountEmail}
+            </span>
+          )}
+          <button
+            onClick={() => (showSettings ? setShowSettings(false) : openSettings())}
+            style={{ ...linkStyle, color: showSettings ? "var(--accent)" : "var(--fg-dim)" }}
+          >
+            [settings]
+          </button>
           <button onClick={handleLogout} style={linkStyle}>
             [logout]
-          </button>
-          <button
-            onClick={() => (showAccess ? setShowAccess(false) : openAccess())}
-            style={{ ...linkStyle, color: showAccess ? "var(--accent)" : "var(--fg-dim)" }}
-          >
-            [access]
-          </button>
-          <button
-            onClick={() => {
-              setShowPassword((v) => !v);
-              setPwError("");
-              setPwDone(false);
-            }}
-            style={{ ...linkStyle, color: showPassword ? "var(--accent)" : "var(--fg-dim)" }}
-          >
-            [password]
-          </button>
-          <button
-            onClick={() => {
-              if (showName) {
-                setShowName(false);
-                return;
-              }
-              // Seeded on open, from the last value the session reported.
-              setNameDraft(savedName ?? "");
-              setNameError("");
-              setNameDone(false);
-              setShowName(true);
-            }}
-            style={{ ...linkStyle, color: showName ? "var(--accent)" : "var(--fg-dim)" }}
-          >
-            [name]
           </button>
           <button
             onClick={() => {
@@ -357,7 +350,7 @@ export default function Home({ onSelect, onLogout }: Props) {
         </div>
       </div>
 
-      {showPassword && (
+      {showSettings && (
         <div style={{ marginBottom: "2rem" }}>
           <div className="box-header">change password</div>
           <form
@@ -434,7 +427,7 @@ export default function Home({ onSelect, onLogout }: Props) {
         </div>
       )}
 
-      {showName && (
+      {showSettings && (
         <div style={{ marginBottom: "2rem" }}>
           <div className="box-header">your name</div>
           <form
@@ -481,7 +474,7 @@ export default function Home({ onSelect, onLogout }: Props) {
         </div>
       )}
 
-      {showAccess && (
+      {showSettings && (
         <div style={{ marginBottom: "2rem" }}>
           <div className="box-header">access — who can reach your locker</div>
           {accessError && (
@@ -565,15 +558,18 @@ export default function Home({ onSelect, onLogout }: Props) {
               route enforces the same rule with a non-enumerable 404 — this is
               the UI half, not the guard.
 
-              Lives INSIDE the access panel, under the share links, because
-              both answer one question: who can reach this locker. That means
-              it is now gated twice — the panel must be open AND the viewer
+              Lives in the access section of [settings], under the share links,
+              because both answer one question: who can reach this locker. That
+              means it is gated twice — settings must be open AND the viewer
               must be the owner — but only the inner `isOwner` check is load
-              bearing. The access panel itself is deliberately NOT owner-gated
-              (a collaborator opens it to manage share links, and GET /shares
-              is locker-scoped), so this check is the only thing between a
-              collaborator and the members list. Do not hoist it out of here
-              on the assumption that the enclosing panel is owner-only. */}
+              bearing. NOTHING enclosing this is owner-gated: [settings] is
+              offered to everyone (a collaborator opens it for their own name
+              and password, and to manage share links, since GET /shares is
+              locker-scoped). So this check is the only thing standing between
+              a collaborator and the members list. Do not hoist it out on the
+              assumption that the surrounding panel is owner-only — it is not,
+              and the test that would catch you goes vacuous the moment the
+              panel is closed. */}
           {isOwner === true && (
             <div style={{ marginTop: "2rem" }}>
               <CollabPanel />

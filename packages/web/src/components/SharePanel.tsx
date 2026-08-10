@@ -130,11 +130,16 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
       await api.create(playlistId, canEdit ? "edit" : "listen", label.trim() || undefined);
       setLabel("");
       setCanEdit(false);
-      // Completion needs its own TEXT, not an empty region. Live regions
-      // announce added or changed content; emptying a polite region is silent
-      // in NVDA, JAWS and VoiceOver, so "minting" -> "" left the user who heard
-      // the start with no signal that it ever ended. The success path has no
-      // other non-visual cue — the new row appears, but nothing says so.
+      // Completion is given its own TEXT rather than an empty region: live
+      // regions announce added or changed content, and emptying a polite one is
+      // conventionally understood to be silent, so "minting" -> "" would leave
+      // whoever heard the start with no signal that it ever ended. The success
+      // path has no other non-visual cue — the new row appears, but nothing
+      // says so.
+      //
+      // ⚠️ UNVERIFIED, and suspected not to be heard at all on this path — see
+      // the role="status" block below. Setting this text is necessary but may
+      // not be sufficient; the refocus in the same commit may swallow it.
       announce("share link created");
       load();
     } catch (err) {
@@ -285,15 +290,38 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           [+ share link]
         </button>
         {/* Always rendered, text swapped — never mounted alongside its own
-            content. A role="status" region has to be in the accessibility tree
-            *before* its text changes; NVDA, JAWS and VoiceOver commonly drop
-            the announcement when the node and its text arrive in the same
-            commit. Both transitions here are text CHANGES ("" -> "minting" ->
-            "share link created"), which is what a live region actually
-            announces — an earlier version emptied the region to signal
-            completion, which announces nothing at all. When idle this is a
-            zero-width flex item (one extra 0.5rem gap in `.share-actions`;
-            re-measured at 320px in every state, still no overflow). */}
+            content, on the convention that a polite region should be in the
+            accessibility tree *before* its text changes. Both transitions here
+            are text CHANGES ("" -> "minting" -> "share link created") rather
+            than a mount or an empty.
+
+            ⚠️ NOT MEASURED. No screen reader has ever been run against this
+            component, and the reasoning below is convention and inference, not
+            observation. Treat it as a design rationale, not as a description of
+            what a user hears. Two specific things are suspected WRONG:
+
+              1. `.dots` (applied to this very element while `creating`) animates
+                 ::after `content` through "" / "." / ".." / "..." on a 1.4s
+                 4-step loop — a generated-content change inside this polite
+                 region roughly every 350ms. Whether a reader announces CSS
+                 generated content, and whether it re-announces on each step, is
+                 unknown here. If "minting" stutters or reads dots, this is why.
+              2. The completion announcement may never be heard on the keyboard
+                 path it was written for. `announce("share link created")` and
+                 `setCreating(false)` land in the same React commit, and the
+                 refocus effect calls focus() in that same commit — and moving
+                 focus is widely reported to flush the pending polite queue. On
+                 the Enter path focusTargetRef is always set (focus was on the
+                 mint button), so that refocus always fires.
+
+            Resolving either needs VoiceOver/NVDA/JAWS on the real component;
+            until then do not cite this comment as evidence of behaviour. The
+            sibling role="alert" region below carries the same caveat and says
+            so.
+
+            Measured and true: when idle this is a zero-width flex item (one
+            extra 0.5rem gap in `.share-actions`; re-measured at 320px in every
+            state, still no overflow). */}
         <span
           role="status"
           className={creating ? "dots" : undefined}

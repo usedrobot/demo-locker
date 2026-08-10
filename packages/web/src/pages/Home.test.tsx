@@ -395,27 +395,51 @@ describe("Home — the collaborators panel", () => {
     listTracksMock.mockResolvedValue({ tracks: [] });
     meMock.mockReset();
     meMock.mockResolvedValue({ user: OWNER });
+    listSharesMock.mockReset();
+    listSharesMock.mockResolvedValue({ shares: [] });
 
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
   });
 
-  it("mounts for the locker owner", async () => {
+  async function openAccess() {
+    const btn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "[access]"
+    );
+    expect(btn).toBeDefined();
+    act(() => btn!.click());
+    await flush();
+  }
+
+  // Both halves in one test, because "hidden" and "shown" are the same claim:
+  // the panel lives inside [access] rather than standing on its own.
+  it("stays hidden until the owner opens the access panel", async () => {
     render();
     await flush();
+
+    expect(container.querySelector('[data-testid="collab-panel"]')).toBeNull();
+
+    await openAccess();
 
     expect(container.querySelector('[data-testid="collab-panel"]')).not.toBeNull();
   });
 
-  it("does not mount for a collaborator", async () => {
+  it("stays hidden from a collaborator WITH the access panel open", async () => {
     meMock.mockResolvedValue({ user: COLLABORATOR });
 
     render();
     await flush();
+    await openAccess();
+
+    // The panel really is open — assert that first. Without this the test
+    // passes on a closed panel and would keep passing with the owner gate
+    // deleted outright, which is exactly what moving the panel inside
+    // [access] made possible.
+    expect(container.textContent).toContain("access — who can reach your locker");
 
     // A collaborator may not see who else is in the locker, let alone invite
-    // anyone — every /collab route 404s them.
+    // anyone — every /collab route 404s them. This is the UI half.
     expect(container.querySelector('[data-testid="collab-panel"]')).toBeNull();
   });
 });

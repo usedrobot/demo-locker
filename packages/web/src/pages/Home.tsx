@@ -558,14 +558,28 @@ export default function Home({ onSelect, onLogout }: Props) {
               </div>
             ))}
           </div>
+
+          {/* Owner-only, and on `true` alone: a collaborator may not see who
+              else is in the locker, let alone invite anyone. Every /collab
+              route enforces the same rule with a non-enumerable 404 — this is
+              the UI half, not the guard.
+
+              Lives INSIDE the access panel, under the share links, because
+              both answer one question: who can reach this locker. That means
+              it is now gated twice — the panel must be open AND the viewer
+              must be the owner — but only the inner `isOwner` check is load
+              bearing. The access panel itself is deliberately NOT owner-gated
+              (a collaborator opens it to manage share links, and GET /shares
+              is locker-scoped), so this check is the only thing between a
+              collaborator and the members list. Do not hoist it out of here
+              on the assumption that the enclosing panel is owner-only. */}
+          {isOwner === true && (
+            <div style={{ marginTop: "2rem" }}>
+              <CollabPanel />
+            </div>
+          )}
         </div>
       )}
-
-      {/* Owner-only, and on `true` alone: a collaborator may not see who else
-          is in the locker, let alone invite anyone. Every /collab route
-          enforces the same rule with a non-enumerable 404 — this is the UI
-          half, not the guard. */}
-      {isOwner === true && <CollabPanel />}
 
       <div className="box-header">playlists</div>
       <div style={{ borderTop: "1px solid var(--border)" }}>

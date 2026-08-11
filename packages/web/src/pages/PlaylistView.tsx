@@ -40,6 +40,11 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
   // nothing on screen to say why.
   const [loadError, setLoadError] = useState("");
   const [showAddTracks, setShowAddTracks] = useState(false);
+  // Collapsed by default. The embed box is a two-row textarea plus an api line,
+  // and it sat above the track list where it pushed the actual playlist down
+  // the page on every visit to a public playlist — permanent cost for a thing
+  // you copy once.
+  const [showEmbed, setShowEmbed] = useState(false);
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -384,31 +389,6 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
         />
       </div>
 
-      {playlist.isPublic && (
-        <div className="box" style={{ marginBottom: "1rem" }}>
-          <div className="box-header">public — embed on any site</div>
-          <textarea
-            readOnly
-            rows={2}
-            value={`<script src="${getApiOrigin()}/embed.js"></script>\n<demo-locker-player playlist="${playlist.id}"></demo-locker-player>`}
-            onFocus={(e) => e.currentTarget.select()}
-            style={{
-              width: "100%",
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              color: "var(--fg)",
-              fontFamily: "var(--font)",
-              fontSize: "12px",
-              padding: "0.5rem",
-              resize: "vertical",
-            }}
-          />
-          <div style={{ color: "var(--fg-dim)", fontSize: "11px", marginTop: "0.5rem" }}>
-            api: {getApiOrigin()}/public/v1/playlists/{playlist.id}
-          </div>
-        </div>
-      )}
-
       <div style={{ borderTop: "1px solid var(--border)" }}>
         <TrackList
           tracks={tracks}
@@ -421,6 +401,57 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
           onSelect={setSelectedTrackId}
         />
       </div>
+
+      {/* Public embed, behind a toggle and BELOW the track list. Only a public
+          playlist has anything to embed, so the control does not exist at all
+          on a private one — a disabled button that never explains itself is
+          worse than no button.
+
+          aria-expanded + aria-controls, so the open/closed state is available
+          to someone who cannot see it move.
+
+          The panel is UNMOUNTED when closed, not hidden, so its textarea is
+          not a tab stop while collapsed. That leaves aria-controls pointing at
+          an id that is absent half the time, which is the accepted trade: the
+          alternative puts a focusable readonly textarea in the tab order of
+          every public playlist, which is most of the cost this change exists
+          to remove. */}
+      {playlist.isPublic && (
+        <div style={{ marginTop: "1rem" }}>
+          <button
+            onClick={() => setShowEmbed((v) => !v)}
+            aria-expanded={showEmbed}
+            aria-controls="public-embed-panel"
+            style={{ ...linkStyle, color: "var(--accent)" }}
+          >
+            [ public embed ]
+          </button>
+          {showEmbed && (
+            <div id="public-embed-panel" className="box" style={{ marginTop: "0.5rem" }}>
+              <div className="box-header">public — embed on any site</div>
+              <textarea
+                readOnly
+                rows={2}
+                value={`<script src="${getApiOrigin()}/embed.js"></script>\n<demo-locker-player playlist="${playlist.id}"></demo-locker-player>`}
+                onFocus={(e) => e.currentTarget.select()}
+                style={{
+                  width: "100%",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                  color: "var(--fg)",
+                  fontFamily: "var(--font)",
+                  fontSize: "12px",
+                  padding: "0.5rem",
+                  resize: "vertical",
+                }}
+              />
+              <div style={{ color: "var(--fg-dim)", fontSize: "11px", marginTop: "0.5rem" }}>
+                api: {getApiOrigin()}/public/v1/playlists/{playlist.id}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Track comments for selected track */}
       {selectedTrack && (

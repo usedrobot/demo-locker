@@ -269,3 +269,55 @@ describe("PlaylistView when it cannot find out who the viewer is", () => {
     expect(alerted.map((n) => n.textContent).join(" ")).toContain("playlist unreachable");
   });
 });
+
+// The embed snippet is a two-row textarea plus an api line that used to render
+// open, above the track list, on every visit to a public playlist — permanent
+// vertical cost for something you copy once. It is now collapsed behind a
+// control below the list.
+describe("PlaylistView's public embed panel", () => {
+  const embedToggle = () =>
+    Array.from(container.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("public embed")
+    );
+  const embedPanel = () => container.querySelector("#public-embed-panel");
+
+  it("offers nothing to embed on a private playlist", async () => {
+    getMock.mockResolvedValue({ playlist, tracks: [track] });
+    meMock.mockResolvedValue({ user: { id: OWNER_ID, lockerOwnerId: null } as never });
+    render();
+    await flush();
+
+    // Absent, not disabled: a control that can never do anything here has no
+    // state worth announcing.
+    expect(embedToggle()).toBeUndefined();
+    expect(embedPanel()).toBeNull();
+  });
+
+  it("starts collapsed on a public playlist, and opens on activation", async () => {
+    getMock.mockResolvedValue({
+      playlist: { ...playlist, isPublic: true },
+      tracks: [track],
+    });
+    meMock.mockResolvedValue({ user: { id: OWNER_ID, lockerOwnerId: null } as never });
+    render();
+    await flush();
+
+    const toggle = embedToggle();
+    expect(toggle, "no [ public embed ] control on a public playlist").toBeDefined();
+    // Collapsed is the whole point — asserted as the panel being ABSENT, not
+    // merely invisible, so the readonly textarea is not a tab stop until asked
+    // for.
+    expect(embedPanel()).toBeNull();
+    expect(toggle!.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => {
+      toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(embedPanel(), "the panel did not open").not.toBeNull();
+    expect(embedToggle()!.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector("textarea")?.value).toContain(
+      '<demo-locker-player playlist="pl-1">'
+    );
+  });
+});

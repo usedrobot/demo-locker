@@ -9,11 +9,21 @@
 <meta property="og:description" content="A private locker for your rough mixes. Your band comments straight onto the waveform, you set the running order, and you decide what goes public. Hosted by you. No streaming terms, no licensing, no bs, just tunes." />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Demo Locker" />
-<meta property="og:image" content="/img/og.png" />
+<!-- ABSOLUTE, not "/img/og.png". Open Graph requires an absolute URL for
+     og:image, and scrapers differ on whether they will resolve a relative one
+     at all — so the relative form risks a share card with no artwork, which is
+     the card most people meet this project through.
+
+     og:url and the canonical below name demolocker.net as the one home. The
+     same page is also served from demo-locker.pages.dev, and without a
+     canonical those are two indexable copies competing with each other. -->
+<meta property="og:url" content="https://demolocker.net/" />
+<meta property="og:image" content="https://demolocker.net/img/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content="Demo Locker" />
 <meta name="twitter:card" content="summary_large_image" />
+<link rel="canonical" href="https://demolocker.net/" />
 <link rel="icon" href="/favicon.svg" />
 <link rel="stylesheet" href="/style.css" />
 </head>

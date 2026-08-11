@@ -92,6 +92,7 @@
   <figure class="demo">
     <video
       class="demo-video"
+      aria-label="A rough mix playing in Demo Locker. The waveform is clicked to move the playhead, a note is typed, and it appears pinned to that exact moment on the waveform."
       muted
       loop
       playsinline
@@ -100,22 +101,27 @@
       width="1400"
       height="982"
     >
-      <source src="/img/demo.webm" type="video/webm" />
+      <!-- H.264 MP4 only, deliberately. A VP9 WebM was here and shipped an
+           intermittent MEDIA_ERR_DECODE ("PIPELINE_ERROR_DECODE: video decode
+           error!"), which strands the video on its poster — <source> fallback
+           does NOT rescue that, because it only covers an unsupported TYPE,
+           not a decode failure after the type was accepted. The WebM also
+           saved nothing: 264 KB against the MP4's 263 KB. One codec everything
+           can play beats two where one is a coin flip. -->
       <source src="/img/demo.mp4" type="video/mp4" />
     </video>
     <figcaption>
-      A rough mix playing. Click the waveform to move, type a note, and it
-      pins to that exact moment — so "the snare is late here" points at the
-      snare, not at the file.
+      Streams at 256k AAC, so it holds up over a phone connection. Every
+      download hands back the file you uploaded, untouched — lossless if that
+      is what you put in.
     </figcaption>
   </figure>
 
-  <section aria-labelledby="featured-h">
-    <h2 id="featured-h" class="label">featured locker</h2>
+  <section aria-labelledby="public-h">
+    <h2 id="public-h" class="label">public locker</h2>
     <p class="hear-lead">
-      Two rough mixes playing out of a real Demo Locker, embedded on the
-      artist's own site with one script tag. The locker itself is private —
-      that playlist is the part they made public.
+      Flip playlists to public to share your music on any site, most
+      importantly your own. For example:
     </p>
     <p>
       <a href="https://dlisok.com#rough-mixes" rel="noopener">dlisok.com</a>
@@ -136,14 +142,15 @@
       <li><strong>Your demos.</strong></li>
       <li><strong>Some friends.</strong></li>
     </ul>
-    <p class="fineprint">
-      Everything lives in one volume: embedded SQLite, your audio on local
-      disk, no external services required. Point it at S3 or R2 instead if
-      you'd rather. See
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/self-hosting.md">self-hosting</a>,
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">host your music</a>
-      and <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/upgrading.md">upgrading</a>.
-    </p>
+  </section>
+
+  <section aria-labelledby="learn-h">
+    <h2 id="learn-h" class="label">learn more</h2>
+    <ul class="plain">
+      <li><a href="https://github.com/usedrobot/demo-locker/blob/main/docs/self-hosting.md">Self-hosting</a></li>
+      <li><a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">Host your music</a></li>
+      <li><a href="https://github.com/usedrobot/demo-locker/blob/main/docs/upgrading.md">Upgrading Demo Locker</a></li>
+    </ul>
   </section>
 
   <footer>

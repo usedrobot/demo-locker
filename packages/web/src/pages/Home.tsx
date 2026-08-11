@@ -533,14 +533,18 @@ export default function Home({ onSelect, onLogout }: Props) {
                     fontSize: "12px",
                   }}
                 >
-                  {s.permission === "edit" ? "listen + edit" : "listen"}
+                  {s.permission === "edit" ? "listen + re-arrange" : "listen"}
                 </span>
                 <button
                   onClick={() => toggleEdit(s)}
-                  title={s.permission === "edit" ? "Revoke upload/reorder" : "Grant upload/reorder"}
+                  title={
+                    s.permission === "edit"
+                      ? "Revoke re-arranging"
+                      : "Grant re-arranging"
+                  }
                   style={{ ...linkStyle, color: "var(--accent)" }}
                 >
-                  {s.permission === "edit" ? "[revoke edit]" : "[grant edit]"}
+                  {s.permission === "edit" ? "[revoke re-arrange]" : "[grant re-arrange]"}
                 </button>
                 <button
                   onClick={() => revokeShare(s.id)}

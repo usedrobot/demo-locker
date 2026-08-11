@@ -171,7 +171,7 @@ describe("legacy endpoint access gating", () => {
   });
 });
 
-describe("edit share tokens (upload/reorder capability)", () => {
+describe("edit share tokens (re-arrange capability)", () => {
   function uploadForm() {
     const form = new FormData();
     form.append("file", new File(["0123456789"], "collab.wav", { type: "audio/wav" }));
@@ -179,7 +179,7 @@ describe("edit share tokens (upload/reorder capability)", () => {
     return form;
   }
 
-  it("a listen token cannot upload or reorder; an edit token can", async () => {
+  it("a listen token cannot upload or reorder; an edit token may reorder only", async () => {
     // listen token: rejected
     const listenUpload = await app.request(
       "/tracks/upload",
@@ -212,19 +212,21 @@ describe("edit share tokens (upload/reorder capability)", () => {
     );
     expect(grant.status).toBe(200);
 
-    // edit token: upload lands, attributed to the locker owner
+    // edit token: upload is STILL refused. The permission grants re-arranging
+    // the playlist, not writing files into the locker — a share link goes to
+    // people outside the band, and an upload through one spends the owner's
+    // storage permanently with no uploader to attribute or revoke it against.
+    // The same 404 as the listen token, and for the same non-enumerable reason.
     const editUpload = await app.request(
       "/tracks/upload",
       { method: "POST", headers: { Authorization: `Bearer ${shareToken}` }, body: uploadForm() },
       env
     );
-    expect(editUpload.status).toBe(201);
-    const uploaded = (await editUpload.json()) as { track: { ownerId: string; playlistId: string } };
-    const [owner] = await db.select().from(users);
-    expect(uploaded.track.ownerId).toBe(owner.id);
-    expect(uploaded.track.playlistId).toBe(privateId);
+    expect(editUpload.status).toBe(404);
+    const countAfter = await db.select().from(tracks);
+    expect(countAfter, "an edit link wrote a track into the locker").toHaveLength(1);
 
-    // edit token: reorder works
+    // edit token: reorder works — that is the whole of what "edit" now means
     const editReorder = await app.request(
       `/playlists/${privateId}/reorder`,
       {

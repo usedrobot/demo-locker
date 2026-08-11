@@ -67,12 +67,23 @@ export async function canAccessPlaylist(
   return false;
 }
 
-// EDIT capability: a session acting in the playlist's locker (the owner, or a
-// collaborator on that owner's locker), or a share token whose permission is
-// "edit" (and not expired). Grants upload + reorder on that playlist. Returns
-// the ownerId when allowed (uploads by collaborators are attributed to the
-// locker owner), or null when denied.
-export async function requestCanEditPlaylist(
+// REORDER capability: a session acting in the playlist's locker (the owner, or
+// a collaborator on that owner's locker), or a share token whose permission is
+// "edit" (and not expired). Returns the ownerId when allowed, or null when
+// denied.
+//
+// This used to grant upload as well, and was named for that broader meaning.
+// It no longer does: putting a FILE in the band's locker (and on the owner's
+// storage quota, permanently, with no attribution to anyone) is a different
+// act from changing the running order of what is already there, and only
+// members of the locker do it. See requestCanUploadToPlaylist below — a share
+// link is a way to let someone HEAR the record and arrange it, not a way into
+// the library.
+//
+// The stored permission value is still "edit" — the capability narrowed, the
+// column did not, so existing links keep working with less power rather than
+// needing a migration.
+export async function requestCanReorderPlaylist(
   c: Context<Env>,
   playlistId: string
 ): Promise<string | null> {
@@ -107,6 +118,48 @@ export async function requestCanEditPlaylist(
       (!share.expiresAt || share.expiresAt >= new Date())
     ) {
       return playlist.ownerId;
+    }
+  }
+  return null;
+}
+
+// UPLOAD capability: a session acting in the playlist's locker — the owner or a
+// collaborator — and NOTHING else. Returns the ownerId when allowed (a
+// collaborator's upload belongs to the locker owner, exactly as their library
+// upload does), or null when denied.
+//
+// Deliberately does NOT consult `shares`. A share link is handed to people
+// outside the band; letting one write files into the locker meant an
+// anonymous holder could spend the owner's storage quota, and the row it left
+// behind had no uploader to attribute it to or to revoke — DELETE
+// /collab/members/:id only matches accounts inside the locker, so there was no
+// remedy short of deleting the track. Reordering is reversible and leaves
+// nothing behind; uploading is neither.
+//
+// Kept as its own function rather than a flag on requestCanReorderPlaylist, so
+// that neither capability can be widened by accident while editing the other.
+export async function requestCanUploadToPlaylist(
+  c: Context<Env>,
+  playlistId: string
+): Promise<string | null> {
+  const db = getDb(c.env.DB);
+  const [playlist] = await db
+    .select({ ownerId: playlists.ownerId })
+    .from(playlists)
+    .where(eq(playlists.id, playlistId))
+    .limit(1);
+  if (!playlist) return null;
+
+  const queryToken = c.req.query("token") || null;
+  const bearer = bearerToken(c.req.header("Authorization"));
+
+  for (const token of [queryToken, bearer]) {
+    if (!token) continue;
+
+    const session = await findSession(db, token);
+    if (session && session.expiresAt >= new Date()) {
+      const lockerId = await lockerIdForUserId(db, session.userId);
+      if (lockerId === playlist.ownerId) return playlist.ownerId;
     }
   }
   return null;

@@ -18,9 +18,6 @@ function PoweredBy() {
   );
 }
 import AsciiText from "../components/AsciiText";
-import Upload from "../components/Upload";
-import PendingTrackRow from "../components/PendingTrackRow";
-import { useUploadQueue } from "../lib/use-upload-queue";
 
 type Props = {
   token: string;
@@ -61,16 +58,10 @@ export default function Invite({ token }: Props) {
 
   useEffect(() => player.subscribe(setPlayerState), []);
 
-  const canEdit = permission === "edit";
-
-  const reload = () => {
-    sharesApi.resolveInvite(token).then((r) => {
-      setTracks(r.tracks);
-      player.setPlaylist(r.tracks);
-    }).catch(() => {});
-  };
-
-  const uploads = useUploadQueue(playlist?.id ?? null, reload);
+  // "edit" is the stored permission value; re-arranging is all it grants. A
+  // share link cannot upload — that is owner/collaborator only (see
+  // lib/playlist-access.ts, requestCanUploadToPlaylist).
+  const canReorder = permission === "edit";
 
   async function handleReorder(trackIds: string[]) {
     if (!playlist) return;
@@ -120,30 +111,19 @@ export default function Invite({ token }: Props) {
       <div className="playlist-header">
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="box-header">
-            shared playlist · {permission === "edit" ? "listen + edit" : "listen"}
+            shared playlist · {canReorder ? "listen + re-arrange" : "listen"}
           </div>
           <AsciiText text={playlist.name} />
         </div>
-        {canEdit && <Upload onPick={uploads.queue} />}
       </div>
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
         <TrackList
           tracks={tracks}
-          onReorder={canEdit ? handleReorder : () => {}}
+          onReorder={canReorder ? handleReorder : () => {}}
           selectedId={selectedTrackId}
           onSelect={setSelectedTrackId}
         />
-        {uploads.pending.map((p, i) => (
-          <PendingTrackRow
-            key={p.id}
-            item={p}
-            position={tracks.length + i + 1}
-            onTitleChange={(title) => uploads.update(p.id, { title })}
-            onStart={() => uploads.start(p.id)}
-            onCancel={() => uploads.remove(p.id)}
-          />
-        ))}
       </div>
 
       {selectedTrack && (

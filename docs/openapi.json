@@ -194,7 +194,7 @@
               "string",
               "null"
             ],
-            "description": "Attribution by NAME: who uploaded this track. The exact counterpart of Playlist.createdByName, with the same resolution (users.display_name, copied from the uploader's invite label at redemption, falling back to their email) and the same rules. The raw uploader id is still never serialized on any route. Null when no uploader is recorded — rows predating the column, an anonymous edit-share upload, which has no user id to record, and an edit-share upload by a signed-in account that is NOT a member of this locker, which is credited the same way — and null for every reader who is not a member of the locker, which means an anonymous share/invite holder AND a signed-in account belonging to some other locker. Names are locker-internal: they are resolved only for accounts inside the locker being read, and only for a reader inside it. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\". A collaborator who is REMOVED from the locker no longer blanks this: their account is deleted (so uploaded_by goes null), but the name they were going by is copied onto their rows at that moment and served here instead. The live account always wins while it exists, so renaming yourself still propagates everywhere; the snapshot is a tombstone, not a second source of truth, and it is served under the same membership gate — a reader outside the locker is given no name by either path."
+            "description": "Attribution by NAME: who uploaded this track. The exact counterpart of Playlist.createdByName, with the same resolution (users.display_name, copied from the uploader's invite label at redemption, falling back to their email) and the same rules. The raw uploader id is still never serialized on any route. Null when no uploader is recorded — rows predating the column, and rows written by the retired edit-share upload path (a share link could once upload; an anonymous holder had no id to record, and a signed-in holder from another locker was deliberately credited the same way). Neither can be created now: uploading requires membership of the locker. Also null for every reader who is not a member of the locker, which means an anonymous share/invite holder AND a signed-in account belonging to some other locker. Names are locker-internal: they are resolved only for accounts inside the locker being read, and only for a reader inside it. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\". A collaborator who is REMOVED from the locker no longer blanks this: their account is deleted (so uploaded_by goes null), but the name they were going by is copied onto their rows at that moment and served here instead. The live account always wins while it exists, so renaming yourself still propagates everywhere; the snapshot is a tombstone, not a second source of truth, and it is served under the same membership gate — a reader outside the locker is given no name by either path."
           }
         },
         "required": [
@@ -1451,7 +1451,7 @@
     "/tracks/upload": {
       "post": {
         "summary": "Upload a track",
-        "description": "Multipart upload. With `playlistId` the caller must be able to edit that playlist: the locker owner or a collaborator session, or an \"edit\" share token (Bearer header or `?token=`, no session required); without it the track lands in the caller's library and a session is required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes. ATTRIBUTION: the upload is credited (tracks.uploaded_by, surfaced as uploadedByName) only when the acting session is a member of the playlist's locker. An anonymous edit-share upload has no id to record, and an edit-share upload by a signed-in account from a DIFFERENT locker is recorded the same way — with no uploader — so an outsider holding an edit link cannot write a name of their choosing into the locker's attribution. Who may upload is unaffected.",
+        "description": "Multipart upload. With `playlistId` the caller must be a member of that playlist's locker — its owner or a collaborator. A share token is NOT sufficient, whatever its permission: an `edit` share grants re-arranging that playlist, not writing new files into the locker. Without `playlistId` the track lands in the caller's library and a session is likewise required. Stored in the demos bucket under `<playlistId|library>/<uuid>/<filename>`. The original is always stored untouched. The client MAY additionally send a pre-encoded 256k AAC streaming rendition as the `stream` part; when present it is stored at `<originalKey>.stream.m4a` and the track's `streamKey` points at it. The rendition is optional by design — browsers that cannot decode or encode the file simply omit it, and `streamKey` falls back to `originalKey` so the original is streamed directly. The server never transcodes. ATTRIBUTION: the upload is credited (tracks.uploaded_by, surfaced as uploadedByName) to the acting session, which the gate above already guarantees is a member of the playlist's locker.",
         "operationId": "uploadTrack",
         "security": [
           {
@@ -1502,7 +1502,7 @@
         },
         "responses": {
           "201": {
-            "description": "Track created — appended to the end of the playlist, or added to the locker's library when no playlistId was given. Note that an anonymous edit-share uploader has no user id to record, so uploadedBy is stored as null and this response carries uploadedByMe: false even though the caller just uploaded the track.",
+            "description": "Track created — appended to the end of the playlist, or added to the locker's library when no playlistId was given.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1540,7 +1540,7 @@
             }
           },
           "404": {
-            "description": "Target playlist not owned by the caller, or does not exist (non-enumerable).",
+            "description": "Target playlist is not one the caller may upload to — not a member of its locker (holding an `edit` share link is not enough), or it does not exist. The two are indistinguishable on purpose (non-enumerable).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2233,7 +2233,7 @@
     "/shares": {
       "post": {
         "summary": "Create a share/invite for a playlist",
-        "description": "Locker-scoped: any session acting in the playlist's locker — its owner or a collaborator — may call this. Issues a random unguessable token granting `listen` or `edit` access to the playlist, optionally tied to an email for reference.",
+        "description": "Locker-scoped: any session acting in the playlist's locker — its owner or a collaborator — may call this. Issues a random unguessable token granting `listen` (play and comment) or `edit` (that, plus re-arranging the running order) access to the playlist, optionally tied to an email for reference. Neither permission can upload — that is reserved to members of the locker.",
         "operationId": "createShare",
         "security": [
           {

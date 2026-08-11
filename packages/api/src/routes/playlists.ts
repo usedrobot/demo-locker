@@ -5,7 +5,7 @@ import { playlists, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import {
   requestCanAccessPlaylist,
-  requestCanEditPlaylist,
+  requestCanReorderPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
@@ -320,7 +320,7 @@ playlistsRouter.patch("/:id/reorder", async (c) => {
     return c.json({ error: "trackIds array required" }, 400);
   }
 
-  if (!(await requestCanEditPlaylist(c, id))) {
+  if (!(await requestCanReorderPlaylist(c, id))) {
     return c.json({ error: "not found" }, 404);
   }
 

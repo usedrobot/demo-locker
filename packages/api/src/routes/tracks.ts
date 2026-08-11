@@ -5,7 +5,7 @@ import { tracks, playlists } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import {
   requestCanAccessPlaylist,
-  requestCanEditPlaylist,
+  requestCanUploadToPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
 import { lockerIdOf, lockerIdForUserId, isLockerOwner } from "../lib/locker.js";
@@ -70,9 +70,10 @@ tracksRouter.post("/upload", async (c) => {
   let ownerId: string | null = null;
   let position = 0;
   if (playlistId) {
-    // owner session, collaborator session, or edit share token — all resolve
-    // to the locker owner's id
-    ownerId = await requestCanEditPlaylist(c, playlistId);
+    // owner session or collaborator session — both resolve to the locker
+    // owner's id. An edit share token is NOT enough: it grants re-arranging
+    // this playlist, not writing new files into the locker.
+    ownerId = await requestCanUploadToPlaylist(c, playlistId);
     if (!ownerId) {
       return c.json({ error: "not found" }, 404);
     }
@@ -87,17 +88,23 @@ tracksRouter.post("/upload", async (c) => {
     ownerId = actingLockerId;
   }
 
-  // WHO to credit — not simply "whoever is signed in". This route admits an
-  // edit-share token, and the token and the session are resolved independently
-  // above, so a signed-in account from ANOTHER locker can reach this insert by
-  // sending both. Recording their id would put an outsider's self-chosen
-  // display name (settable to a bandmate's) permanently onto the band's
-  // attribution, with no remedy: DELETE /collab/members/:id only matches
-  // accounts in the locker, and nothing else rewrites uploaded_by.
+  // WHO to credit — not simply "whoever is signed in".
   //
-  // So a cross-locker edit-share upload is credited exactly like the anonymous
-  // edit-share upload it resembles — NULL, no name. Who may UPLOAD is
-  // unchanged; only who gets the credit is.
+  // This is now belt to the gates' braces, and is kept deliberately. Both
+  // branches above already require the caller's locker to BE `ownerId`, so
+  // this ternary should always take its left side today. It exists because
+  // that was not always true: the route used to admit an edit-share token, and
+  // the token and the session are resolved independently, so a signed-in
+  // account from ANOTHER locker could reach this insert by sending both.
+  // Recording their id put an outsider's self-chosen display name (settable to
+  // a bandmate's) permanently onto the band's attribution with no remedy —
+  // DELETE /collab/members/:id only matches accounts inside the locker, and
+  // nothing else rewrites uploaded_by.
+  //
+  // The gate closing is what fixed that; this line is what keeps it fixed if
+  // some future caller re-opens a non-member path into this insert. Removing
+  // it because "the check above already covers it" is exactly the edit that
+  // would make the old bug reachable again, silently.
   const uploadedBy = actingLockerId === ownerId ? actingUserId : null;
 
   // Enforced here rather than trusted from config: MAX_STORAGE_BYTES was read

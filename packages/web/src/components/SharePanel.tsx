@@ -272,14 +272,18 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
           }}
           className="share-label-input"
         />
+        {/* Says re-arrange, not upload: a share link cannot put files in the
+            locker at all (lib/playlist-access.ts). The stored permission value
+            is still "edit" — this label describes the capability, not the
+            column. */}
         <label className="share-perm">
           <input
             type="checkbox"
-            aria-label="can upload and reorder"
+            aria-label="can re-arrange tracks"
             checked={canEdit}
             onChange={(e) => setCanEdit(e.target.checked)}
           />
-          can upload and reorder
+          can re-arrange tracks
         </label>
         <button
           ref={mintButtonRef}

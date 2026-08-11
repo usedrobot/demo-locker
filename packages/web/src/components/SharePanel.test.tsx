@@ -44,9 +44,13 @@ function shareButton(): HTMLButtonElement | null {
   ) ?? null;
 }
 
+// The permission checkbox. Matched on "re-arrange" — the capability an edit
+// share actually grants. It used to say "upload and reorder", which was true
+// of the old server behaviour and is not true of the new one: a share link
+// cannot upload at all (api lib/playlist-access.ts).
 function editCheckbox(): HTMLInputElement | null {
   return container.querySelector<HTMLInputElement>(
-    'input[type="checkbox"][aria-label*="upload and reorder" i]'
+    'input[type="checkbox"][aria-label*="re-arrange" i]'
   );
 }
 

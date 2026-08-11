@@ -305,11 +305,19 @@ describe("a signed-in outsider holding a share link", () => {
     expect(byTitle(body.tracks, "jimmys demo").uploadedByName).toBeNull();
   });
 
-  // Uploading through an edit link is the intended feature and is unchanged.
-  // The ATTRIBUTION is what was wrong: recording the outsider's id put a name
-  // they chose onto the band's rows, permanently and with no remedy — the
+  // Uploading through an edit link used to be the intended feature, and the
+  // ATTRIBUTION was the part that was wrong: recording the outsider's id put a
+  // name they chose onto the band's rows, permanently and with no remedy — the
   // owner's only removal route matches accounts inside the locker.
-  it("uploads through an edit link with no recorded uploader, exactly like an anonymous one", async () => {
+  //
+  // The capability itself is now gone: only the owner and collaborators may
+  // upload, so this whole class of row can no longer be created. The
+  // attribution rule below it stays regardless — it is what stops a row that
+  // ALREADY carries an outsider id (written before this, or by some future
+  // path) from resolving to their chosen name.
+  it("cannot upload through an edit link at all, so no such row can be made", async () => {
+    const before = await db.select().from(tracks).where(eq(tracks.ownerId, ownerId));
+
     const form = new FormData();
     form.append("file", new File([new Uint8Array([9, 9, 9])], "outsider.wav"), "outsider.wav");
     form.append("title", "outsider upload");
@@ -320,16 +328,12 @@ describe("a signed-in outsider holding a share link", () => {
       { method: "POST", headers: auth(OUTSIDER_TOKEN), body: form },
       env
     );
-    expect(res.status).toBe(201);
-    const { track } = (await res.json()) as {
-      track: { id: string; uploadedByName: string | null };
-    };
-    expect(track.uploadedByName).toBeNull();
+    // The same non-enumerable 404 a listen link gets: holding a link tells you
+    // nothing about what the playlist would have allowed.
+    expect(res.status).toBe(404);
 
-    const [row] = await db.select().from(tracks).where(eq(tracks.id, track.id));
-    expect(row, "the upload did not land").toBeDefined();
-    expect(row.ownerId).toBe(ownerId);
-    expect(row.uploadedBy).toBeNull();
+    const after = await db.select().from(tracks).where(eq(tracks.ownerId, ownerId));
+    expect(after, "an outsider's upload landed in the locker").toHaveLength(before.length);
   });
 
   // Belt to the braces above: even if a non-member id is already sitting in

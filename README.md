@@ -13,6 +13,8 @@ A web app for **self-hosted music streaming**: share and sequence unfinished dem
 
 **Open source. Self-hostable. MIT licensed.**
 
+[demolocker.net](https://demolocker.net) — what it is, and a demo of it working.
+
 ## Why
 
 - **Dropbox** can't playlist demos or play them back-to-back. Stream quality is garbage.
@@ -29,7 +31,9 @@ A web app for **self-hosted music streaming**: share and sequence unfinished dem
 - Timestamped comments on tracks (click the waveform)
 - General comments on playlists
 - Share via invite link — listen + comment without an account
-- Edit-level sharing for collaborators who need to reorder/upload
+- Edit-level share links add re-arranging the running order. Uploading is not
+  part of it: putting files in the locker is for the owner and the
+  collaborators they invite
 - Mobile-first PWA with background audio and lock screen controls
 - TUI aesthetic — monospace, box-drawing, dark mode only
 

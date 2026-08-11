@@ -4,9 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Demo Locker — a private locker for your rough mixes</title>
-<meta name="description" content="A private locker for your rough mixes. Collaborate on track listings, add notes to mixes and playlists, and share public versions on your own site. All hosted by you. No streaming terms, no licensing, no bs, just tunes." />
+<meta name="description" content="A private locker for your rough mixes. Your band comments straight onto the waveform, you set the running order, and you decide what goes public. Hosted by you. No streaming terms, no licensing, no bs, just tunes." />
 <meta property="og:title" content="Demo Locker" />
-<meta property="og:description" content="A private locker for your rough mixes. All hosted by you. No streaming terms, no licensing, no bs, just tunes." />
+<meta property="og:description" content="A private locker for your rough mixes. Your band comments straight onto the waveform, you set the running order, and you decide what goes public. Hosted by you. No streaming terms, no licensing, no bs, just tunes." />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Demo Locker" />
 <meta property="og:image" content="/img/og.png" />
@@ -39,55 +39,79 @@
       <!-- END GENERATED WORDMARK -->
     </div>
     <p class="tagline">
-      A private locker for your rough mixes. Privately collaborate on track listings,
-      add notes to mixes and playlists, and then feel free to share public versions of
-      songs on the frontend of your website. All hosted by you. No streaming terms,
-      no starting and stopping between files, no licensing, no bs, <em>just tunes</em>.
+      A private locker for your rough mixes. Your band comments straight onto the waveform, you set the running order, and you decide what goes public. Hosted by you. No streaming terms, no licensing, no bs, <em>just tunes</em>.
     </p>
   </header>
 
-  <section class="cta">
-    <p class="cta-lead">Ask your agent:</p>
-    <div class="prompt-box">
-      <pre id="prompt" class="prompt">Set up Demo Locker for me — read https://raw.githubusercontent.com/usedrobot/demo-locker/main/AGENTS.md and follow it.</pre>
-      <button id="copy" class="btn" type="button" data-target="prompt">[copy]</button>
+  <!-- Install: one box, three ways in.
+
+       Radio inputs and labels, switched with `:checked ~`, NOT the ARIA tabs
+       pattern. A real tablist owes roving tabindex and arrow-key handling —
+       code that would have to be written and then measured in a browser before
+       anyone could claim it works. A radio group is keyboard-native: arrows
+       move between the options and focus comes free, and the whole control
+       still works with copy.js blocked. It announces as a radio group, which
+       is an honest description of what it is. -->
+  <section class="install" aria-labelledby="install-h">
+    <h2 id="install-h" class="label">get it running</h2>
+
+    <input class="tab-input" type="radio" name="method" id="m-agent" checked />
+    <input class="tab-input" type="radio" name="method" id="m-npx" />
+    <input class="tab-input" type="radio" name="method" id="m-docker" />
+
+    <div class="tabs" role="group" aria-label="how to install">
+      <label for="m-agent">ask an agent</label>
+      <label for="m-npx">npx</label>
+      <label for="m-docker">docker</label>
     </div>
 
-    <p class="or">Or use our install wizard:</p>
-
     <div class="prompt-box">
-      <pre id="npx" class="prompt">npx demo-locker</pre>
-      <button id="copy-npx" class="btn" type="button" data-target="npx">[copy]</button>
+      <pre class="prompt panel p-agent" id="p-agent">Set up Demo Locker for me — read https://raw.githubusercontent.com/usedrobot/demo-locker/main/AGENTS.md and follow it.</pre>
+      <pre class="prompt panel p-npx" id="p-npx">npx demo-locker</pre>
+      <pre class="prompt panel p-docker" id="p-docker">docker run -d -v demolocker:/data -p 3001:3001 ghcr.io/usedrobot/demo-locker:latest</pre>
+      <button id="copy" class="btn" type="button">[copy]</button>
     </div>
 
-    <p class="or">Or just run the container yourself:</p>
-
-    <div class="prompt-box">
-      <pre id="docker" class="prompt">docker run -d -v demolocker:/data -p 3001:3001 ghcr.io/usedrobot/demo-locker:latest</pre>
-      <button id="copy-docker" class="btn" type="button" data-target="docker">[copy]</button>
-    </div>
-
-    <p class="fineprint">
-      Multi-arch image, runs on a Pi. Everything lives in one volume: embedded
-      SQLite, your audio on local disk, no external services required. Point it
-      at S3 or R2 instead if you'd rather. See
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/self-hosting.md">self-hosting</a>,
-      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">host your music</a>
-      and <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/upgrading.md">upgrading</a>.
-    </p>
+    <p class="fineprint panel-note n-agent">Claude Code, or any agent that can read a URL and run commands.</p>
+    <p class="fineprint panel-note n-npx">The wizard asks where it should live and sets it up.</p>
+    <p class="fineprint panel-note n-docker">Multi-arch image, runs on a Pi. One volume holds everything.</p>
   </section>
 
-  <img
-    class="shot"
-    src="/img/comments.png"
-    alt="A track open in Demo Locker: three comments from Sam, Jules and Marco listed at 0:58, 2:10 and 3:05, each pinned to a marker on the waveform in the player below."
-    width="900"
-    height="857"
-    loading="lazy"
-  />
+  <!-- No `autoplay` attribute on purpose. copy.js starts this only when
+       prefers-reduced-motion does not match, so reduced-motion users and
+       no-JS users both land on the poster frame from the same mechanism.
+       Putting autoplay in the markup and stopping it afterwards races the
+       browser, and CSS cannot pause a video at all.
 
-  <section aria-labelledby="hear-h">
-    <h2 id="hear-h" class="label">hear one</h2>
+       Muted with no audio track at all: the waveform is the point, and the
+       recordings behind it are not published. -->
+  <!-- preload is "metadata", not "none": copy.js calls play() on load, and with
+       "none" there is nothing buffered to play so the opening stutters. Not
+       "auto" either — a reduced-motion visitor never plays this and should not
+       be made to download it. -->
+  <figure class="demo">
+    <video
+      class="demo-video"
+      muted
+      loop
+      playsinline
+      preload="metadata"
+      poster="/img/demo-poster.png"
+      width="1400"
+      height="982"
+    >
+      <source src="/img/demo.webm" type="video/webm" />
+      <source src="/img/demo.mp4" type="video/mp4" />
+    </video>
+    <figcaption>
+      A rough mix playing. Click the waveform to move, type a note, and it
+      pins to that exact moment — so "the snare is late here" points at the
+      snare, not at the file.
+    </figcaption>
+  </figure>
+
+  <section aria-labelledby="featured-h">
+    <h2 id="featured-h" class="label">featured locker</h2>
     <p class="hear-lead">
       Two rough mixes playing out of a real Demo Locker, embedded on the
       artist's own site with one script tag. The locker itself is private —
@@ -99,10 +123,11 @@
   </section>
 
   <section aria-labelledby="bring-h">
-    <h2 id="bring-h" class="label">what to bring with you</h2>
+    <h2 id="bring-h" class="label">host it yourself</h2>
+    <p class="hear-lead">What to bring:</p>
     <ul class="plain">
       <li>
-        <strong>We recommend one of the following:</strong>
+        <strong>One of these to run it on:</strong>
         <ul class="sub">
           <li>A Cloudflare account with an R2 bucket, if you want it to live on the internet, or</li>
           <li>an old machine or a Raspberry Pi with Docker on it, if you'd rather it live on your own shelf.</li>
@@ -111,6 +136,14 @@
       <li><strong>Your demos.</strong></li>
       <li><strong>Some friends.</strong></li>
     </ul>
+    <p class="fineprint">
+      Everything lives in one volume: embedded SQLite, your audio on local
+      disk, no external services required. Point it at S3 or R2 instead if
+      you'd rather. See
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/self-hosting.md">self-hosting</a>,
+      <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/host-your-music.md">host your music</a>
+      and <a href="https://github.com/usedrobot/demo-locker/blob/main/docs/upgrading.md">upgrading</a>.
+    </p>
   </section>
 
   <footer>

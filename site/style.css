@@ -234,16 +234,100 @@ ul.plain strong {
   margin-top: 0.9rem;
 }
 
-/* One screenshot, centred. This was a swipable three-shot strip; the extra
-   two were showing the same UI a second and third time, so they earned their
-   removal rather than a carousel to hide them in. */
-.shot {
+/* The demo video, and the caption under it.
+
+   No `alt` exists on <video>, so the description is a real <figcaption>:
+   visible to everyone, and useful copy rather than an accessibility tax. */
+.demo {
+  margin: 3rem 0 0;
+}
+
+.demo-video {
   display: block;
-  margin: 3rem auto 0;
   width: 100%;
-  max-width: 620px;
+  max-width: 700px;
   height: auto;
   border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.demo figcaption {
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 0.75rem;
+  max-width: 700px;
+}
+
+/* --- install tabs ---------------------------------------------------------
+   Radios drive this, not JS and not the ARIA tabs pattern: arrow keys, focus
+   and the checked state all come from the browser, and it still works with
+   copy.js blocked.
+
+   The inputs are visually hidden but NOT `display:none` — a display-none radio
+   is not focusable, which would take the keyboard support that is the whole
+   reason for choosing radios. */
+.tab-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tabs {
+  display: flex;
+  gap: 1.25rem;
+  margin-bottom: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.tabs label {
+  color: var(--fg-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding-bottom: 2px;
+  border-bottom: 1px solid transparent;
+}
+
+.tabs label:hover {
+  color: var(--fg);
+}
+
+#m-agent:checked ~ .tabs label[for="m-agent"],
+#m-npx:checked ~ .tabs label[for="m-npx"],
+#m-docker:checked ~ .tabs label[for="m-docker"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Focus lives on the hidden input, so the ring has to be painted on the label
+   it controls — otherwise keyboard users move through an invisible control. */
+#m-agent:focus-visible ~ .tabs label[for="m-agent"],
+#m-npx:focus-visible ~ .tabs label[for="m-npx"],
+#m-docker:focus-visible ~ .tabs label[for="m-docker"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Panels: only the checked one is laid out. Hidden ones are display:none so
+   their text is out of the accessibility tree and out of find-in-page, rather
+   than three snippets stacked invisibly on top of each other. */
+.panel,
+.panel-note {
+  display: none;
+}
+
+#m-agent:checked ~ .prompt-box .p-agent,
+#m-npx:checked ~ .prompt-box .p-npx,
+#m-docker:checked ~ .prompt-box .p-docker {
+  display: block;
+}
+
+#m-agent:checked ~ .n-agent,
+#m-npx:checked ~ .n-npx,
+#m-docker:checked ~ .n-docker {
+  display: block;
 }
 
 /* the copyable prompt — the main event on this page */

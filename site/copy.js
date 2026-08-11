@@ -30,16 +30,47 @@ async function copyText(text) {
   }
 }
 
-for (const btn of document.querySelectorAll(".btn[data-target]")) {
-  btn.addEventListener("click", async () => {
-    const source = document.getElementById(btn.dataset.target);
-    if (!source) return;
-    const ok = await copyText(source.textContent.trim());
-    btn.textContent = ok ? "[copied]" : "[copy failed]";
-    btn.dataset.copied = String(ok);
+// The copy button serves whichever install tab is showing. Read at click time,
+// not at load: the checked radio is the single source of truth for which
+// snippet is on screen, so there is no second piece of state to keep in sync.
+const copyBtn = document.getElementById("copy");
+if (copyBtn) {
+  copyBtn.addEventListener("click", async () => {
+    const shown = [...document.querySelectorAll(".prompt-box .panel")].find(
+      (p) => getComputedStyle(p).display !== "none"
+    );
+    if (!shown) return;
+    const ok = await copyText(shown.textContent.trim());
+    copyBtn.textContent = ok ? "[copied]" : "[copy failed]";
+    copyBtn.dataset.copied = String(ok);
     setTimeout(() => {
-      btn.textContent = "[copy]";
-      delete btn.dataset.copied;
+      copyBtn.textContent = "[copy]";
+      delete copyBtn.dataset.copied;
     }, 2000);
   });
+}
+
+// Start the demo only when motion is welcome.
+//
+// `autoplay` is deliberately absent from the markup: with it there, the video
+// starts before any script can intervene and stopping it afterwards races the
+// browser. Gating the *start* means reduced-motion users and users with no
+// JavaScript at all both simply keep the poster frame, from one mechanism
+// rather than two.
+const demo = document.querySelector(".demo-video");
+if (demo) {
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const sync = () => {
+    if (still.matches) {
+      demo.pause();
+      return;
+    }
+    demo.play().catch(() => {
+      /* refused (battery saver, data saver, no codec) — the poster stands in */
+    });
+  };
+  sync();
+  // Honour a change of mind mid-visit; the OS setting can be toggled while the
+  // page is open.
+  still.addEventListener("change", sync);
 }

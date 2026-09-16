@@ -769,6 +769,7 @@ export default function Home({ onSelect, onLogout }: Props) {
           return (
             <div
               key={t.id}
+              data-track-row
               onClick={() => playLibraryTrack(t.id)}
               style={{
                 padding: "0.5rem 0",
@@ -803,6 +804,25 @@ export default function Home({ onSelect, onLogout }: Props) {
                 {t.title}
               </button>
               <Attribution mine={t.uploadedByMe} name={t.uploadedByName} verb="Uploaded" />
+              {/* Which playlists hold this track. Names, not ids; a library-only
+                  track shows nothing rather than "0 playlists". */}
+              {(t.playlistIds ?? []).length > 0 && (
+                <span
+                  style={{
+                    color: "var(--fg-dim)",
+                    fontSize: "12px",
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {(t.playlistIds ?? [])
+                    .map((id) => playlists.find((p) => p.id === id)?.name)
+                    .filter((n): n is string => Boolean(n))
+                    .join(" · ")}
+                </span>
+              )}
               <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {formatDuration(t.duration)}
               </span>

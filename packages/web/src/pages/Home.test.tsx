@@ -115,7 +115,6 @@ const COLLABORATOR: User = {
 function track(over: Partial<Track>): Track {
   return {
     id: "t-1",
-    playlistId: null,
     title: "someone's demo",
     position: 0,
     hasStream: true,
@@ -935,5 +934,49 @@ describe("Home — playlist rows are reachable without a mouse", () => {
     const tile = row.querySelector("[data-artwork]");
     expect(tile, "the artwork tile is not marked decorative").not.toBeNull();
     expect(tile!.getAttribute("aria-hidden")).toBe("true");
+  });
+});
+
+describe("Home — library rows show playlist membership", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listTracksMock.mockReset();
+    deleteTrackMock.mockReset();
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: OWNER });
+    listSharesMock.mockReset();
+    listSharesMock.mockResolvedValue({ shares: [] });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  it("names each playlist a track is in, and nothing for a library-only track", async () => {
+    listPlaylistsMock.mockResolvedValue({
+      playlists: [
+        playlist({ id: "pl-1", name: "reel" }),
+        playlist({ id: "pl-2", name: "for the label" }),
+      ],
+    });
+    listTracksMock.mockResolvedValue({
+      tracks: [
+        track({ id: "t1", title: "two homes", playlistIds: ["pl-1", "pl-2"] }),
+        track({ id: "t2", title: "loose", playlistIds: [] }),
+      ],
+    });
+
+    render();
+    await flush();
+
+    const rows = Array.from(container.querySelectorAll("[data-track-row]"));
+    const twoHomes = rows.find((r) => (r.textContent ?? "").includes("two homes"));
+    const loose = rows.find((r) => (r.textContent ?? "").includes("loose"));
+    expect(twoHomes).toBeDefined();
+    expect(loose).toBeDefined();
+    expect(twoHomes!.textContent).toContain("reel");
+    expect(twoHomes!.textContent).toContain("for the label");
+    expect(loose!.textContent).not.toContain("reel");
+    expect(loose!.textContent).not.toContain("for the label");
   });
 });

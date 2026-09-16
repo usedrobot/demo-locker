@@ -1,16 +1,23 @@
 import { Hono } from "hono";
-import { and, eq, asc } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { playlists, tracks } from "../db/schema.js";
+import { playlists, playlistTracks, tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import {
   requestCanAccessPlaylist,
   requestCanReorderPlaylist,
+  requestCanUploadToPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
+import {
+  tracksInPlaylist,
+  addTrackToPlaylist,
+  removeTrackFromPlaylist,
+  type TrackInPlaylist,
+} from "../lib/playlist-membership.js";
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
-import { publicTrack, type TrackRow } from "../lib/public-track.js";
+import { publicTrack } from "../lib/public-track.js";
 import { publicPlaylist, type PlaylistRow } from "../lib/public-playlist.js";
 import { resolveDisplayNames } from "../lib/display-name.js";
 import {
@@ -97,11 +104,7 @@ playlistsRouter.get("/:id", async (c) => {
 
   if (!playlist) return c.json({ error: "not found" }, 404);
 
-  const trackList = await db
-    .select()
-    .from(tracks)
-    .where(eq(tracks.playlistId, id))
-    .orderBy(asc(tracks.position));
+  const trackList = await tracksInPlaylist(db, id);
 
   // This route is reachable by an anonymous share-token holder, not just a
   // locker session — publicPlaylist() keeps createdBy (a collaborator's user
@@ -115,11 +118,13 @@ playlistsRouter.get("/:id", async (c) => {
   // Resolves to nothing at all for a share holder, who has no session.
   const names = await resolveDisplayNames(db, actingUserId, playlist.ownerId, [
     playlist.createdBy,
-    ...trackList.map((t: TrackRow) => t.uploadedBy),
+    ...trackList.map((t: TrackInPlaylist) => t.uploadedBy),
   ]);
   return c.json({
     playlist: publicPlaylist(playlist, actingUserId, names),
-    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId, names)),
+    tracks: trackList.map((t: TrackInPlaylist) =>
+      publicTrack(t, actingUserId, names, { position: t.position })
+    ),
   });
 });
 
@@ -324,15 +329,16 @@ playlistsRouter.patch("/:id/reorder", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  // Scoped to this playlist's tracks. Without the playlistId predicate the
+  // Scoped to this playlist's join rows. Without the playlistId predicate the
   // caller could pass any track ID they had ever seen and rewrite its position
   // in someone else's playlist — edit rights on one playlist are not edit
-  // rights on every track ID in the instance.
+  // rights on every track ID in the instance. The same guard as before the
+  // join table; only the table changed.
   for (let i = 0; i < trackIds.length; i++) {
     await db
-      .update(tracks)
+      .update(playlistTracks)
       .set({ position: i })
-      .where(and(eq(tracks.id, trackIds[i]), eq(tracks.playlistId, id)));
+      .where(and(eq(playlistTracks.trackId, trackIds[i]), eq(playlistTracks.playlistId, id)));
   }
 
   await db
@@ -340,6 +346,48 @@ playlistsRouter.patch("/:id/reorder", async (c) => {
     .set({ updatedAt: new Date() })
     .where(eq(playlists.id, id));
 
+  return c.json({ ok: true });
+});
+
+// Put a library track into this playlist. Same gate as upload: a locker
+// session, never a share token — a share link lets someone hear and arrange
+// the record, not decide what is on it.
+playlistsRouter.post("/:id/tracks", requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const id = c.req.param("id");
+  const { trackId } = await c.req.json<{ trackId?: string }>();
+  if (!trackId) return c.json({ error: "trackId required" }, 400);
+
+  const ownerId = await requestCanUploadToPlaylist(c, id);
+  if (!ownerId) return c.json({ error: "not found" }, 404);
+
+  // The track must be in the same locker as the playlist. Wrong locker is the
+  // same non-enumerable 404 a missing track gets.
+  const [track] = await db
+    .select({ id: tracks.id, ownerId: tracks.ownerId })
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+  if (!track || track.ownerId !== ownerId) return c.json({ error: "not found" }, 404);
+
+  const added = await addTrackToPlaylist(db, id, trackId);
+  await db.update(playlists).set({ updatedAt: new Date() }).where(eq(playlists.id, id));
+  return c.json({ ok: true, added });
+});
+
+// Take a track out of THIS playlist. The track, its files, and its place in
+// every other playlist are untouched. This is the control that once destroyed
+// masters; it must never reach the tracks table or the bucket.
+playlistsRouter.delete("/:id/tracks/:trackId", requireAuth, async (c) => {
+  const db = getDb(c.env.DB);
+  const id = c.req.param("id");
+  const trackId = c.req.param("trackId");
+
+  const ownerId = await requestCanUploadToPlaylist(c, id);
+  if (!ownerId) return c.json({ error: "not found" }, 404);
+
+  await removeTrackFromPlaylist(db, id, trackId);
+  await db.update(playlists).set({ updatedAt: new Date() }).where(eq(playlists.id, id));
   return c.json({ ok: true });
 });
 

@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { tracks, playlists } from "../db/schema.js";
+import { tracks } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import {
-  requestCanAccessPlaylist,
+  requestCanAccessTrack,
   requestCanUploadToPlaylist,
   requestSessionUserId,
 } from "../lib/playlist-access.js";
+import { addTrackToPlaylist, playlistIdsForTracks } from "../lib/playlist-membership.js";
 import { lockerIdOf, lockerIdForUserId, isLockerOwner } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
@@ -17,17 +18,6 @@ import { INERT_CONTENT_HEADERS, safeAudioType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
 
 const tracksRouter = new Hono<Env>();
-
-type Db = ReturnType<typeof getDb>;
-
-async function nextPosition(db: Db, playlistId: string): Promise<number> {
-  const existing = await db
-    .select({ position: tracks.position })
-    .from(tracks)
-    .where(eq(tracks.playlistId, playlistId))
-    .orderBy(tracks.position);
-  return existing.length > 0 ? existing[existing.length - 1].position + 1 : 0;
-}
 
 // Upload a track — receives the file directly, stores in R2.
 // Auth: a session (library or own-playlist uploads), OR an "edit" share token
@@ -68,7 +58,6 @@ tracksRouter.post("/upload", async (c) => {
   const actingLockerId = actingUserId ? await lockerIdForUserId(db, actingUserId) : null;
 
   let ownerId: string | null = null;
-  let position = 0;
   if (playlistId) {
     // owner session or collaborator session — both resolve to the locker
     // owner's id. An edit share token is NOT enough: it grants re-arranging
@@ -77,7 +66,6 @@ tracksRouter.post("/upload", async (c) => {
     if (!ownerId) {
       return c.json({ error: "not found" }, 404);
     }
-    position = await nextPosition(db, playlistId);
   } else {
     // library upload — session required. ownerId is the LOCKER, not the
     // uploader: a collaborator's library upload belongs to the owner's
@@ -149,10 +137,8 @@ tracksRouter.post("/upload", async (c) => {
   const [track] = await db
     .insert(tracks)
     .values({
-      playlistId,
       ownerId,
       title,
-      position,
       originalKey: key,
       streamKey,
       waveformData: waveformData || null,
@@ -161,6 +147,11 @@ tracksRouter.post("/upload", async (c) => {
       uploadedBy,
     })
     .returning();
+
+  // Membership is a join row, written after the track exists.
+  if (playlistId) {
+    await addTrackToPlaylist(db, playlistId, track.id);
+  }
 
   const names = await resolveDisplayNames(db, actingUserId, ownerId, [track.uploadedBy]);
   return c.json({ track: publicTrack(track, actingUserId, names) }, 201);
@@ -187,13 +178,21 @@ tracksRouter.get("/", requireAuth, async (c) => {
     lockerIdOf(user),
     rows.map((t: TrackRow) => t.uploadedBy)
   );
-  return c.json({ tracks: rows.map((t: TrackRow) => publicTrack(t, user.id, names)) });
+  // Which playlists each track is in, so the client can filter an add picker
+  // and show membership without a request per track.
+  const membership = await playlistIdsForTracks(db, rows.map((t: TrackRow) => t.id));
+  return c.json({
+    tracks: rows.map((t: TrackRow) =>
+      publicTrack(t, user.id, names, { playlistIds: membership.get(t.id) ?? [] })
+    ),
+  });
 });
 
-// Stream a track from R2 — gated by the parent playlist. <audio> can't send an
-// Authorization header, so a `?token=` query param (session OR share token) is
-// also accepted (see lib/playlist-access.ts). Public playlists stream anonymously
-// via the separate /public/v1/tracks/:id/stream route.
+// Stream a track from R2 — gated by any playlist the track is in, or by a
+// locker session (lib/playlist-access.ts requestCanAccessTrack). <audio> can't
+// send an Authorization header, so a `?token=` query param (session OR share
+// token) is also accepted. Public playlists stream anonymously via the
+// separate /public/v1/tracks/:id/stream route.
 tracksRouter.get("/:id/stream", async (c) => {
   const trackId = c.req.param("id");
   const db = getDb(c.env.DB);
@@ -208,17 +207,8 @@ tracksRouter.get("/:id/stream", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  if (track.playlistId) {
-    if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
-      return c.json({ error: "not found" }, 404);
-    }
-  } else {
-    // Library track not in any playlist — locker only (owner or collaborator).
-    const userId = await requestSessionUserId(c);
-    const lockerId = userId && (await lockerIdForUserId(db, userId));
-    if (!lockerId || lockerId !== track.ownerId) {
-      return c.json({ error: "not found" }, 404);
-    }
+  if (!(await requestCanAccessTrack(c, track))) {
+    return c.json({ error: "not found" }, 404);
   }
 
   return buildStreamResponse(
@@ -266,17 +256,8 @@ tracksRouter.get("/:id/download", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  if (track.playlistId) {
-    if (!(await requestCanAccessPlaylist(c, track.playlistId))) {
-      return c.json({ error: "not found" }, 404);
-    }
-  } else {
-    // Library track not in any playlist — locker only (owner or collaborator).
-    const userId = await requestSessionUserId(c);
-    const lockerId = userId && (await lockerIdForUserId(db, userId));
-    if (!lockerId || lockerId !== track.ownerId) {
-      return c.json({ error: "not found" }, 404);
-    }
+  if (!(await requestCanAccessTrack(c, track))) {
+    return c.json({ error: "not found" }, 404);
   }
 
   const object = await c.env.DEMOS_BUCKET.get(track.originalKey);
@@ -295,44 +276,12 @@ tracksRouter.get("/:id/download", async (c) => {
   });
 });
 
-// Move a track into (or out of) a playlist. Body: { playlistId: string | null }
+// Retired by the playlist_tracks migration. A track no longer has one
+// playlist to move between; membership is added and removed per playlist via
+// POST/DELETE /playlists/:id/tracks. 410 rather than 404 so a stale web bundle
+// fails with a message instead of looking like a missing track.
 tracksRouter.patch("/:id", requireAuth, async (c) => {
-  const trackId = c.req.param("id");
-  const { playlistId } = await c.req.json<{ playlistId: string | null }>();
-  const db = getDb(c.env.DB);
-  const lockerId = lockerIdOf(c.get("user"));
-
-  const [track] = await db
-    .select()
-    .from(tracks)
-    .where(eq(tracks.id, trackId))
-    .limit(1);
-  if (!track || track.ownerId !== lockerId) {
-    return c.json({ error: "not found" }, 404);
-  }
-
-  let position = 0;
-  if (playlistId) {
-    const [playlist] = await db
-      .select()
-      .from(playlists)
-      .where(eq(playlists.id, playlistId))
-      .limit(1);
-    if (!playlist || playlist.ownerId !== lockerId) {
-      return c.json({ error: "not found" }, 404);
-    }
-    position = await nextPosition(db, playlistId);
-  }
-
-  const [updated] = await db
-    .update(tracks)
-    .set({ playlistId: playlistId ?? null, position })
-    .where(eq(tracks.id, trackId))
-    .returning();
-
-  const actingUserId = c.get("user").id;
-  const names = await resolveDisplayNames(db, actingUserId, lockerId, [updated.uploadedBy]);
-  return c.json({ track: publicTrack(updated, actingUserId, names) });
+  return c.json({ error: "moved: use POST/DELETE /playlists/:id/tracks" }, 410);
 });
 
 // Delete a track. The locker owner may delete anything in their locker; a

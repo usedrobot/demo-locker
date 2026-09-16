@@ -99,3 +99,132 @@ describe("track access through any containing playlist", () => {
     expect((await app.request(`/tracks/${onlyB}/download?token=${tokenA}`, {}, env)).status).toBe(404);
   });
 });
+
+describe("adding and removing", () => {
+  it("adds a track to a second playlist and appends it", async () => {
+    const t = await seedTrack(db, { ownerId, title: "addme", playlistIds: [playlistA] });
+    const res = await app.request(
+      `/playlists/${playlistB}/tracks`,
+      { method: "POST", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackId: t.id }) },
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, added: true });
+    expect(await positionIn(db, playlistA, t.id)).not.toBeNull();
+    const posB = await positionIn(db, playlistB, t.id);
+    expect(posB).toBe(2); // inBoth, onlyB, then this one
+  });
+
+  it("re-adding is a no-op 200", async () => {
+    const res = await app.request(
+      `/playlists/${playlistB}/tracks`,
+      { method: "POST", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackId: inBoth }) },
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, added: false });
+  });
+
+  it("400s without a trackId", async () => {
+    const res = await app.request(
+      `/playlists/${playlistB}/tracks`,
+      { method: "POST", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({}) },
+      env
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("404s a stranger adding to a playlist they cannot see", async () => {
+    const res = await app.request(
+      `/playlists/${playlistB}/tracks`,
+      { method: "POST", headers: { ...auth(strangerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackId: inBoth }) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("404s a track from another locker", async () => {
+    const [other] = await db.insert(users).values({ email: "pt-other@test.dev", passwordHash: "x" }).returning();
+    const foreign = await seedTrack(db, { ownerId: other.id, title: "foreign" });
+    const res = await app.request(
+      `/playlists/${playlistB}/tracks`,
+      { method: "POST", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackId: foreign.id }) },
+      env
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("removes from one playlist and leaves the other", async () => {
+    const t = await seedTrack(db, { ownerId, title: "rm", playlistIds: [playlistA, playlistB] });
+    const res = await app.request(`/playlists/${playlistA}/tracks/${t.id}`, { method: "DELETE", headers: auth(ownerToken) }, env);
+    expect(res.status).toBe(200);
+    expect(await positionIn(db, playlistA, t.id)).toBeNull();
+    expect(await positionIn(db, playlistB, t.id)).not.toBeNull();
+  });
+
+  it("removing from the last playlist keeps the track in the library", async () => {
+    const t = await seedTrack(db, { ownerId, title: "last", playlistIds: [playlistA] });
+    const res = await app.request(`/playlists/${playlistA}/tracks/${t.id}`, { method: "DELETE", headers: auth(ownerToken) }, env);
+    expect(res.status).toBe(200);
+    const lib = await app.request(`/tracks`, { headers: auth(ownerToken) }, env);
+    const body = (await lib.json()) as { tracks: { id: string; playlistIds: string[] }[] };
+    const row = body.tracks.find((x) => x.id === t.id);
+    expect(row).toBeDefined();
+    expect(row!.playlistIds).toEqual([]);
+  });
+
+  it("the library lists every playlist a track is in", async () => {
+    const lib = await app.request(`/tracks`, { headers: auth(ownerToken) }, env);
+    const body = (await lib.json()) as { tracks: { id: string; playlistIds: string[] }[] };
+    const row = body.tracks.find((x) => x.id === inBoth)!;
+    expect(row.playlistIds.sort()).toEqual([playlistA, playlistB].sort());
+  });
+
+  it("a playlist listing carries each track's position in that playlist", async () => {
+    const res = await app.request(`/playlists/${playlistA}`, { headers: auth(ownerToken) }, env);
+    const body = (await res.json()) as { tracks: { id: string; position: number }[] };
+    expect(body.tracks[0]).toMatchObject({ id: inBoth, position: 0 });
+  });
+
+  it("the old move route is gone", async () => {
+    const res = await app.request(
+      `/tracks/${inBoth}`,
+      { method: "PATCH", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ playlistId: null }) },
+      env
+    );
+    expect(res.status).toBe(410);
+  });
+});
+
+describe("reorder stays scoped to one playlist", () => {
+  it("cannot move a track's position in another playlist", async () => {
+    const before = await positionIn(db, playlistB, onlyB);
+    const res = await app.request(
+      `/playlists/${playlistA}/reorder`,
+      { method: "PATCH", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackIds: ["x1", "x2", "x3", "x4", "x5", onlyB] }) },
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(await positionIn(db, playlistB, onlyB)).toBe(before);
+  });
+
+  it("reorders a shared track within one playlist without touching the other", async () => {
+    const posInB = await positionIn(db, playlistB, inBoth);
+    const listA = await tracksInA();
+    const reversed = [...listA].reverse();
+    const res = await app.request(
+      `/playlists/${playlistA}/reorder`,
+      { method: "PATCH", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackIds: reversed }) },
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(await positionIn(db, playlistA, reversed[0])).toBe(0);
+    expect(await positionIn(db, playlistB, inBoth)).toBe(posInB);
+  });
+});
+
+async function tracksInA(): Promise<string[]> {
+  const res = await app.request(`/playlists/${playlistA}`, { headers: auth(ownerToken) }, env);
+  const body = (await res.json()) as { tracks: { id: string }[] };
+  return body.tracks.map((t) => t.id);
+}

@@ -2,6 +2,10 @@ import { tracks as tracksApi, type Track } from "./api";
 
 type PlayerState = {
   track: Track | null;
+  // Which playlist the queue came from, or null for the library. A track can
+  // be in several playlists, so the track alone cannot say (Player.tsx reads
+  // this for artwork).
+  playlistId: string | null;
   playing: boolean;
   currentTime: number;
   duration: number;
@@ -19,12 +23,14 @@ export function getAudioElement(): HTMLAudioElement {
   return audio;
 }
 let playlist: Track[] = [];
+let playlistId: string | null = null;
 let currentIndex = -1;
 let listeners: Listener[] = [];
 
 function getState(): PlayerState {
   return {
     track: currentIndex >= 0 ? playlist[currentIndex] : null,
+    playlistId,
     playing: !audio.paused,
     currentTime: audio.currentTime,
     duration: audio.duration || 0,
@@ -71,8 +77,9 @@ if ("mediaSession" in navigator) {
 }
 
 export const player = {
-  setPlaylist(tracks: Track[]) {
+  setPlaylist(tracks: Track[], id: string | null = null) {
     playlist = tracks;
+    playlistId = id;
   },
 
   play(trackId?: string) {

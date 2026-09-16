@@ -45,7 +45,7 @@ export default function Invite({ token }: Props) {
         setTracks(r.tracks);
         setPermission(r.permission);
         restoreAccent = previewAccent(r.accent);
-        player.setPlaylist(r.tracks);
+        player.setPlaylist(r.tracks, r.playlist.id);
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "invalid invite");
@@ -69,7 +69,7 @@ export default function Invite({ token }: Props) {
       .map((id) => tracks.find((t) => t.id === id)!)
       .filter(Boolean);
     setTracks(reordered);
-    player.setPlaylist(reordered);
+    player.setPlaylist(reordered, playlist.id);
     await playlistsApi.reorder(playlist.id, trackIds);
   }
 

@@ -226,7 +226,7 @@ export default function Home({ onSelect, onLogout }: Props) {
       player.toggle();
       return;
     }
-    player.setPlaylist(library);
+    player.setPlaylist(library, null);
     player.play(id);
   }
 

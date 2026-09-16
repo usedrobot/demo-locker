@@ -182,9 +182,11 @@ export type Playlist = {
 
 export type Track = {
   id: string;
-  playlistId: string | null;
   title: string;
-  position: number;
+  // Only in a playlist listing: order within that playlist.
+  position?: number;
+  // Only in the library listing: every playlist this track is in.
+  playlistIds?: string[];
   // The API deliberately does not expose originalKey/streamKey — they are
   // bucket coordinates, and handing them to clients gave anyone who kept a copy
   // a durable handle on the object. `hasStream` is all the UI ever read them
@@ -227,6 +229,15 @@ export const playlists = {
       method: "PATCH",
       body: JSON.stringify({ trackIds }),
     }),
+  // Membership is per playlist: a track can be in any number of them.
+  addTrack: (id: string, trackId: string) =>
+    request<{ ok: true; added: boolean }>(`/playlists/${id}/tracks`, {
+      method: "POST",
+      body: JSON.stringify({ trackId }),
+    }),
+  // Removes from THIS playlist only; the track and its files are untouched.
+  removeTrack: (id: string, trackId: string) =>
+    request<{ ok: true }>(`/playlists/${id}/tracks/${trackId}`, { method: "DELETE" }),
   uploadArtwork: async (id: string, file: File): Promise<{ playlist: Playlist }> => {
     const formData = new FormData();
     formData.append("file", file);
@@ -259,11 +270,6 @@ export const playlists = {
 // Tracks
 export const tracks = {
   list: () => request<{ tracks: Track[] }>("/tracks"),
-  attach: (id: string, playlistId: string | null) =>
-    request<{ track: Track }>(`/tracks/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ playlistId }),
-    }),
   upload: (
     playlistId: string | null,
     file: File,

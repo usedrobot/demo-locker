@@ -233,9 +233,10 @@ export default function Player() {
 
   if (!state.track) return null;
 
-  // library tracks have no playlist, hence no playlist artwork
-  const artworkSrc = state.track.playlistId
-    ? playlistsApi.artworkUrlUnchecked(state.track.playlistId)
+  // Artwork belongs to the playlist being played, not the track: a track can
+  // be in several playlists, and the library has none.
+  const artworkSrc = state.playlistId
+    ? playlistsApi.artworkUrlUnchecked(state.playlistId)
     : null;
 
   return (

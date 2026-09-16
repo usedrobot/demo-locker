@@ -166,12 +166,14 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
   async function openAddTracks() {
     const r = await tracksApi.list();
-    setLibraryTracks(r.tracks.filter((t) => t.playlistId === null));
+    // Everything in the library that is not already in THIS playlist. A track
+    // may be in any number of other playlists; that is no reason to hide it.
+    setLibraryTracks(r.tracks.filter((t) => !(t.playlistIds ?? []).includes(playlistId)));
     setShowAddTracks(true);
   }
 
   async function addTrack(id: string) {
-    await tracksApi.attach(id, playlistId);
+    await api.addTrack(playlistId, id);
     setLibraryTracks(libraryTracks.filter((t) => t.id !== id));
     load();
   }
@@ -506,7 +508,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
           <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
             {libraryTracks.length === 0 && (
               <div style={{ color: "var(--fg-dim)", padding: "0.75rem 0", fontSize: "12px" }}>
-                no unattached tracks in your library — upload from the main page
+                every track in your library is already in this playlist — upload from the main page
               </div>
             )}
             {libraryTracks.map((t) => (

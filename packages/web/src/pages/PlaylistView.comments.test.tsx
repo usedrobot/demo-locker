@@ -73,7 +73,6 @@ const playlist: Playlist = {
 
 const track: Track = {
   id: "tr-1",
-  playlistId: "pl-1",
   title: "take 3",
   position: 0,
   hasStream: true,

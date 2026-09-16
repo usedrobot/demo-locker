@@ -155,15 +155,12 @@
             "type": "string",
             "format": "uuid"
           },
-          "playlistId": {
-            "type": "string",
-            "format": "uuid"
-          },
           "title": {
             "type": "string"
           },
           "position": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Only in a playlist listing (GET /playlists/{id}, GET /shares/invite/{token}): this track's order in that playlist. Absent elsewhere."
           },
           "waveformData": {
             "type": [
@@ -195,13 +192,19 @@
               "null"
             ],
             "description": "Attribution by NAME: who uploaded this track. The exact counterpart of Playlist.createdByName, with the same resolution (users.display_name, copied from the uploader's invite label at redemption, falling back to their email) and the same rules. The raw uploader id is still never serialized on any route. Null when no uploader is recorded — rows predating the column, and rows written by the retired edit-share upload path (a share link could once upload; an anonymous holder had no id to record, and a signed-in holder from another locker was deliberately credited the same way). Neither can be created now: uploading requires membership of the locker. Also null for every reader who is not a member of the locker, which means an anonymous share/invite holder AND a signed-in account belonging to some other locker. Names are locker-internal: they are resolved only for accounts inside the locker being read, and only for a reader inside it. This is ATTRIBUTION, NOT PERMISSION: it says whose work the row is, and grants and gates nothing. Every control on the row behaves exactly as it did before this field existed, and the server never reads it back — authorisation is decided from stored columns on every request. Null means there is nothing to attribute and MUST render as nothing at all, never as \"unknown\" or \"null\". A collaborator who is REMOVED from the locker no longer blanks this: their account is deleted (so uploaded_by goes null), but the name they were going by is copied onto their rows at that moment and served here instead. The live account always wins while it exists, so renaming yourself still propagates everywhere; the snapshot is a tombstone, not a second source of truth, and it is served under the same membership gate — a reader outside the locker is given no name by either path."
+          },
+          "playlistIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only in GET /tracks: every playlist this track is in. Empty for a library-only track."
           }
         },
         "required": [
           "id",
-          "playlistId",
           "title",
-          "position",
           "uploadedAt",
           "hasStream",
           "uploadedByMe",
@@ -1245,6 +1248,174 @@
         }
       }
     },
+    "/playlists/{id}/tracks": {
+      "post": {
+        "summary": "Add a library track to a playlist",
+        "description": "Locker-scoped: the locker owner or a collaborator session. Share tokens are not accepted. The track must be in the same locker as the playlist; a track from another locker or a playlist the caller cannot see both return the same non-enumerable 404. Appended to the end of the playlist's order. Adding a track already present is a no-op 200 with added=false.",
+        "operationId": "addTrackToPlaylist",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "trackId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "trackId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Membership ensured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "added": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "added"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "trackId missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Playlist not reachable, or track not in this locker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/playlists/{id}/tracks/{trackId}": {
+      "delete": {
+        "summary": "Remove a track from one playlist",
+        "description": "Locker-scoped, same gate as adding. Removes the track from THIS playlist only. The track, its files, and its membership in every other playlist are untouched; a track removed from its last playlist stays in the library. This never deletes a track. Use DELETE /tracks/{id} for that.",
+        "operationId": "removeTrackFromPlaylist",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "trackId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed (or was not present).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Playlist not reachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/playlists/{id}/artwork": {
       "get": {
         "summary": "Stream playlist artwork",
@@ -1406,7 +1577,7 @@
     "/tracks": {
       "get": {
         "summary": "List the locker's track library",
-        "description": "Every track in the caller's locker — in a playlist or not, uploaded by the locker owner or by any collaborator on that locker — newest first. Scoped by locker, not by uploader: a collaborator sees the owner's uploads and vice versa. Each row's uploadedByMe says whether the caller uploaded it; the uploader's user id itself is never returned. uploadedByName says WHOSE it is by name, which the boolean cannot: with two collaborators in one locker, \"not mine\" does not identify which of them.",
+        "description": "Every track in the caller's locker — in a playlist or not, uploaded by the locker owner or by any collaborator on that locker — newest first. Scoped by locker, not by uploader: a collaborator sees the owner's uploads and vice versa. Each row's uploadedByMe says whether the caller uploaded it; the uploader's user id itself is never returned. uploadedByName says WHOSE it is by name, which the boolean cannot: with two collaborators in one locker, \"not mine\" does not identify which of them. Each track carries playlistIds: every playlist it is in.",
         "operationId": "listTracks",
         "security": [
           {
@@ -1565,7 +1736,7 @@
     "/tracks/{id}/stream": {
       "get": {
         "summary": "Stream a track (private)",
-        "description": "A track in a playlist is gated by the parent playlist: a session acting in the playlist's locker (the owner, or a collaborator) or a valid share token, via Bearer or `?token=` (an <audio> tag cannot send an Authorization header). A library track (no playlist) is gated on the locker directly: the owner's session or a collaborator's session, not the raw acting user. Supports byte-range requests. Anonymous access to public playlists' tracks goes through the separate /public/v1/tracks/{id}/stream route instead.",
+        "description": "A track in a playlist is gated by any playlist the track is in, or a locker session: a session acting in the playlist's locker (the owner, or a collaborator) or a valid share token, via Bearer or `?token=` (an <audio> tag cannot send an Authorization header). A library track (no playlist) is gated on the locker directly: the owner's session or a collaborator's session, not the raw acting user. Supports byte-range requests. Anonymous access to public playlists' tracks goes through the separate /public/v1/tracks/{id}/stream route instead.",
         "operationId": "streamTrack",
         "security": [
           {
@@ -1699,9 +1870,10 @@
     },
     "/tracks/{id}": {
       "patch": {
-        "summary": "Move a track into or out of a playlist",
-        "description": "Sets the track's parent playlist. `playlistId: null` moves it back to the bare library. Both the track and the destination playlist must belong to the caller's locker; either failing returns the same non-enumerable 404. The track is appended to the end of the destination's order.",
-        "operationId": "moveTrack",
+        "summary": "Retired: moving a track between playlists",
+        "description": "Always 410. A track no longer belongs to one playlist. Add or remove membership with POST and DELETE /playlists/{id}/tracks.",
+        "operationId": "moveTrackRetired",
+        "deprecated": true,
         "security": [
           {
             "bearerAuth": []
@@ -1718,60 +1890,9 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "playlistId": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "format": "uuid",
-                    "description": "Destination playlist, or null to move the track to the bare library."
-                  }
-                },
-                "required": [
-                  "playlistId"
-                ]
-              }
-            }
-          }
-        },
         "responses": {
-          "200": {
-            "description": "The moved track.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "track": {
-                      "$ref": "#/components/schemas/Track"
-                    }
-                  },
-                  "required": [
-                    "track"
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing, invalid, or expired session token.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Track or destination playlist is outside the caller's locker, or does not exist (non-enumerable).",
+          "410": {
+            "description": "Route retired.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1784,7 +1905,7 @@
       },
       "delete": {
         "summary": "Delete a track",
-        "description": "Locker-scoped, then narrowed by who uploaded the track. The caller's session must act in the track's locker (its ownerId), otherwise 404; library tracks with no parent playlist are covered by the same check. This locker check is what changed for collaborators: it previously compared the track's ownerId against the raw session user id, which no collaborator ever matched, so a collaborator was refused on every track in the locker. For an owner it is unchanged. Within the locker: the owner may delete any track; a collaborator may delete only a track whose uploaded_by is their own user id, and is 404'd otherwise. A null uploaded_by (rows predating the column, an uploader since removed — the column is ON DELETE SET NULL — or an upload by an anonymous edit-share holder) reads as the owner's, so a collaborator may not delete it. The guard runs before any storage call: a refused delete leaves both the row and the stored objects intact. On success this deletes the original (and stream, if distinct) object from storage, then the row — the original is the lossless master, and there is no soft delete or undo.",
+        "description": "Locker-scoped, then narrowed by who uploaded the track. The caller's session must act in the track's locker (its ownerId), otherwise 404; library tracks in no playlist are covered by the same check. This locker check is what changed for collaborators: it previously compared the track's ownerId against the raw session user id, which no collaborator ever matched, so a collaborator was refused on every track in the locker. For an owner it is unchanged. Within the locker: the owner may delete any track; a collaborator may delete only a track whose uploaded_by is their own user id, and is 404'd otherwise. A null uploaded_by (rows predating the column, an uploader since removed — the column is ON DELETE SET NULL — or an upload by an anonymous edit-share holder) reads as the owner's, so a collaborator may not delete it. The guard runs before any storage call: a refused delete leaves both the row and the stored objects intact. On success this deletes the original (and stream, if distinct) object from storage, then the row — the original is the lossless master, and there is no soft delete or undo.",
         "operationId": "deleteTrack",
         "security": [
           {
@@ -1953,7 +2074,7 @@
     "/comments/track/{trackId}": {
       "get": {
         "summary": "List comments on a track",
-        "description": "Gated on the track's parent playlist: owner session or a valid share token, via Bearer or `?token=`. Returns top-level comments with nested replies; deleteToken is stripped.",
+        "description": "Gated on the track: reachable through any playlist it is in (owner or collaborator session, or a valid share token for that playlist, via Bearer or `?token=`), or by a session in its locker. Returns top-level comments with nested replies; deleteToken is stripped.",
         "operationId": "listTrackComments",
         "security": [
           {
@@ -2678,7 +2799,7 @@
     "/public/v1/tracks/{id}/stream": {
       "get": {
         "summary": "Stream a track from a public playlist",
-        "description": "Unauthenticated. Only streams tracks whose parent playlist has isPublic true. Supports byte-range requests.",
+        "description": "Unauthenticated. Only streams tracks that are in at least one playlist with isPublic true. Supports byte-range requests.",
         "operationId": "streamPublicTrack",
         "parameters": [
           {

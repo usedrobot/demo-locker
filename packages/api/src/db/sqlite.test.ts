@@ -51,9 +51,7 @@ describe("collaboration schema", () => {
       .insert(tracks)
       .values({
         ownerId: owner.id,
-        playlistId: pl.id,
         title: "riff",
-        position: 0,
         originalKey: "k",
         uploadedBy: collab.id,
       })

@@ -1,4 +1,12 @@
-import { sqliteTable, text, integer, real, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  primaryKey,
+  index,
+  type AnySQLiteColumn,
+} from "drizzle-orm/sqlite-core";
 import { generateId } from "../lib/ids.js";
 
 const now = () => new Date();
@@ -67,16 +75,12 @@ export const playlists = sqliteTable("playlists", {
 
 export const tracks = sqliteTable("tracks", {
   id: text("id").primaryKey().$defaultFn(generateId),
-  // Tracks are library items owned by a user; playlist membership is optional.
-  // Deleting a playlist detaches its tracks (SET NULL) instead of deleting them.
-  playlistId: text("playlist_id").references(() => playlists.id, {
-    onDelete: "set null",
-  }),
+  // Tracks are library items owned by a locker. Which playlists hold a track
+  // lives in playlistTracks below; a track has no playlist column of its own.
   ownerId: text("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
-  position: integer("position").notNull(),
   originalKey: text("original_key").notNull(),
   streamKey: text("stream_key"),
   waveformData: text("waveform_data"),
@@ -100,6 +104,30 @@ export const tracks = sqliteTable("tracks", {
   // ruling: the music stays, and so does whose it is.
   uploadedByName: text("uploaded_by_name"),
 });
+
+// Which playlists hold which tracks, and in what order. A track is a library
+// item owned by a locker; membership is many-to-many. `position` lives here
+// rather than on the track because a track has one position PER playlist.
+// Both FKs cascade: deleting a playlist drops its rows and leaves the tracks
+// in the library (the same outcome the old SET NULL gave); deleting a track
+// drops it from every playlist.
+export const playlistTracks = sqliteTable(
+  "playlist_tracks",
+  {
+    playlistId: text("playlist_id")
+      .notNull()
+      .references(() => playlists.id, { onDelete: "cascade" }),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    addedAt: integer("added_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.playlistId, t.trackId] }),
+    index("playlist_tracks_track_idx").on(t.trackId),
+  ]
+);
 
 // Fixed-window counters for the auth routes. A table rather than a Workers
 // rate-limit binding because the same code runs on Node self-hosts, where no

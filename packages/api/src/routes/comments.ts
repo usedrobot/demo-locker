@@ -143,9 +143,8 @@ commentsRouter.post("/", async (c) => {
   // Gate on the target: a track is reachable through any playlist it is in
   // or by its locker; a playlist by a session acting in the locker (the
   // owner, or a collaborator) or a valid share token (the invite-listener
-  // flow). Anonymous without a
-  // token is indistinguishable from a nonexistent target -> the same
-  // non-enumerable 404.
+  // flow). Anonymous without a token is indistinguishable from a nonexistent
+  // target -> the same non-enumerable 404.
   let allowed = false;
   if (trackId) {
     const [track] = await db

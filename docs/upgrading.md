@@ -247,6 +247,32 @@ dangerous — nothing breaks and nothing is exposed that was not before — but
 your playlists become unlimited for share links, and the number you chose now
 limits collaborators instead.
 
+## Special case: migration 0007 (tracks in multiple playlists)
+
+Migration 0007 moves playlist membership from `tracks.playlist_id` onto a
+`playlist_tracks` join table, backfills it, and drops `playlist_id` and
+`position` from `tracks`. It rebuilds the `tracks` table to do so, and
+carries every track comment and every membership across the rebuild in
+scratch tables; the migration file's header explains why the plain
+generated form could not be used.
+
+Before applying it on Cloudflare, export the database:
+
+```bash
+npx wrangler d1 export YOUR-D1-NAME --remote --output before-0007.sql --config wrangler.jsonc
+```
+
+After applying, these two counts must agree with what you had before:
+
+```sql
+SELECT count(*) FROM playlist_tracks;   -- = tracks that had a playlist
+SELECT count(*) FROM comments;          -- unchanged
+```
+
+Deploy the API and the web app together. A web bundle older than this
+release calls the retired `PATCH /tracks/:id` and gets a 410 with a message
+saying where the route went.
+
 ## Special case: databases from before the millisecond-timestamp change
 
 If your locker predates that change, its timestamps are stored in seconds

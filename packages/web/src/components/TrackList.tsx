@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Track } from "../lib/api";
-import { tracks as tracksApi } from "../lib/api";
+import { tracks as tracksApi, playlists as playlistsApi } from "../lib/api";
 import { player } from "../lib/audio";
 import Attribution from "./Attribution";
 
@@ -8,11 +8,13 @@ type Props = {
   tracks: Track[];
   onReorder: (trackIds: string[]) => void;
   // Removes the track from THIS playlist. The track and its files survive and
-  // drop back to the library on Home — this control must never destroy a
-  // master. Deleting for good is a library-level action and lives there, where
-  // the word "delete" is accurate. Named onRemove, not onDelete, because it
-  // used to call DELETE /tracks/:id while every label said "remove".
+  // stay in every other playlist and in the library. Named onRemove, not
+  // onDelete, because it used to call DELETE /tracks/:id while every label
+  // said "remove".
   onRemove?: (trackId: string) => void;
+  // Which playlist the remove control acts on. Required whenever onRemove is
+  // set; without it the control does nothing.
+  playlistId?: string;
   selectedId?: string | null;
   onSelect?: (id: string) => void;
 };
@@ -55,7 +57,7 @@ function ProgressBar({ trackId }: { trackId: string }) {
   );
 }
 
-export default function TrackList({ tracks, onReorder, onRemove, selectedId, onSelect }: Props) {
+export default function TrackList({ tracks, playlistId, onReorder, onRemove, selectedId, onSelect }: Props) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   // A refused detach used to be an unhandled rejection — the row simply stayed
@@ -90,10 +92,11 @@ export default function TrackList({ tracks, onReorder, onRemove, selectedId, onS
       setConfirmRemoveId(trackId);
       return;
     }
-    // Detach, don't destroy: playlistId null sends it back to the library with
-    // both the master and the rendition intact.
+    // Remove from THIS playlist, never destroy: the track keeps its master, its
+    // rendition, and its place in every other playlist.
+    if (!playlistId) return;
     try {
-      await tracksApi.attach(trackId, null);
+      await playlistsApi.removeTrack(playlistId, trackId);
     } catch (err) {
       // The row is left where it is and the confirm state cleared, so the
       // control returns to rest rather than staying armed over a track that

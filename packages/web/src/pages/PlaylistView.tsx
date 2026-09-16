@@ -186,7 +186,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
       const [r, me] = await Promise.all([api.get(playlistId), auth.me()]);
       setPlaylist(r.playlist);
       setTracks(r.tracks);
-      player.setPlaylist(r.tracks);
+      player.setPlaylist(r.tracks, playlistId);
       setLockerId(me.user.lockerOwnerId ?? me.user.id);
       setIsLockerOwner(me.user.lockerOwnerId === null);
       setLoadError("");
@@ -219,7 +219,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     // Optimistic: the drag has already happened on screen and re-rendering the
     // old order under the pointer would be worse than a brief lie.
     setTracks(reordered);
-    player.setPlaylist(reordered);
+    player.setPlaylist(reordered, playlistId);
     try {
       await api.reorder(playlistId, trackIds);
       setWriteError("");
@@ -227,7 +227,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
       // Put it back. A refused reorder that silently stuck would leave the
       // page showing an order the server does not have, until the next load.
       setTracks(before);
-      player.setPlaylist(before);
+      player.setPlaylist(before, playlistId);
       setWriteError(err instanceof Error ? err.message : "couldn't reorder those tracks");
     }
   }
@@ -392,6 +392,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
       <div style={{ borderTop: "1px solid var(--border)" }}>
         <TrackList
           tracks={tracks}
+          playlistId={playlistId}
           onReorder={handleReorder}
           onRemove={(id) => {
             setTracks(tracks.filter((t) => t.id !== id));

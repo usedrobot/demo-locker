@@ -15,26 +15,28 @@ import type { Track } from "../lib/api";
 
 vi.mock("../lib/api", () => ({
   tracks: {
-    attach: vi.fn(async () => ({})),
     delete: vi.fn(async () => ({})),
     downloadUrl: (id: string) => `/tracks/${id}/download`,
+  },
+  playlists: {
+    removeTrack: vi.fn(async () => ({ ok: true })),
   },
 }));
 vi.mock("../lib/audio", () => ({
   player: {
-    getState: () => ({ track: null, playing: false, duration: 0, currentTime: 0 }),
+    getState: () => ({ track: null, playlistId: null, playing: false, duration: 0, currentTime: 0 }),
     subscribe: () => () => {},
     play: vi.fn(),
     clear: vi.fn(),
   },
 }));
 
-import { tracks as tracksApi } from "../lib/api";
+import { tracks as tracksApi, playlists as playlistsApi } from "../lib/api";
 
 import { player } from "../lib/audio";
 
 const playMock = vi.mocked(player.play);
-const attachMock = vi.mocked(tracksApi.attach);
+const removeMock = vi.mocked(playlistsApi.removeTrack);
 const deleteMock = vi.mocked(tracksApi.delete);
 
 const track = {
@@ -42,7 +44,6 @@ const track = {
   title: "Everything Everywhere",
   duration: 254,
   hasStream: true,
-  playlistId: "p1",
 } as unknown as Track;
 
 let container: HTMLDivElement;
@@ -51,7 +52,7 @@ let root: ReturnType<typeof createRoot>;
 function render(onRemove?: (id: string) => void, list: Track[] = [track]) {
   act(() => {
     root.render(
-      <TrackList tracks={list} onReorder={() => {}} onRemove={onRemove} />,
+      <TrackList tracks={list} playlistId="p1" onReorder={() => {}} onRemove={onRemove} />,
     );
   });
 }
@@ -70,7 +71,7 @@ describe("TrackList remove control", () => {
     root = createRoot(container);
   });
 
-  it("detaches the track instead of deleting it", () => {
+  it("removes the track from this playlist instead of deleting it", () => {
     const onRemove = vi.fn();
     render(onRemove);
 
@@ -79,13 +80,13 @@ describe("TrackList remove control", () => {
 
     // First click only arms the confirm — nothing should reach the API yet.
     act(() => btn!.click());
-    expect(attachMock).not.toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
     expect(deleteMock).not.toHaveBeenCalled();
 
     act(() => btn!.click());
 
-    // The assertion that matters: detach, with a null playlist.
-    expect(attachMock).toHaveBeenCalledWith("t1", null);
+    // The assertion that matters: remove from THIS playlist, and only that.
+    expect(removeMock).toHaveBeenCalledWith("p1", "t1");
     // The one that would have cost a master.
     expect(deleteMock).not.toHaveBeenCalled();
   });

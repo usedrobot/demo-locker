@@ -4,7 +4,7 @@
 import { Hono, type Context } from "hono";
 import { eq, and, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { playlists, tracks } from "../db/schema.js";
+import { playlists, playlistTracks, tracks } from "../db/schema.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { INERT_CONTENT_HEADERS, safeImageType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
@@ -37,9 +37,10 @@ publicRouter.get("/playlists/:id", async (c) => {
       duration: tracks.duration,
       waveformData: tracks.waveformData,
     })
-    .from(tracks)
-    .where(eq(tracks.playlistId, id))
-    .orderBy(asc(tracks.position));
+    .from(playlistTracks)
+    .innerJoin(tracks, eq(playlistTracks.trackId, tracks.id))
+    .where(eq(playlistTracks.playlistId, id))
+    .orderBy(asc(playlistTracks.position));
 
   c.header("Cache-Control", "public, max-age=60");
   return c.json({
@@ -82,10 +83,12 @@ publicRouter.get("/tracks/:id/stream", async (c) => {
   const db = getDb(c.env.DB);
   const id = c.req.param("id");
 
+  // Public iff ANY playlist holding the track is public.
   const [row] = await db
     .select({ streamKey: tracks.streamKey })
     .from(tracks)
-    .innerJoin(playlists, eq(tracks.playlistId, playlists.id))
+    .innerJoin(playlistTracks, eq(playlistTracks.trackId, tracks.id))
+    .innerJoin(playlists, eq(playlistTracks.playlistId, playlists.id))
     .where(and(eq(tracks.id, id), eq(playlists.isPublic, true)))
     .limit(1);
   if (!row || !row.streamKey) return notFound(c);

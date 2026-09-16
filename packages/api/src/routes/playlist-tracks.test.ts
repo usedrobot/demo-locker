@@ -11,6 +11,7 @@ import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
 import { users, playlists, sessions, shares } from "../db/schema.js";
 import { seedTrack, positionIn } from "../test/seed.js";
+import { addTrackToPlaylist } from "../lib/playlist-membership.js";
 
 let db: Database;
 let root: string;
@@ -228,3 +229,53 @@ async function tracksInA(): Promise<string[]> {
   const body = (await res.json()) as { tracks: { id: string }[] };
   return body.tracks.map((t) => t.id);
 }
+
+describe("public and comments through the join table", () => {
+  it("a public playlist lists its tracks in order and streams them anonymously", async () => {
+    const [pub] = await db.insert(playlists).values({ ownerId, name: "pub", isPublic: true }).returning();
+    await addTrackToPlaylist(db, pub.id, inBoth);
+    const res = await app.request(`/public/v1/playlists/${pub.id}`, {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { playlist: { tracks: { id: string }[] } };
+    expect(body.playlist.tracks.map((t) => t.id)).toEqual([inBoth]);
+
+    const stream = await app.request(`/public/v1/tracks/${inBoth}/stream`, {}, env);
+    expect(stream.status).toBe(200);
+    // Still private elsewhere: a track only in private B does not stream publicly.
+    expect((await app.request(`/public/v1/tracks/${onlyB}/stream`, {}, env)).status).toBe(404);
+  });
+
+  it("a track comment shows under every playlist the track is in", async () => {
+    const post = await app.request(
+      `/comments`,
+      { method: "POST", headers: { ...auth(ownerToken), "Content-Type": "application/json" }, body: JSON.stringify({ trackId: inBoth, authorName: "DL", body: "chorus is late" }) },
+      env
+    );
+    expect(post.status).toBe(201);
+
+    // Read with A's listen token and with the owner session; both see it.
+    const viaA = await app.request(`/comments/track/${inBoth}?token=${tokenA}`, {}, env);
+    expect(viaA.status).toBe(200);
+    const viaAbody = (await viaA.json()) as { comments: { body: string }[] };
+    expect(viaAbody.comments.some((c) => c.body === "chorus is late")).toBe(true);
+    const viaOwner = await app.request(`/comments/track/${inBoth}`, { headers: auth(ownerToken) }, env);
+    expect(viaOwner.status).toBe(200);
+
+    // A's token cannot read or post comments on a track that is only in B.
+    expect((await app.request(`/comments/track/${onlyB}?token=${tokenA}`, {}, env)).status).toBe(404);
+    const postB = await app.request(
+      `/comments`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: onlyB, authorName: "x", body: "no" }) },
+      env
+    );
+    expect(postB.status).toBe(404);
+  });
+
+  it("the invite landing lists the playlist's tracks in order with positions", async () => {
+    const res = await app.request(`/shares/invite/${tokenA}`, {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tracks: { id: string; position: number }[] };
+    expect(body.tracks.length).toBeGreaterThan(0);
+    expect(body.tracks.map((t) => t.position)).toEqual(body.tracks.map((_, i) => i));
+  });
+});

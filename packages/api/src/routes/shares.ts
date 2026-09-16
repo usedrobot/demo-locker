@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { shares, playlists, tracks, users } from "../db/schema.js";
+import { shares, playlists, users } from "../db/schema.js";
 import { requireAuth } from "../lib/session.js";
 import { getLimits, isLimited } from "../lib/limits.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
+import { tracksInPlaylist, type TrackInPlaylist } from "../lib/playlist-membership.js";
 import { publicPlaylist } from "../lib/public-playlist.js";
 import { publicShare } from "../lib/public-share.js";
 import { resolveDisplayNames } from "../lib/display-name.js";
@@ -257,11 +258,7 @@ sharesRouter.get("/invite/:token", async (c) => {
 
   if (!playlist) return c.json({ error: "playlist not found" }, 404);
 
-  const trackList = await db
-    .select()
-    .from(tracks)
-    .where(eq(tracks.playlistId, share.playlistId))
-    .orderBy(tracks.position);
+  const trackList = await tracksInPlaylist(db, share.playlistId);
 
   // Listeners get the owner's accent, so a shared locker looks the way its
   // owner set it up rather than defaulting to gold on every stranger's browser.
@@ -281,7 +278,7 @@ sharesRouter.get("/invite/:token", async (c) => {
   // and has no business learning the band's names (lib/display-name.ts).
   const names = await resolveDisplayNames(db, actingUserId, playlist.ownerId, [
     playlist.createdBy,
-    ...trackList.map((t: TrackRow) => t.uploadedBy),
+    ...trackList.map((t: TrackInPlaylist) => t.uploadedBy),
   ]);
 
   return c.json({
@@ -294,7 +291,9 @@ sharesRouter.get("/invite/:token", async (c) => {
     // link, and the raw rows still carried originalKey/streamKey — the exact
     // leak the 0.2.8 review closed everywhere except the one route that
     // listeners, not owners, actually use.
-    tracks: trackList.map((t: TrackRow) => publicTrack(t, actingUserId, names)),
+    tracks: trackList.map((t: TrackInPlaylist) =>
+      publicTrack(t, actingUserId, names, { position: t.position })
+    ),
     accent: owner?.accent ?? null,
   });
 });

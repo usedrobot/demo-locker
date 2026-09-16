@@ -10,7 +10,7 @@ import {
 } from "../lib/limits.js";
 import {
   requestCanAccessPlaylist,
-  requestSessionUserId,
+  requestCanAccessTrack,
 } from "../lib/playlist-access.js";
 import { lockerIdForUserId } from "../lib/locker.js";
 import type { Env } from "../types.js";
@@ -65,28 +65,27 @@ async function commentTarget(
   db: ReturnType<typeof getDb>,
   comment: { playlistId: string | null; trackId: string | null }
 ): Promise<CommentTarget | null> {
-  let playlistId = comment.playlistId;
-  if (!playlistId && comment.trackId) {
+  if (comment.playlistId) {
+    const [playlist] = await db
+      .select({ ownerId: playlists.ownerId })
+      .from(playlists)
+      .where(eq(playlists.id, comment.playlistId))
+      .limit(1);
+    return playlist ? { lockerId: playlist.ownerId, playlistId: comment.playlistId } : null;
+  }
+  if (comment.trackId) {
+    // A track comment belongs to the locker, whichever playlists the track is
+    // in (now possibly several). Moderation is decided on lockerId; the
+    // "has this caller demonstrated read access" question refuseModeration
+    // asks is answered per track, not per playlist, so no playlistId here.
     const [track] = await db
-      .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
+      .select({ ownerId: tracks.ownerId })
       .from(tracks)
       .where(eq(tracks.id, comment.trackId))
       .limit(1);
-    if (!track) return null;
-    if (!track.playlistId) {
-      return { lockerId: track.ownerId, playlistId: null };
-    }
-    playlistId = track.playlistId;
+    return track ? { lockerId: track.ownerId, playlistId: null } : null;
   }
-  if (!playlistId) return null;
-
-  const [playlist] = await db
-    .select({ ownerId: playlists.ownerId })
-    .from(playlists)
-    .where(eq(playlists.id, playlistId))
-    .limit(1);
-  if (!playlist) return null;
-  return { lockerId: playlist.ownerId, playlistId };
+  return null;
 }
 
 // The refusal a non-moderator gets.
@@ -99,10 +98,13 @@ async function commentTarget(
 //
 // A library track in no playlist has no reader class beyond its locker
 // members, so every refusal there is a 404.
-async function refuseModeration(c: any, target: CommentTarget) {
-  const readable = target.playlistId
-    ? await requestCanAccessPlaylist(c, target.playlistId)
-    : false;
+async function refuseModeration(c: any, target: CommentTarget, trackId: string | null) {
+  let readable = false;
+  if (trackId) {
+    readable = await requestCanAccessTrack(c, { id: trackId, ownerId: target.lockerId });
+  } else if (target.playlistId) {
+    readable = await requestCanAccessPlaylist(c, target.playlistId);
+  }
   return readable
     ? c.json({ error: "forbidden" }, 403)
     : c.json({ error: "not found" }, 404);
@@ -138,27 +140,20 @@ commentsRouter.post("/", async (c) => {
 
   const db = getDb(c.env.DB);
 
-  // Resolve the playlist this comment targets, then gate on it: only a
-  // session acting in the locker (the owner, or a collaborator) or a valid
-  // share token may comment (the invite-listener flow). Anonymous without a
+  // Gate on the target: a track is reachable through any playlist it is in
+  // or by its locker; a playlist by a session acting in the locker (the
+  // owner, or a collaborator) or a valid share token (the invite-listener
+  // flow). Anonymous without a
   // token is indistinguishable from a nonexistent target -> the same
   // non-enumerable 404.
   let allowed = false;
   if (trackId) {
     const [track] = await db
-      .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
+      .select({ id: tracks.id, ownerId: tracks.ownerId })
       .from(tracks)
       .where(eq(tracks.id, trackId))
       .limit(1);
-    if (track?.playlistId) {
-      allowed = await requestCanAccessPlaylist(c, track.playlistId);
-    } else if (track) {
-      // library track outside any playlist — locker only (owner or collaborator)
-      const actingUserId = await requestSessionUserId(c);
-      allowed =
-        !!actingUserId &&
-        (await lockerIdForUserId(db, actingUserId)) === track.ownerId;
-    }
+    allowed = track ? await requestCanAccessTrack(c, track) : false;
   } else if (playlistId) {
     allowed = await requestCanAccessPlaylist(c, playlistId);
   }
@@ -192,20 +187,11 @@ commentsRouter.get("/track/:trackId", async (c) => {
   const db = getDb(c.env.DB);
 
   const [track] = await db
-    .select({ playlistId: tracks.playlistId, ownerId: tracks.ownerId })
+    .select({ id: tracks.id, ownerId: tracks.ownerId })
     .from(tracks)
     .where(eq(tracks.id, trackId))
     .limit(1);
-  let canAccess = false;
-  if (track?.playlistId) {
-    canAccess = await requestCanAccessPlaylist(c, track.playlistId);
-  } else if (track) {
-    // library track outside any playlist — locker only (owner or collaborator)
-    const actingUserId = await requestSessionUserId(c);
-    canAccess =
-      !!actingUserId &&
-      (await lockerIdForUserId(db, actingUserId)) === track.ownerId;
-  }
+  const canAccess = track ? await requestCanAccessTrack(c, track) : false;
   if (!canAccess) {
     return c.json({ error: "not found" }, 404);
   }
@@ -273,7 +259,7 @@ commentsRouter.patch("/:id/resolve", async (c) => {
   const target = await commentTarget(db, comment);
   if (!target) return c.json({ error: "not found" }, 404);
   if ((await lockerIdForUserId(db, user.id)) !== target.lockerId) {
-    return refuseModeration(c, target);
+    return refuseModeration(c, target, comment.trackId);
   }
 
   const nowResolved = comment.resolvedAt == null;
@@ -318,7 +304,7 @@ commentsRouter.delete("/:id", async (c) => {
     const user = await resolveAuthedUser(c);
     const actingLockerId = user ? await lockerIdForUserId(db, user.id) : null;
     if (actingLockerId !== target.lockerId) {
-      return refuseModeration(c, target);
+      return refuseModeration(c, target, comment.trackId);
     }
   }
 

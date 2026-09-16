@@ -20,6 +20,7 @@ import { getDb, type Database } from "../db/index.js";
 import { playlists, shares } from "../db/schema.js";
 import { bearerToken, findSession } from "./session.js";
 import { lockerIdForUserId } from "./locker.js";
+import { playlistIdsForTrack } from "./playlist-membership.js";
 import type { Env } from "../types.js";
 
 type AccessCreds = {
@@ -202,6 +203,27 @@ export async function requestCanAccessPlaylist(
     if (token && (await canAccessPlaylist(db, playlistId, { token }))) {
       return true;
     }
+  }
+  return false;
+}
+
+// TRACK access: a track is reachable by anyone who can reach ANY playlist it
+// is in, or by a session in its locker. The playlist loop is deliberate: a
+// share token is bound to one playlist, so each playlist is tested against
+// the request's credentials on its own. "Any share on any of this track's
+// playlists" would let a listen link for A open a track through B.
+export async function requestCanAccessTrack(
+  c: Context<Env>,
+  track: { id: string; ownerId: string }
+): Promise<boolean> {
+  const db = getDb(c.env.DB);
+  const userId = await requestSessionUserId(c);
+  if (userId) {
+    const lockerId = await lockerIdForUserId(db, userId);
+    if (lockerId === track.ownerId) return true;
+  }
+  for (const playlistId of await playlistIdsForTrack(db, track.id)) {
+    if (await requestCanAccessPlaylist(c, playlistId)) return true;
   }
   return false;
 }

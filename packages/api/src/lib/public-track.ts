@@ -95,6 +95,9 @@ import { type DisplayNames } from "./display-name.js";
 // actually checked rather than silently inferred away.
 export type TrackRow = typeof tracks.$inferSelect;
 
+// `position` and `playlistIds` are context, not columns. A track has a
+// position per playlist and a membership list per library view, so the route
+// that knows the context passes it in; the serializer never guesses.
 export type PublicTrack = Omit<
   TrackRow,
   "originalKey" | "streamKey" | "uploadedBy" | "uploadedByName"
@@ -102,12 +105,19 @@ export type PublicTrack = Omit<
   hasStream: boolean;
   uploadedByMe: boolean;
   uploadedByName: string | null;
+  // Present only in a playlist listing: this track's order in THAT playlist.
+  position?: number;
+  // Present only in the library listing: every playlist this track is in.
+  playlistIds?: string[];
 };
+
+export type TrackExtras = { position?: number; playlistIds?: string[] };
 
 export function publicTrack(
   row: TrackRow,
   actingUserId: string | null,
-  names: DisplayNames
+  names: DisplayNames,
+  extras: TrackExtras = {}
 ): PublicTrack {
   const {
     originalKey: _originalKey,
@@ -135,5 +145,7 @@ export function publicTrack(
       : uploadedBy != null
         ? names.byId.get(uploadedBy) ?? null
         : departedName,
+    ...(extras.position !== undefined ? { position: extras.position } : {}),
+    ...(extras.playlistIds !== undefined ? { playlistIds: extras.playlistIds } : {}),
   };
 }

@@ -13,6 +13,7 @@ import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
 import { users, playlists, tracks, sessions, shares } from "../db/schema.js";
+import { seedTrack } from "../test/seed.js";
 
 let db: Database;
 let root: string;
@@ -62,10 +63,7 @@ beforeAll(async () => {
     httpMetadata: { contentType: "audio/wav" },
   });
 
-  const [tPriv] = await db
-    .insert(tracks)
-    .values({ playlistId: privateId, ownerId: owner.id, title: "priv track", position: 0, originalKey: "k-priv", streamKey: "k-priv" })
-    .returning();
+  const tPriv = await seedTrack(db, { ownerId: owner.id, title: "priv track", originalKey: "k-priv", streamKey: "k-priv", playlistIds: [privateId] });
   privateTrackId = tPriv.id;
 
   shareToken = "share-token-abc";

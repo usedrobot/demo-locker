@@ -22,6 +22,7 @@ import {
   shares,
   collaboratorInvites,
 } from "../db/schema.js";
+import { seedTrack } from "../test/seed.js";
 
 let db: Database;
 let root: string;
@@ -74,27 +75,11 @@ beforeAll(async () => {
     .returning();
   playlistId = pl.id;
 
-  await db.insert(tracks).values([
-    {
-      ownerId,
-      playlistId,
-      title: "jimmys demo",
-      position: 1,
-      originalKey: "k1",
-      uploadedBy: collabId,
-    },
-    {
-      ownerId,
-      playlistId,
-      title: "owners demo",
-      position: 2,
-      originalKey: "k2",
-      uploadedBy: ownerId,
-    },
-    // Predates the column, or its uploader has since been removed (the FK is
-    // ON DELETE SET NULL). No attribution to show.
-    { ownerId, playlistId, title: "orphan demo", position: 3, originalKey: "k3" },
-  ]);
+  await seedTrack(db, { ownerId, title: "jimmys demo", originalKey: "k1", uploadedBy: collabId, playlistIds: [playlistId] });
+  await seedTrack(db, { ownerId, title: "owners demo", originalKey: "k2", uploadedBy: ownerId, playlistIds: [playlistId] });
+  // Predates the column, or its uploader has since been removed (the FK is
+  // ON DELETE SET NULL). No attribution to show.
+  await seedTrack(db, { ownerId, title: "orphan demo", originalKey: "k3", playlistIds: [playlistId] });
 });
 
 afterAll(async () => {
@@ -341,17 +326,13 @@ describe("a signed-in outsider holding a share link", () => {
   // resolver refuses to put a name to it, because it only ever resolves
   // accounts inside the locker being read.
   it("has no name resolved for it even when a member reads a row it is already on", async () => {
-    const [planted] = await db
-      .insert(tracks)
-      .values({
+    const planted = await seedTrack(db, {
         ownerId,
-        playlistId,
         title: "planted outsider row",
-        position: 9,
         originalKey: "k-planted",
         uploadedBy: outsiderId,
-      })
-      .returning();
+      playlistIds: [playlistId]
+      });
     expect(planted.uploadedBy).toBe(outsiderId);
 
     const res = await app.request(
@@ -443,13 +424,12 @@ describe("a departed collaborator keeps their name on the work they left", () =>
       .returning();
     departedPlaylistId = pl.id;
 
-    await db.insert(tracks).values({
+    await seedTrack(db, {
       ownerId,
-      playlistId: departedPlaylistId,
       title: "departed demo",
-      position: 1,
       originalKey: "k-departed",
       uploadedBy: departedId,
+    playlistIds: [departedPlaylistId]
     });
 
     await db
@@ -547,13 +527,12 @@ describe("a departed collaborator keeps their name on the work they left", () =>
       .insert(playlists)
       .values({ ownerId, name: "nameless set", createdBy: nameless.id })
       .returning();
-    await db.insert(tracks).values({
+    await seedTrack(db, {
       ownerId,
-      playlistId: pl.id,
       title: "nameless demo",
-      position: 1,
       originalKey: "k-nameless",
       uploadedBy: nameless.id,
+    playlistIds: [pl.id]
     });
 
     const res = await app.request(

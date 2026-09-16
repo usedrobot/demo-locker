@@ -7,6 +7,7 @@ import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { tracks, playlists } from "../db/schema.js";
+import { positionIn } from "../test/seed.js";
 
 let db: Database;
 let env: Record<string, unknown>;
@@ -193,7 +194,8 @@ describe("the invite route is held to the same contract as the owner's", () => {
 
 describe("reorder cannot reach tracks in another playlist", () => {
   it("leaves a foreign track's position untouched", async () => {
-    const [before] = await db.select().from(tracks).where(eq(tracks.id, victimTrack));
+    const before = await positionIn(db, victimPlaylist, victimTrack);
+    expect(before).not.toBeNull();
 
     const res = await app.request(
       `/playlists/${attackerPlaylist}/reorder`,
@@ -208,8 +210,7 @@ describe("reorder cannot reach tracks in another playlist", () => {
     );
     expect(res.status).toBe(200);
 
-    const [after] = await db.select().from(tracks).where(eq(tracks.id, victimTrack));
-    expect(after.position).toBe(before.position);
+    expect(await positionIn(db, victimPlaylist, victimTrack)).toBe(before);
   });
 });
 

@@ -12,6 +12,7 @@ import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
 import { users, playlists, sessions, tracks, shares, comments } from "../db/schema.js";
+import { seedTrack, positionIn } from "../test/seed.js";
 
 let db: Database;
 let root: string;
@@ -262,28 +263,20 @@ describe("the shared playlist-access gates resolve the locker", () => {
   });
 
   it("lets a collaborator reorder the owner's playlist", async () => {
-    const [a] = await db
-      .insert(tracks)
-      .values({
+    const a = await seedTrack(db, {
         ownerId,
-        playlistId: ownerPlaylistId,
         title: "first",
-        position: 0,
         originalKey: "lib/reorder-a",
         uploadedBy: ownerId,
-      })
-      .returning();
-    const [b] = await db
-      .insert(tracks)
-      .values({
+      playlistIds: [ownerPlaylistId]
+      });
+    const b = await seedTrack(db, {
         ownerId,
-        playlistId: ownerPlaylistId,
         title: "second",
-        position: 1,
         originalKey: "lib/reorder-b",
         uploadedBy: ownerId,
-      })
-      .returning();
+      playlistIds: [ownerPlaylistId]
+      });
 
     const res = await app.request(
       `/playlists/${ownerPlaylistId}/reorder`,
@@ -313,12 +306,11 @@ describe("the shared playlist-access gates resolve the locker", () => {
 
 describe("tracks under collaboration", () => {
   it("shows the owner's library to a collaborator", async () => {
-    await db.insert(tracks).values({
+    await seedTrack(db, {
       ownerId,
       title: "owner riff",
-      position: 0,
       originalKey: "lib/owner-riff",
-      uploadedBy: ownerId,
+      uploadedBy: ownerId
     });
 
     const res = await app.request("/tracks", { headers: auth(collabToken) }, env);
@@ -333,52 +325,46 @@ describe("tracks under collaboration", () => {
     expect(body.tracks).toHaveLength(0);
   });
 
-  it("lets a collaborator move an owner's track between playlists", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+  it("lets a collaborator add an owner's library track to a playlist", async () => {
+    const tr = await seedTrack(db, {
         ownerId,
         title: "movable",
-        position: 0,
         originalKey: "lib/movable",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
 
     const res = await app.request(
-      `/tracks/${tr.id}`,
+      `/playlists/${ownerPlaylistId}/tracks`,
       {
-        method: "PATCH",
+        method: "POST",
         headers: { ...auth(collabToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ playlistId: ownerPlaylistId }),
+        body: JSON.stringify({ trackId: tr.id }),
       },
       env
     );
     expect(res.status).toBe(200);
+    expect(await positionIn(db, ownerPlaylistId, tr.id)).not.toBeNull();
   });
 
-  it("404s a stranger moving the same track", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+  it("404s a stranger adding the same track", async () => {
+    const tr = await seedTrack(db, {
         ownerId,
         title: "not yours",
-        position: 0,
         originalKey: "lib/not-yours",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
 
     const res = await app.request(
-      `/tracks/${tr.id}`,
+      `/playlists/${ownerPlaylistId}/tracks`,
       {
-        method: "PATCH",
+        method: "POST",
         headers: { ...auth(strangerToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ playlistId: null }),
+        body: JSON.stringify({ trackId: tr.id }),
       },
       env
     );
     expect(res.status).toBe(404);
+    expect(await positionIn(db, ownerPlaylistId, tr.id)).toBeNull();
   });
 
   it("attributes a collaborator's upload to them, in the owner's locker", async () => {
@@ -769,16 +755,12 @@ describe("createdBy is not exposed to any reader", () => {
 
 describe("comments on a library track under collaboration", () => {
   it("lets a collaborator read and post a comment on a library track", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "library comment target",
-        position: 0,
         originalKey: "lib/comment-target",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
 
     const getRes = await app.request(
       `/comments/track/${tr.id}`,
@@ -804,16 +786,12 @@ describe("comments on a library track under collaboration", () => {
   });
 
   it("still refuses a stranger reading or posting on the same library track", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "library comment target for stranger",
-        position: 0,
         originalKey: "lib/comment-target-stranger",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
 
     const getRes = await app.request(
       `/comments/track/${tr.id}`,
@@ -1080,16 +1058,12 @@ describe("delete is limited to what you created", () => {
     await bucket.put("lib/precious", Buffer.from("MASTER"), {
       httpMetadata: { contentType: "audio/wav" },
     });
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "owner master",
-        position: 0,
         originalKey: "lib/precious",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
 
     const res = await app.request(
       `/tracks/${tr.id}`,
@@ -1112,15 +1086,11 @@ describe("delete is limited to what you created", () => {
     await bucket.put("lib/unattributed", Buffer.from("MASTER"), {
       httpMetadata: { contentType: "audio/wav" },
     });
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "unattributed master",
-        position: 0,
-        originalKey: "lib/unattributed",
-      })
-      .returning();
+        originalKey: "lib/unattributed"
+      });
     expect(tr.uploadedBy).toBeNull();
 
     const res = await app.request(
@@ -1136,16 +1106,12 @@ describe("delete is limited to what you created", () => {
   });
 
   it("lets a collaborator delete a track they uploaded themselves", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "collab master",
-        position: 0,
         originalKey: "lib/collab-own",
-        uploadedBy: collabId,
-      })
-      .returning();
+        uploadedBy: collabId
+      });
 
     const res = await app.request(
       `/tracks/${tr.id}`,
@@ -1158,16 +1124,12 @@ describe("delete is limited to what you created", () => {
   });
 
   it("lets the owner delete a collaborator's track", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "collab upload, owner deletes",
-        position: 0,
         originalKey: "lib/owner-can",
-        uploadedBy: collabId,
-      })
-      .returning();
+        uploadedBy: collabId
+      });
 
     const res = await app.request(
       `/tracks/${tr.id}`,
@@ -1180,16 +1142,12 @@ describe("delete is limited to what you created", () => {
   });
 
   it("still refuses a stranger, without disclosing that the track exists", async () => {
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "not the stranger's business",
-        position: 0,
         originalKey: "lib/stranger-cannot",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
 
     const res = await app.request(
       `/tracks/${tr.id}`,
@@ -1472,16 +1430,12 @@ describe("comment moderation under collaboration", () => {
   // owner — could ever moderate. Both routes now fall back to the track's
   // locker the same way POST does.
   it("lets a locker member moderate a comment on a library track in no playlist", async () => {
-    const [track] = await db
-      .insert(tracks)
-      .values({
+    const track = await seedTrack(db, {
         ownerId,
         title: "library moderation target",
-        position: 0,
         originalKey: "lib/moderation-target",
-        uploadedBy: ownerId,
-      })
-      .returning();
+        uploadedBy: ownerId
+      });
     const [comment] = await db
       .insert(comments)
       .values({ trackId: track.id, authorName: "Listener", body: "library note" })

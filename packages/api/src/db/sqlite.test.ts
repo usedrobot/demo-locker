@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { createSqliteDb } from "./sqlite.js";
 import { users, playlists, tracks, collaboratorInvites } from "./schema.js";
+import { seedTrack } from "../test/seed.js";
 
 describe("createSqliteDb", () => {
   it("migrates and round-trips a row with generated id and Date timestamp", async () => {
@@ -47,15 +48,12 @@ describe("collaboration schema", () => {
       .insert(playlists)
       .values({ ownerId: owner.id, name: "demos", createdBy: collab.id })
       .returning();
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId: owner.id,
         title: "riff",
         originalKey: "k",
-        uploadedBy: collab.id,
-      })
-      .returning();
+        uploadedBy: collab.id
+      });
 
     await db.delete(users).where(eq(users.id, collab.id));
 

@@ -7,6 +7,7 @@ import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
 import { createFsBucket } from "../lib/storage-fs.js";
 import { users, playlists, tracks, sessions } from "../db/schema.js";
+import { seedTrack } from "../test/seed.js";
 
 let db: Database;
 let root: string;
@@ -45,14 +46,8 @@ beforeAll(async () => {
     httpMetadata: { contentType: "audio/wav" },
   });
   await bucket.put("k-priv", Buffer.from("0123456789"));
-  const [tPub] = await db
-    .insert(tracks)
-    .values({ playlistId: publicId, ownerId: user.id, title: "pub track", position: 0, originalKey: "k-pub", streamKey: "k-pub", duration: 1.5 })
-    .returning();
-  const [tPriv] = await db
-    .insert(tracks)
-    .values({ playlistId: privateId, ownerId: user.id, title: "priv track", position: 0, originalKey: "k-priv", streamKey: "k-priv" })
-    .returning();
+  const tPub = await seedTrack(db, { ownerId: user.id, title: "pub track", originalKey: "k-pub", streamKey: "k-pub", duration: 1.5, playlistIds: [publicId] });
+  const tPriv = await seedTrack(db, { ownerId: user.id, title: "priv track", originalKey: "k-priv", streamKey: "k-priv", playlistIds: [privateId] });
   publicTrackId = tPub.id;
   privateTrackId = tPriv.id;
 

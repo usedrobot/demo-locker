@@ -25,10 +25,8 @@ const REFUSED: DisplayNames = { allowed: false, byId: new Map([["u-jimmy", "Jimm
 const trackRow = (over: Partial<TrackRow> = {}): TrackRow =>
   ({
     id: "t-1",
-    playlistId: null,
     ownerId: "u-owner",
     title: "a demo",
-    position: 1,
     originalKey: "k",
     streamKey: null,
     waveformData: null,

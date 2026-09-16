@@ -21,6 +21,7 @@ import {
   shares,
   comments,
 } from "../db/schema.js";
+import { seedTrack } from "../test/seed.js";
 
 let db: Database;
 let root: string;
@@ -159,16 +160,12 @@ describe("DELETE /collab/members/:id", () => {
       .insert(users)
       .values({ email: "leaving@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
       .returning();
-    const [tr] = await db
-      .insert(tracks)
-      .values({
+    const tr = await seedTrack(db, {
         ownerId,
         title: "left behind",
-        position: 0,
         originalKey: "lib/left-behind",
-        uploadedBy: gone.id,
-      })
-      .returning();
+        uploadedBy: gone.id
+      });
 
     const res = await app.request(
       `/collab/members/${gone.id}`,
@@ -223,10 +220,7 @@ describe("DELETE /collab/members/:id", () => {
       .insert(users)
       .values({ email: "resolver@test.dev", passwordHash: "x", lockerOwnerId: ownerId })
       .returning();
-    const [tr] = await db
-      .insert(tracks)
-      .values({ ownerId, title: "resolved", position: 0, originalKey: "lib/resolved" })
-      .returning();
+    const tr = await seedTrack(db, { ownerId, title: "resolved", originalKey: "lib/resolved" });
     const [comment] = await db
       .insert(comments)
       .values({
@@ -607,15 +601,11 @@ describe("bindToLocker", () => {
       .insert(users)
       .values({ email: "incumbent@test.dev", passwordHash: "x" })
       .returning();
-    await db
-      .insert(tracks)
-      .values({
+    await seedTrack(db, {
         ownerId: incumbent.id,
         title: "their own record",
-        position: 0,
-        originalKey: "lib/their-own",
-      })
-      .returning();
+        originalKey: "lib/their-own"
+      });
 
     await expect(bindToLocker(db, incumbent.id, ownerId)).rejects.toThrow(
       /already owns library rows/

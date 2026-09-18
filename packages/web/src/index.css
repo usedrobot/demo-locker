@@ -458,6 +458,22 @@ button:active {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.player-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--fg-dim);
+  font-size: 12px;
+  flex: none;
+}
+.player-volume input[type="range"] {
+  width: 72px;
+  height: 2px;
+  margin: 0;
+  accent-color: var(--accent);
+  background: var(--border);
+  cursor: pointer;
+}
 
 /* comment markers */
 .player-marker {
@@ -593,6 +609,11 @@ button:active {
   .player-title {
     font-size: 12px;
     margin-left: 0.25rem;
+  }
+  /* The controls row is already tight on a phone; the level is still
+     reachable from the hardware keys. */
+  .player-volume {
+    display: none;
   }
   .player-time {
     font-size: 11px;

@@ -129,6 +129,27 @@ export const playlistTracks = sqliteTable(
   ]
 );
 
+// One row per play start, written by the client when playback of a track
+// actually begins (see routes/tracks.ts POST /:id/plays and the public
+// twin). Every listener counts, the owner included — no dedupe. playlistId is
+// the playlist the queue was playing from, or null for the library; it is
+// only recorded when the track is actually in that playlist, so per-playlist
+// counts cannot be inflated by naming a playlist the listener never opened.
+// Deleting a track takes its plays; deleting a playlist keeps them as
+// library plays (SET NULL), so the track's total survives.
+export const plays = sqliteTable(
+  "plays",
+  {
+    id: text("id").primaryKey().$defaultFn(generateId),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    playlistId: text("playlist_id").references(() => playlists.id, { onDelete: "set null" }),
+    playedAt: integer("played_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  },
+  (t) => [index("plays_track_idx").on(t.trackId), index("plays_playlist_idx").on(t.playlistId)]
+);
+
 // Fixed-window counters for the auth routes. A table rather than a Workers
 // rate-limit binding because the same code runs on Node self-hosts, where no
 // such binding exists — and unauthenticated login was previously unmetered,

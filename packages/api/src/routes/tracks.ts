@@ -9,6 +9,7 @@ import {
   requestSessionUserId,
 } from "../lib/playlist-access.js";
 import { addTrackToPlaylist, playlistIdsForTracks } from "../lib/playlist-membership.js";
+import { recordPlay, playCountsForTracks } from "../lib/plays.js";
 import { lockerIdOf, lockerIdForUserId, isLockerOwner } from "../lib/locker.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { publicTrack, type TrackRow } from "../lib/public-track.js";
@@ -181,11 +182,38 @@ tracksRouter.get("/", requireAuth, async (c) => {
   // Which playlists each track is in, so the client can filter an add picker
   // and show membership without a request per track.
   const membership = await playlistIdsForTracks(db, rows.map((t: TrackRow) => t.id));
+  // Total plays per track, everywhere (lib/plays.ts).
+  const playCounts = await playCountsForTracks(db, rows.map((t: TrackRow) => t.id));
   return c.json({
     tracks: rows.map((t: TrackRow) =>
-      publicTrack(t, user.id, names, { playlistIds: membership.get(t.id) ?? [] })
+      publicTrack(t, user.id, names, {
+        playlistIds: membership.get(t.id) ?? [],
+        plays: playCounts.get(t.id) ?? 0,
+      })
     ),
   });
+});
+
+// Record a play. The client posts this once when playback of a track starts;
+// the stream route cannot count because <audio> issues many Range requests
+// per listen. Gated exactly like /stream: a locker session or a share token
+// for a playlist the track is in. Body: { playlistId?: string } — the
+// playlist the queue was playing from, or absent for the library. Public
+// playlists have an anonymous twin at /public/v1/tracks/:id/plays.
+tracksRouter.post("/:id/plays", async (c) => {
+  const trackId = c.req.param("id");
+  const db = getDb(c.env.DB);
+
+  const [track] = await db.select().from(tracks).where(eq(tracks.id, trackId)).limit(1);
+  if (!track) return c.json({ error: "not found" }, 404);
+  if (!(await requestCanAccessTrack(c, track))) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const playlistId = typeof body?.playlistId === "string" ? body.playlistId : null;
+  await recordPlay(db, trackId, playlistId);
+  return c.json({ ok: true }, 201);
 });
 
 // Stream a track from R2 — gated by any playlist the track is in, or by a

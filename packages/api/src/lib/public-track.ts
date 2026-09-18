@@ -109,9 +109,13 @@ export type PublicTrack = Omit<
   position?: number;
   // Present only in the library listing: every playlist this track is in.
   playlistIds?: string[];
+  // Context-dependent like the two above: in the library listing, total plays
+  // of this track everywhere; in a playlist listing, plays that came through
+  // THAT playlist. See lib/plays.ts.
+  plays?: number;
 };
 
-export type TrackExtras = { position?: number; playlistIds?: string[] };
+export type TrackExtras = { position?: number; playlistIds?: string[]; plays?: number };
 
 export function publicTrack(
   row: TrackRow,
@@ -147,5 +151,6 @@ export function publicTrack(
         : departedName,
     ...(extras.position !== undefined ? { position: extras.position } : {}),
     ...(extras.playlistIds !== undefined ? { playlistIds: extras.playlistIds } : {}),
+    ...(extras.plays !== undefined ? { plays: extras.plays } : {}),
   };
 }

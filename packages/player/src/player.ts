@@ -155,6 +155,9 @@ export class DemoLockerPlayer extends HTMLElement {
   private analyserFailed = false;
   private spectrumData: Uint8Array<ArrayBuffer> | null = null;
   private raf = 0;
+  // Track whose play is loaded but not yet reported; cleared by the first
+  // `playing` so pause/resume and the CORS-retry reload never count twice.
+  private unreportedTrackId: string | null = null;
 
   constructor() {
     super();
@@ -174,6 +177,7 @@ export class DemoLockerPlayer extends HTMLElement {
       this.stopSpectrum();
       this.render();
     });
+    this.audio.addEventListener("playing", () => this.reportPlay());
     this.audio.addEventListener("error", () => {
       if (this.audio.crossOrigin && this.audio.src) {
         this.audio.crossOrigin = null;
@@ -222,6 +226,24 @@ export class DemoLockerPlayer extends HTMLElement {
     return `${this.instance}/public/v1/tracks/${encodeURIComponent(trackId)}/stream`;
   }
 
+  // One POST per track start to the instance's public plays route, so the
+  // locker's counts include listeners on the embed. Fire and forget: a lost
+  // count is not worth a visible error in someone else's page.
+  private reportPlay() {
+    const trackId = this.unreportedTrackId;
+    if (!trackId || !this.data) return;
+    this.unreportedTrackId = null;
+    try {
+      fetch(`${this.instance}/public/v1/tracks/${encodeURIComponent(trackId)}/plays`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playlistId: this.data.id }),
+      }).catch(() => {});
+    } catch {
+      /* no fetch at all — nothing to report with */
+    }
+  }
+
   private play(index: number) {
     if (!this.data || !this.data.tracks[index]) return;
     if (this.current === index) {
@@ -234,6 +256,7 @@ export class DemoLockerPlayer extends HTMLElement {
     }
     this.current = index;
     this.audio.src = this.streamUrl(this.data.tracks[index].id);
+    this.unreportedTrackId = this.data.tracks[index].id;
     this.audio.play().catch(() => {
       /* autoplay blocked or load error — transport stays paused */
     });

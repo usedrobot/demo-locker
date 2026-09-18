@@ -314,6 +314,18 @@ export default function Player() {
             </span>
             <span className="player-title">♫ {state.track.title}</span>
             <Spectrum playing={state.playing} />
+            <label className="player-volume" title="Volume">
+              <span aria-hidden>{state.volume === 0 ? "🔇" : "🔊"}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={state.volume}
+                onChange={(e) => player.setVolume(Number(e.target.value))}
+                aria-label="Volume"
+              />
+            </label>
             <span className="player-time">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>

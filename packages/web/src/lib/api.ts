@@ -187,6 +187,9 @@ export type Track = {
   position?: number;
   // Only in the library listing: every playlist this track is in.
   playlistIds?: string[];
+  // Context-dependent like the two above: total plays in the library listing,
+  // plays through THIS playlist in a playlist listing. Absent on public views.
+  plays?: number;
   // The API deliberately does not expose originalKey/streamKey — they are
   // bucket coordinates, and handing them to clients gave anyone who kept a copy
   // a durable handle on the object. `hasStream` is all the UI ever read them
@@ -334,6 +337,13 @@ export const tracks = {
   },
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),
+  // One play, posted by lib/audio.ts when playback of a track starts.
+  // `playlistId` is the playlist the queue came from, or null for the library.
+  recordPlay: (id: string, playlistId: string | null) =>
+    request<{ ok: boolean }>(`/tracks/${id}/plays`, {
+      method: "POST",
+      body: JSON.stringify(playlistId ? { playlistId } : {}),
+    }),
 };
 
 // Comments

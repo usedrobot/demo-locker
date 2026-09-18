@@ -3,6 +3,7 @@ import type { Track } from "../lib/api";
 import { tracks as tracksApi, playlists as playlistsApi } from "../lib/api";
 import { player } from "../lib/audio";
 import Attribution from "./Attribution";
+import PlayCount from "./PlayCount";
 
 type Props = {
   tracks: Track[];
@@ -212,6 +213,9 @@ export default function TrackList({ tracks, playlistId, onReorder, onRemove, sel
                 processing...
               </span>
             )}
+
+            {/* Plays through this playlist (absent on the invite view) */}
+            <PlayCount count={track.plays} scope="playlist" />
 
             {/* Duration */}
             <span style={{ color: "var(--fg-dim)", fontSize: "12px", width: "5ch", textAlign: "right" }}>

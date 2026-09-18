@@ -18,6 +18,7 @@ import {
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
 import { publicTrack } from "../lib/public-track.js";
+import { playCountsInPlaylist } from "../lib/plays.js";
 import { publicPlaylist, type PlaylistRow } from "../lib/public-playlist.js";
 import { resolveDisplayNames } from "../lib/display-name.js";
 import {
@@ -120,10 +121,12 @@ playlistsRouter.get("/:id", async (c) => {
     playlist.createdBy,
     ...trackList.map((t: TrackInPlaylist) => t.uploadedBy),
   ]);
+  // Plays that came through THIS playlist, not the track's total.
+  const playCounts = await playCountsInPlaylist(db, id);
   return c.json({
     playlist: publicPlaylist(playlist, actingUserId, names),
     tracks: trackList.map((t: TrackInPlaylist) =>
-      publicTrack(t, actingUserId, names, { position: t.position })
+      publicTrack(t, actingUserId, names, { position: t.position, plays: playCounts.get(t.id) ?? 0 })
     ),
   });
 });

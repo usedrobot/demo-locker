@@ -6,6 +6,7 @@ import { eq, and, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { playlists, playlistTracks, tracks } from "../db/schema.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
+import { recordPlay } from "../lib/plays.js";
 import { INERT_CONTENT_HEADERS, safeImageType } from "../lib/media-type.js";
 import type { Env } from "../types.js";
 
@@ -94,6 +95,32 @@ publicRouter.get("/tracks/:id/stream", async (c) => {
   if (!row || !row.streamKey) return notFound(c);
 
   return buildStreamResponse(c.req.header("Range"), c.env.DEMOS_BUCKET, row.streamKey);
+});
+
+// Anonymous play record, the twin of POST /tracks/:id/plays for the share
+// page and the embed player. Same gate as the public stream: the track must
+// be in at least one public playlist. A playlistId is only attributed when it
+// names a PUBLIC playlist the track is in — naming a private one is not a way
+// to learn it exists, nor to inflate its count.
+publicRouter.post("/tracks/:id/plays", async (c) => {
+  const db = getDb(c.env.DB);
+  const id = c.req.param("id");
+
+  const publicPlaylistIds = (
+    await db
+      .select({ playlistId: playlists.id })
+      .from(playlistTracks)
+      .innerJoin(playlists, eq(playlistTracks.playlistId, playlists.id))
+      .where(and(eq(playlistTracks.trackId, id), eq(playlists.isPublic, true)))
+  ).map((r: { playlistId: string }) => r.playlistId);
+  if (publicPlaylistIds.length === 0) return notFound(c);
+
+  const body = await c.req.json().catch(() => ({}));
+  const requested = typeof body?.playlistId === "string" ? body.playlistId : null;
+  const playlistId = requested && publicPlaylistIds.includes(requested) ? requested : null;
+  await recordPlay(db, id, playlistId);
+  c.header("Cache-Control", "no-store");
+  return c.json({ ok: true }, 201);
 });
 
 export default publicRouter;

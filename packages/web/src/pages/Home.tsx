@@ -15,6 +15,7 @@ import { cycleAccent } from "../lib/theme";
 import Logo from "../components/Logo";
 import CollabPanel from "../components/CollabPanel";
 import Attribution from "../components/Attribution";
+import PlayCount from "../components/PlayCount";
 import Upload from "../components/Upload";
 import PendingTrackRow from "../components/PendingTrackRow";
 import { useUploadQueue } from "../lib/use-upload-queue";
@@ -823,6 +824,8 @@ export default function Home({ onSelect, onLogout }: Props) {
                     .join(" · ")}
                 </span>
               )}
+              {/* Total plays, every playlist and the library */}
+              <PlayCount count={t.plays} scope="library" />
               <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {formatDuration(t.duration)}
               </span>

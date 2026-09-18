@@ -9,6 +9,8 @@ type PlayerState = {
   playing: boolean;
   currentTime: number;
   duration: number;
+  // 0..1, persisted in localStorage so it survives a reload.
+  volume: number;
 };
 
 type Listener = (state: PlayerState) => void;
@@ -27,6 +29,30 @@ let playlistId: string | null = null;
 let currentIndex = -1;
 let listeners: Listener[] = [];
 
+const VOLUME_KEY = "playerVolume";
+
+function clampVolume(v: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(1, Math.max(0, v));
+}
+
+function storedVolume(): number {
+  try {
+    const raw = localStorage.getItem(VOLUME_KEY);
+    return raw == null ? 1 : clampVolume(Number(raw));
+  } catch {
+    return 1;
+  }
+}
+
+audio.volume = storedVolume();
+
+// Play reporting. The track whose play has been loaded but not yet reported;
+// cleared by the first `playing` event so a pause/resume of the same load
+// never counts twice. Set fresh on every playIndex, so the next track in the
+// queue (or the same track started over) reports again.
+let unreportedTrackId: string | null = null;
+
 function getState(): PlayerState {
   return {
     track: currentIndex >= 0 ? playlist[currentIndex] : null,
@@ -34,6 +60,7 @@ function getState(): PlayerState {
     playing: !audio.paused,
     currentTime: audio.currentTime,
     duration: audio.duration || 0,
+    volume: audio.volume,
   };
 }
 
@@ -45,6 +72,14 @@ function notify() {
 audio.addEventListener("timeupdate", notify);
 audio.addEventListener("play", notify);
 audio.addEventListener("pause", notify);
+audio.addEventListener("volumechange", notify);
+audio.addEventListener("playing", () => {
+  if (!unreportedTrackId) return;
+  const id = unreportedTrackId;
+  unreportedTrackId = null;
+  // Fire and forget: a lost count is not worth interrupting playback for.
+  tracksApi.recordPlay(id, playlistId).catch(() => {});
+});
 audio.addEventListener("ended", () => {
   // auto-advance
   if (currentIndex < playlist.length - 1) {
@@ -61,6 +96,7 @@ function playIndex(index: number) {
   if (!track.hasStream) return;
 
   audio.src = tracksApi.streamUrl(track.id);
+  unreportedTrackId = track.id;
   audio.play();
 }
 
@@ -112,12 +148,26 @@ export const player = {
     audio.currentTime = time;
   },
 
+  setVolume(v: number) {
+    const vol = clampVolume(v);
+    audio.volume = vol;
+    try {
+      localStorage.setItem(VOLUME_KEY, String(vol));
+    } catch {
+      // private mode / blocked storage: the level still applies for this page
+    }
+    // happy-dom and some browsers do not fire volumechange synchronously;
+    // subscribers want the new level now.
+    notify();
+  },
+
   // Stop playback and unload the current track (e.g. when it's deleted).
   clear() {
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
     currentIndex = -1;
+    unreportedTrackId = null;
     notify();
   },
 

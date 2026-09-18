@@ -247,6 +247,12 @@ dangerous — nothing breaks and nothing is exposed that was not before — but
 your playlists become unlimited for share links, and the number you chose now
 limits collaborators instead.
 
+## Migration 0008 (play counts)
+
+Additive: one new `plays` table, no rebuild, nothing carried across. The
+usual rule applies — apply the migration before deploying the worker. Counts
+start at zero; plays from before this release were never recorded.
+
 ## Special case: migration 0007 (tracks in multiple playlists)
 
 Migration 0007 moves playlist membership from `tracks.playlist_id` onto a

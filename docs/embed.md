@@ -97,6 +97,10 @@ Returns the artwork image directly (or 404 if there's none).
 
 Range-capable audio stream — point an `<audio>` element's `src` straight at it. Supports `Range` requests the same way the private stream endpoint does.
 
+`POST /public/v1/tracks/:id/plays`
+
+Body `{ "playlistId": "..." }` (optional). Records one play of a track that is in at least one public playlist; the locker owner sees it in their play counts, per playlist when `playlistId` names the public playlist it was played from. The component posts this once per track start. Not deduplicated: send it when playback begins, not on every `play` event, or resumes will count as plays.
+
 A few rules that matter if you're building against this directly:
 
 - **A playlist that isn't public and a playlist that doesn't exist return the same 404.** There's no way to distinguish "private" from "never existed" from the response. Don't build logic that depends on telling them apart.

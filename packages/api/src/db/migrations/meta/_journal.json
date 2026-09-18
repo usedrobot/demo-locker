@@ -57,6 +57,13 @@
       "when": 1789588123088,
       "tag": "0007_playlist_tracks",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789734270760,
+      "tag": "0008_plays",
+      "breakpoints": true
     }
   ]
 }

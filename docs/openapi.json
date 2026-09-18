@@ -200,6 +200,10 @@
               "format": "uuid"
             },
             "description": "Only in GET /tracks: every playlist this track is in. Empty for a library-only track."
+          },
+          "plays": {
+            "type": "integer",
+            "description": "Context-dependent like position and playlistIds. In the library listing (GET /tracks): total plays of this track through every playlist and the library. In a playlist listing (GET /playlists/{id}): plays that came through THAT playlist only. Absent on public and invite listings. A play is one POST to /tracks/{id}/plays or /public/v1/tracks/{id}/plays; every listener counts, the owner included."
           }
         },
         "required": [
@@ -3343,6 +3347,121 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/tracks/{id}/plays": {
+      "post": {
+        "summary": "Record a play of a track",
+        "description": "Called by a client once when playback of a track starts; the stream route cannot count because <audio> issues many Range requests per listen. Gated exactly like GET /tracks/{id}/stream: a locker session or a share token for a playlist the track is in. No dedupe: every call is one play.",
+        "operationId": "recordPlay",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "playlistId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The playlist the queue was playing from. Omit for the library. Only attributed when the track is in that playlist (and, on the public route, that playlist is public); otherwise recorded as a library play."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Play recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not reachable by the presented credentials. Indistinguishable by design."
+          }
+        }
+      }
+    },
+    "/public/v1/tracks/{id}/plays": {
+      "post": {
+        "summary": "Record a play of a track in a public playlist",
+        "description": "Unauthenticated twin of POST /tracks/{id}/plays for the share page and the embed player. The track must be in at least one playlist with isPublic true. A playlistId naming a private playlist is silently dropped (recorded as a library play), so the route discloses nothing about private playlists.",
+        "operationId": "recordPublicPlay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "playlistId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "The playlist the queue was playing from. Omit for the library. Only attributed when the track is in that playlist (and, on the public route, that playlist is public); otherwise recorded as a library play."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Play recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not reachable by the presented credentials. Indistinguishable by design."
           }
         }
       }

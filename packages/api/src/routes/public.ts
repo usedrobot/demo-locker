@@ -4,7 +4,7 @@
 import { Hono, type Context } from "hono";
 import { eq, and, asc } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { playlists, playlistTracks, tracks } from "../db/schema.js";
+import { playlists, playlistTracks, tracks, users } from "../db/schema.js";
 import { buildStreamResponse } from "../lib/stream-response.js";
 import { recordPlay } from "../lib/plays.js";
 import { INERT_CONTENT_HEADERS, safeImageType } from "../lib/media-type.js";
@@ -43,12 +43,25 @@ publicRouter.get("/playlists/:id", async (c) => {
     .where(eq(playlistTracks.playlistId, id))
     .orderBy(asc(playlistTracks.position));
 
+  // Same fallback as the share-link view: the playlist's own colour, else the
+  // owner's account colour for a playlist predating per-playlist accents.
+  let accent = playlist.accent;
+  if (!accent) {
+    const [owner] = await db
+      .select({ accent: users.accent })
+      .from(users)
+      .where(eq(users.id, playlist.ownerId))
+      .limit(1);
+    accent = owner?.accent ?? null;
+  }
+
   c.header("Cache-Control", "public, max-age=60");
   return c.json({
     playlist: {
       id: playlist.id,
       name: playlist.name,
       artworkUrl: playlist.artworkKey ? `/public/v1/playlists/${playlist.id}/artwork` : null,
+      accent,
       tracks: trackRows,
     },
   });

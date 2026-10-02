@@ -50,13 +50,15 @@ The player ships with the same TUI look as the rest of Demo Locker — dark, mon
 --dl-padding: 12px;        /* internal spacing */
 ```
 
-Set any of these on the element itself (or an ancestor, since custom properties inherit):
+Set any of these on the element itself:
 
 ```css
 demo-locker-player {
   --dl-accent: hotpink;
 }
 ```
+
+**Accent default.** Unless you set `--dl-accent` yourself, the player uses the playlist's accent colour from the locker (the owner's account colour for older playlists without one), falling back to gold. Your page's CSS on the element always wins over that default.
 
 For changes that go past color and spacing — swapping out layout, hiding elements, adding your own decoration — the internal structure is exposed via `::part()`. The available parts: `header`, `artwork`, `title`, `transport`, `button`, `seek`, `time`, `tracklist`, `track`, `status`, `footer`.
 

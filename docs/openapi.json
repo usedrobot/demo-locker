@@ -2809,6 +2809,23 @@
                           ],
                           "description": "Relative URL to GET /public/v1/playlists/{id}/artwork, or null if no artwork is set."
                         },
+                        "accent": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "enum": [
+                            "#fc0",
+                            "#f80",
+                            "#4af",
+                            "#3f6",
+                            "#f6a",
+                            "#a6f",
+                            "#6cf",
+                            null
+                          ],
+                          "description": "The playlist's accent colour, or its owner's account accent for a playlist without one; null when neither is set. The embed player uses it as its default --dl-accent."
+                        },
                         "tracks": {
                           "type": "array",
                           "items": {

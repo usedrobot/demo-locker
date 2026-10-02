@@ -17,8 +17,23 @@ type PlaylistData = {
   id: string;
   name: string;
   artworkUrl: string | null;
+  // The playlist's accent (or its owner's), from instances that send one.
+  accent?: string | null;
   tracks: Track[];
 };
+
+/**
+ * The playlist's accent as the DEFAULT --dl-accent, layered after STYLES. A
+ * later :host rule beats the earlier one, but any rule the host page sets on
+ * the element still beats both, so a site that themes the player keeps its
+ * own colour. Checked as a plain hex colour because it is written into a
+ * stylesheet and this player can be pointed at any instance.
+ */
+function accentRule(accent: string | null | undefined): string {
+  return accent && /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(accent)
+    ? `:host { --dl-accent: ${accent}; }`
+    : "";
+}
 
 // Origin of the script that loaded us — the default instance.
 const SCRIPT_ORIGIN = (() => {
@@ -435,7 +450,7 @@ export class DemoLockerPlayer extends HTMLElement {
     const nowTitle = this.current >= 0 ? this.data.tracks[this.current]?.title : null;
 
     this.shadow.innerHTML = `
-      <style>${STYLES}</style>
+      <style>${STYLES}${accentRule(this.data.accent)}</style>
       <div class="header" part="header">
         <div class="artwork-slot"></div>
         <div class="title" part="title"></div>

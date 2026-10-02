@@ -161,3 +161,29 @@ describe("public API boundary", () => {
     expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
   });
 });
+
+describe("public playlist accent (what the embed themes from)", () => {
+  async function accentOf(id: string) {
+    const res = await app.request(`/public/v1/playlists/${id}`, {}, env);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { playlist: { accent: string | null } }).playlist.accent;
+  }
+
+  it("carries the playlist's own accent", async () => {
+    const [owner] = await db.insert(users).values({ email: "acc1@test.dev", passwordHash: "x", accent: "#4af" }).returning();
+    const [p] = await db.insert(playlists).values({ ownerId: owner.id, name: "pink", isPublic: true, accent: "#f6a" }).returning();
+    expect(await accentOf(p.id)).toBe("#f6a");
+  });
+
+  it("falls back to the owner's accent for a playlist without one", async () => {
+    const [owner] = await db.insert(users).values({ email: "acc2@test.dev", passwordHash: "x", accent: "#4af" }).returning();
+    const [p] = await db.insert(playlists).values({ ownerId: owner.id, name: "old", isPublic: true }).returning();
+    expect(await accentOf(p.id)).toBe("#4af");
+  });
+
+  it("is null when neither has one", async () => {
+    const [owner] = await db.insert(users).values({ email: "acc3@test.dev", passwordHash: "x" }).returning();
+    const [p] = await db.insert(playlists).values({ ownerId: owner.id, name: "plain", isPublic: true }).returning();
+    expect(await accentOf(p.id)).toBeNull();
+  });
+});

@@ -117,3 +117,39 @@ describe("play reporting", () => {
     expect(() => audioOf(el).dispatchEvent(new Event("playing"))).not.toThrow();
   });
 });
+
+// The playlist's accent becomes the embed's DEFAULT --dl-accent: a rule layered
+// after the base styles, so the host page's own CSS on the element still wins.
+// The value lands in a stylesheet, so anything that is not a plain hex colour
+// is dropped rather than written.
+describe("playlist accent", () => {
+  function styleWith(accent: unknown): string {
+    const el = document.createElement("demo-locker-player") as InstanceType<typeof DemoLockerPlayer>;
+    document.body.appendChild(el);
+    (el as unknown as { data: unknown }).data = {
+      id: "p1",
+      name: "Test",
+      accent,
+      tracks: [{ id: "t1", title: "One", duration: 10 }],
+    };
+    (el as unknown as { render: () => void }).render();
+    const css = el.shadowRoot!.querySelector("style")!.textContent ?? "";
+    el.remove();
+    return css;
+  }
+
+  test("a playlist accent is layered after the gold default", () => {
+    const css = styleWith("#f6a");
+    expect(css).toContain(":host { --dl-accent: #f6a; }");
+    expect(css.indexOf("--dl-accent: #f6a")).toBeGreaterThan(css.indexOf("--dl-accent: #fc0"));
+  });
+
+  test("no accent leaves the default alone", () => {
+    expect(styleWith(null)).not.toMatch(/--dl-accent: (?!#fc0)/);
+  });
+
+  test("a value that is not a hex colour never reaches the stylesheet", () => {
+    const css = styleWith("red; } * { background: url(https://evil.test/x) } :host {");
+    expect(css).not.toContain("evil.test");
+  });
+});

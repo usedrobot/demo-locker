@@ -18,6 +18,7 @@ import {
 import { getLimits, isLimited, MAX_ARTWORK_BYTES } from "../lib/limits.js";
 import { lockerIdOf, isLockerOwner } from "../lib/locker.js";
 import { publicTrack } from "../lib/public-track.js";
+import { isValidAccent, randomAccent } from "../lib/accent.js";
 import { playCountsInPlaylist } from "../lib/plays.js";
 import { publicPlaylist, type PlaylistRow } from "../lib/public-playlist.js";
 import { resolveDisplayNames } from "../lib/display-name.js";
@@ -79,7 +80,7 @@ playlistsRouter.post("/", requireAuth, async (c) => {
 
   const [playlist] = await db
     .insert(playlists)
-    .values({ name, ownerId: lockerId, createdBy: user.id })
+    .values({ name, ownerId: lockerId, createdBy: user.id, accent: randomAccent() })
     .returning();
 
   const names = await resolveDisplayNames(db, user.id, lockerId, [playlist.createdBy]);
@@ -150,6 +151,15 @@ playlistsRouter.patch("/:id", requireAuth, async (c) => {
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name) updates.name = body.name;
+  // Any locker member may recolour a playlist, as with renaming it. Checked
+  // against the palette: the value is replayed into a CSS custom property on
+  // every listener's page (lib/accent.ts).
+  if (body.accent !== undefined) {
+    if (!isValidAccent(body.accent)) {
+      return c.json({ error: "unsupported accent" }, 400);
+    }
+    updates.accent = body.accent;
+  }
   // Publishing is a locker-level decision, not library work: it puts the
   // playlist on the open web via /public/v1 and the embed. Only the owner may
   // change it — in EITHER direction. A non-owner attempting a real change is

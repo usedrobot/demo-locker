@@ -8,6 +8,9 @@ import { describe, it, expect, beforeAll } from "vitest";
 import app from "../index.js";
 import { setDbFactory, type Database } from "../db/index.js";
 import { createSqliteDb } from "../db/sqlite.js";
+import { eq } from "drizzle-orm";
+import { playlists } from "../db/schema.js";
+import { ACCENTS } from "../lib/accent.js";
 
 let db: Database;
 let env: Record<string, unknown>;
@@ -141,7 +144,9 @@ describe("POST /auth/accent", () => {
 });
 
 describe("GET /shares/invite/:token", () => {
-  it("hands the owner's accent to an unauthenticated listener", async () => {
+  it("hands the owner's accent to an unauthenticated listener when the playlist has none", async () => {
+    // A playlist predating per-playlist accents.
+    await db.update(playlists).set({ accent: null }).where(eq(playlists.id, playlistId));
     // No Authorization header — this is the whole point of storing it server-side.
     const res = await app.request(`/shares/invite/${shareToken}`, {}, env);
     expect(res.status).toBe(200);
@@ -149,7 +154,7 @@ describe("GET /shares/invite/:token", () => {
     expect(body.accent).toBe(GREEN);
   });
 
-  it("returns null rather than a default when the owner never picked one", async () => {
+  it("returns null rather than a default when neither the playlist nor the owner has one", async () => {
     const signup = await app.request(
       "/auth/signup",
       {
@@ -171,6 +176,7 @@ describe("GET /shares/invite/:token", () => {
       env,
     );
     const plainPlaylistId = ((await playlist.json()) as { playlist: { id: string } }).playlist.id;
+    await db.update(playlists).set({ accent: null }).where(eq(playlists.id, plainPlaylistId));
 
     const share = await app.request(
       "/shares",
@@ -186,5 +192,60 @@ describe("GET /shares/invite/:token", () => {
     const res = await app.request(`/shares/invite/${plainShareToken}`, {}, env);
     const body = (await res.json()) as { accent: string | null };
     expect(body.accent).toBeNull();
+  });
+});
+
+describe("playlist accent", () => {
+  function patchPlaylist(body: unknown) {
+    return app.request(
+      `/playlists/${playlistId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      },
+      env,
+    );
+  }
+
+  it("a new playlist starts with a palette accent, and not always the same one", async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const res = await app.request(
+        "/playlists",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name: `random ${i}` }),
+        },
+        env,
+      );
+      const { playlist } = (await res.json()) as { playlist: { accent: string } };
+      expect(ACCENTS).toContain(playlist.accent);
+      seen.add(playlist.accent);
+    }
+    // 30 draws from 7 colours landing on one is (1/7)^29 — not a flake.
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("is changed by PATCH, persists, and wins over the owner's on a share link", async () => {
+    const PINK = "#f6a";
+    const res = await patchPlaylist({ accent: PINK });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { playlist: { accent: string } }).playlist.accent).toBe(PINK);
+
+    const get = await app.request(`/playlists/${playlistId}`, { headers: { Authorization: `Bearer ${token}` } }, env);
+    expect(((await get.json()) as { playlist: { accent: string } }).playlist.accent).toBe(PINK);
+
+    const invite = await app.request(`/shares/invite/${shareToken}`, {}, env);
+    expect(((await invite.json()) as { accent: string }).accent).toBe(PINK);
+  });
+
+  it("rejects a colour outside the palette or a CSS injection, and stores nothing", async () => {
+    expect((await patchPlaylist({ accent: "#123456" })).status).toBe(400);
+    expect((await patchPlaylist({ accent: "red; background: url(https://evil.test/x)" })).status).toBe(400);
+    expect((await patchPlaylist({ accent: null })).status).toBe(400);
+    const [row] = await db.select().from(playlists).where(eq(playlists.id, playlistId));
+    expect(ACCENTS).toContain(row.accent);
   });
 });

@@ -247,6 +247,13 @@ dangerous — nothing breaks and nothing is exposed that was not before — but
 your playlists become unlimited for share links, and the number you chose now
 limits collaborators instead.
 
+## Migration 0009 (playlist accent)
+
+Additive: one nullable `accent` column on `playlists`, no rebuild. Apply it
+before deploying the worker. Existing playlists stay null and keep showing the
+owner's account accent until someone changes theirs; new playlists get a
+random accent from the palette.
+
 ## Migration 0008 (play counts)
 
 Additive: one new `plays` table, no rebuild, nothing carried across. The

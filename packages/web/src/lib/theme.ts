@@ -39,9 +39,15 @@ export function setAccent(hex: string) {
   applyAccent(hex);
 }
 
+// The colour after `hex` in the palette, wrapping. Shared by the account
+// swatch and the per-playlist one so both step through the same order.
+export function nextAccent(hex: string): string {
+  const idx = ACCENTS.indexOf(hex);
+  return ACCENTS[(idx + 1) % ACCENTS.length];
+}
+
 export function cycleAccent(): string {
-  const idx = ACCENTS.indexOf(getAccent());
-  const next = ACCENTS[(idx + 1) % ACCENTS.length];
+  const next = nextAccent(getAccent());
   setAccent(next);
   return next;
 }

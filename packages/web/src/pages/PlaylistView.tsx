@@ -8,6 +8,7 @@ import {
   type Track,
 } from "../lib/api";
 import { player } from "../lib/audio";
+import { getAccent, nextAccent, previewAccent } from "../lib/theme";
 import TrackList from "../components/TrackList";
 import Comments from "../components/Comments";
 import SharePanel from "../components/SharePanel";
@@ -234,6 +235,29 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
     }
   }
 
+  // Show this playlist in its own colour for as long as it is open, without
+  // touching the account accent — leaving restores whatever was there. A
+  // playlist with no accent of its own (predating them) leaves it alone.
+  const playlistAccent = playlist?.accent ?? null;
+  useEffect(() => previewAccent(playlistAccent), [playlistAccent]);
+
+  // Same click-to-cycle as the account swatch on Home. Optimistic: the colour
+  // changes at once, and a refused write puts the old one back and says why.
+  async function cycleAccent() {
+    if (!playlist) return;
+    const before = playlist.accent ?? null;
+    const next = nextAccent(before ?? getAccent());
+    setPlaylist({ ...playlist, accent: next });
+    try {
+      const r = await api.update(playlist.id, { accent: next });
+      setPlaylist(r.playlist);
+      setWriteError("");
+    } catch (err) {
+      setPlaylist((p) => (p ? { ...p, accent: before } : p));
+      setWriteError(err instanceof Error ? err.message : "couldn't change that colour");
+    }
+  }
+
   async function togglePublic() {
     if (!playlist) return;
     try {
@@ -388,6 +412,22 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
               >
                 [+ add tracks]
               </button>
+            )}
+            {canManage && (
+              <button
+                onClick={cycleAccent}
+                title="Change this playlist's color"
+                aria-label="Change this playlist's color"
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  alignSelf: "center",
+                  background: "var(--accent)",
+                  border: "1px solid var(--border)",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              />
             )}
           </div>
           {renameError && (

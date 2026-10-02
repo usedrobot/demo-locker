@@ -134,6 +134,23 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "accent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "This playlist's accent colour, one of the shipped palette (#fc0, #f80, #4af, #3f6, #f6a, #a6f, #6cf). Random on create; null on playlists predating it, which show the owner's account accent.",
+            "enum": [
+              "#fc0",
+              "#f80",
+              "#4af",
+              "#3f6",
+              "#f6a",
+              "#a6f",
+              "#6cf",
+              null
+            ]
           }
         },
         "required": [
@@ -925,7 +942,8 @@
               }
             }
           }
-        }
+        },
+        "description": "The new playlist gets a random accent from the palette."
       }
     },
     "/playlists/{id}": {
@@ -1001,7 +1019,7 @@
       },
       "patch": {
         "summary": "Update a playlist",
-        "description": "Requires a session in the playlist's locker: the owner or one of their collaborators may rename it. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1). isPublic is the locker owner's to change — a collaborator changing it in either direction is refused with 403.",
+        "description": "Requires a session in the playlist's locker: the owner or one of their collaborators may rename it. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1). isPublic is the locker owner's to change — a collaborator changing it in either direction is refused with 403. accent recolours the playlist; any locker member may change it, and a value outside the palette is refused with 400.",
         "operationId": "updatePlaylist",
         "security": [
           {
@@ -1038,6 +1056,10 @@
                   "isPublic": {
                     "type": "boolean",
                     "description": "When true, the playlist becomes readable anonymously via /public/v1/playlists/{id}."
+                  },
+                  "accent": {
+                    "type": "string",
+                    "description": "One of the palette colours; anything else is 400. Any locker member may change it."
                   }
                 }
               }
@@ -2709,7 +2731,7 @@
                         "#6cf",
                         null
                       ],
-                      "description": "The playlist owner's accent colour, so a shared locker keeps its colours for listeners. Null when the owner never set one."
+                      "description": "The playlist's own accent, or the owner's account accent for a playlist predating per-playlist accents. Null when neither was ever set."
                     }
                   },
                   "required": [

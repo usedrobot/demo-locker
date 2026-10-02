@@ -294,7 +294,9 @@ sharesRouter.get("/invite/:token", async (c) => {
     tracks: trackList.map((t: TrackInPlaylist) =>
       publicTrack(t, actingUserId, names, { position: t.position })
     ),
-    accent: owner?.accent ?? null,
+    // The playlist's own colour wins; older playlists without one fall back
+    // to the owner's.
+    accent: playlist.accent ?? owner?.accent ?? null,
   });
 });
 

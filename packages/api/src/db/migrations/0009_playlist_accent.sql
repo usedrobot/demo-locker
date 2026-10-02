@@ -1,0 +1,1 @@
+ALTER TABLE `playlists` ADD `accent` text;

@@ -325,6 +325,28 @@ describe("tracks under collaboration", () => {
     expect(body.tracks).toHaveLength(0);
   });
 
+  it("lets a collaborator rename an owner's track", async () => {
+    const tr = await seedTrack(db, {
+      ownerId,
+      title: "working title",
+      originalKey: "lib/working-title",
+      uploadedBy: ownerId
+    });
+
+    const res = await app.request(
+      `/tracks/${tr.id}`,
+      {
+        method: "PATCH",
+        headers: { ...auth(collabToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "final title" }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { track: { title: string } };
+    expect(body.track.title).toBe("final title");
+  });
+
   it("lets a collaborator add an owner's library track to a playlist", async () => {
     const tr = await seedTrack(db, {
         ownerId,

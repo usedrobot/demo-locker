@@ -26,6 +26,7 @@ vi.mock("../lib/api", () => ({
   tracks: {
     list: vi.fn(async () => ({ tracks: [] })),
     delete: vi.fn(async () => ({})),
+    rename: vi.fn(),
   },
   shares: {
     listAll: vi.fn(async () => ({ shares: [] })),
@@ -60,6 +61,7 @@ vi.mock("../lib/audio", () => ({
     play: vi.fn(),
     toggle: vi.fn(),
     clear: vi.fn(),
+    updateTrack: vi.fn(),
   },
 }));
 
@@ -92,6 +94,7 @@ import type { Share } from "../lib/api";
 const listPlaylistsMock = vi.mocked(playlistsApi.list);
 const listTracksMock = vi.mocked(tracksApi.list);
 const deleteTrackMock = vi.mocked(tracksApi.delete);
+const renameTrackMock = vi.mocked(tracksApi.rename);
 const listSharesMock = vi.mocked(sharesApi.listAll);
 const meMock = vi.mocked(auth.me);
 
@@ -978,5 +981,75 @@ describe("Home — library rows show playlist membership", () => {
     expect(twoHomes!.textContent).toContain("for the label");
     expect(loose!.textContent).not.toContain("reel");
     expect(loose!.textContent).not.toContain("for the label");
+  });
+});
+
+describe("Home — renaming a track", () => {
+  beforeEach(() => {
+    listPlaylistsMock.mockReset();
+    listPlaylistsMock.mockResolvedValue({ playlists: [] });
+    listTracksMock.mockReset();
+    listTracksMock.mockResolvedValue({ tracks: [track({ id: "t-1", title: "Midnight Under the Palms" })] });
+    renameTrackMock.mockReset();
+    meMock.mockReset();
+    meMock.mockResolvedValue({ user: COLLABORATOR });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  function renameButton() {
+    return container.querySelector<HTMLButtonElement>('button[aria-label^="Rename "]');
+  }
+  function renameInput() {
+    return container.querySelector<HTMLInputElement>('input[aria-label^="rename "]');
+  }
+
+  it("offers [rename] even on a track someone else uploaded, and saves the trimmed title on Enter", async () => {
+    renameTrackMock.mockResolvedValue({ track: track({ id: "t-1", title: "Midnight (v2)" }) });
+    render();
+    await flush();
+    act(() => renameButton()!.click());
+    const input = renameInput()!;
+    expect(input.value).toBe("Midnight Under the Palms");
+    act(() => typeValue(input, "  Midnight (v2)  "));
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+    expect(renameTrackMock).toHaveBeenCalledTimes(1);
+    expect(renameTrackMock).toHaveBeenCalledWith("t-1", "Midnight (v2)");
+    expect(renameInput()).toBeNull();
+    expect(container.textContent).toContain("Midnight (v2)");
+  });
+
+  it("Escape discards the edit without saving", async () => {
+    render();
+    await flush();
+    act(() => renameButton()!.click());
+    const input = renameInput()!;
+    act(() => typeValue(input, "something else"));
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await flush();
+    expect(renameTrackMock).not.toHaveBeenCalled();
+    expect(renameInput()).toBeNull();
+    expect(container.textContent).toContain("Midnight Under the Palms");
+  });
+
+  it("a refused rename keeps the editor open with what was typed, and says why", async () => {
+    renameTrackMock.mockRejectedValue(new Error("not found"));
+    render();
+    await flush();
+    act(() => renameButton()!.click());
+    const input = renameInput()!;
+    act(() => typeValue(input, "new name"));
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+    expect(renameInput()!.value).toBe("new name");
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain("not found");
   });
 });

@@ -4,10 +4,9 @@ import { copyText } from "../lib/copy-text";
 
 type Props = {
   playlistId: string;
-  extraAction?: React.ReactNode;
 };
 
-export default function SharePanel({ playlistId, extraAction }: Props) {
+export default function SharePanel({ playlistId }: Props) {
   const [items, setItems] = useState<Share[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -333,7 +332,6 @@ export default function SharePanel({ playlistId, extraAction }: Props) {
         >
           {status}
         </span>
-        {extraAction}
       </div>
       {error && (
         // role="alert" (assertive), the companion to the role="status" above:

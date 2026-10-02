@@ -18,3 +18,9 @@ export const ACCENTS = [
 export function isValidAccent(value: unknown): value is string {
   return typeof value === "string" && ACCENTS.includes(value);
 }
+
+// A new playlist's starting colour, so a locker's playlists don't all open in
+// the same one.
+export function randomAccent(): string {
+  return ACCENTS[Math.floor(Math.random() * ACCENTS.length)];
+}

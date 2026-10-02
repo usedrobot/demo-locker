@@ -55,6 +55,10 @@ export const playlists = sqliteTable("playlists", {
   name: text("name").notNull(),
   artworkKey: text("artwork_key"),
   isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
+  // This playlist's accent colour, one of ACCENTS in lib/accent.ts. Picked at
+  // random on create; null on rows predating it, which fall back to the
+  // owner's account accent.
+  accent: text("accent"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   // Who created this playlist. Null on rows predating collaboration, and on

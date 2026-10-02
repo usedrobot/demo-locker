@@ -35,6 +35,15 @@ export default function Home({ onSelect, onLogout }: Props) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [library, setLibrary] = useState<Track[]>([]);
   const [confirmTrackDeleteId, setConfirmTrackDeleteId] = useState<string | null>(null);
+  // Inline track rename: one row at a time. The ref dedupes Enter followed by
+  // the blur that closing the editor causes, which would otherwise PATCH twice.
+  const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
+  const [trackTitleDraft, setTrackTitleDraft] = useState("");
+  const [trackRenameBusy, setTrackRenameBusy] = useState(false);
+  const trackRenameInFlightRef = useRef(false);
+  // Set whenever the editor closes on purpose, so a blur fired as the input
+  // unmounts is not taken for "clicked away, save this".
+  const trackRenameClosingRef = useRef(false);
   const [playerState, setPlayerState] = useState(player.getState());
   // bump to re-read the accent swatch color after a cycle
   const [, setAccentTick] = useState(0);
@@ -251,6 +260,43 @@ export default function Home({ onSelect, onLogout }: Props) {
     } finally {
       nameBusyRef.current = false;
       setNameBusy(false);
+    }
+  }
+
+  function startTrackRename(e: React.MouseEvent, t: Track) {
+    e.stopPropagation();
+    setTrackError("");
+    setTrackTitleDraft(t.title);
+    trackRenameClosingRef.current = false;
+    setRenamingTrackId(t.id);
+  }
+
+  function closeTrackRename() {
+    trackRenameClosingRef.current = true;
+    setRenamingTrackId(null);
+  }
+
+  async function commitTrackRename(t: Track) {
+    if (trackRenameInFlightRef.current || trackRenameClosingRef.current) return;
+    const next = trackTitleDraft.trim();
+    if (!next || next === t.title) {
+      closeTrackRename();
+      return;
+    }
+    trackRenameInFlightRef.current = true;
+    setTrackRenameBusy(true);
+    try {
+      const r = await tracksApi.rename(t.id, next);
+      setLibrary((lib) => lib.map((x) => (x.id === t.id ? { ...x, title: r.track.title } : x)));
+      player.updateTrack(t.id, { title: r.track.title });
+      closeTrackRename();
+      setTrackError("");
+    } catch (err) {
+      // Keep the editor open with what was typed, so a failure costs nothing.
+      setTrackError(err instanceof Error ? err.message : "couldn't rename that track");
+    } finally {
+      trackRenameInFlightRef.current = false;
+      setTrackRenameBusy(false);
     }
   }
 
@@ -792,18 +838,42 @@ export default function Home({ onSelect, onLogout }: Props) {
                   mouse users; stopPropagation keeps a click here from firing
                   both. minWidth:0 comes from the class — see the playlist row
                   above for why it matters. */}
-              <button
-                type="button"
-                className="row-title-btn"
-                aria-label={`${isPlaying ? "Pause" : "Play"} ${t.title}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  playLibraryTrack(t.id);
-                }}
-                style={{ color: isPlaying ? "var(--accent)" : "var(--fg)" }}
-              >
-                {t.title}
-              </button>
+              {renamingTrackId === t.id ? (
+                <input
+                  aria-label={`rename ${t.title}`}
+                  className="rename-input"
+                  autoFocus
+                  value={trackTitleDraft}
+                  // readOnly, not disabled, while saving: disabling blurs the
+                  // field, and that blur would re-enter commit.
+                  readOnly={trackRenameBusy}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setTrackTitleDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitTrackRename(t);
+                    if (e.key === "Escape" && !trackRenameInFlightRef.current) {
+                      closeTrackRename();
+                      setTrackError("");
+                    }
+                  }}
+                  // Clicking away keeps the edit rather than discarding it.
+                  onBlur={() => commitTrackRename(t)}
+                  style={{ fontSize: "16px" }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="row-title-btn"
+                  aria-label={`${isPlaying ? "Pause" : "Play"} ${t.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playLibraryTrack(t.id);
+                  }}
+                  style={{ color: isPlaying ? "var(--accent)" : "var(--fg)" }}
+                >
+                  {t.title}
+                </button>
+              )}
               <Attribution mine={t.uploadedByMe} name={t.uploadedByName} verb="Uploaded" />
               {/* Which playlists hold this track. Names, not ids; a library-only
                   track shows nothing rather than "0 playlists". */}
@@ -829,6 +899,18 @@ export default function Home({ onSelect, onLogout }: Props) {
               <span style={{ color: "var(--fg-dim)", fontSize: "12px", flex: "none" }}>
                 {formatDuration(t.duration)}
               </span>
+              {/* Any locker member may rename, as with playlists — a title is
+                  not destructive, so it is not gated like delete. */}
+              {renamingTrackId !== t.id && (
+                <button
+                  onClick={(e) => startTrackRename(e, t)}
+                  title="Rename this track"
+                  aria-label={`Rename ${t.title}`}
+                  style={linkStyle}
+                >
+                  [rename]
+                </button>
+              )}
               {/* `uploadedByMe || isOwner` — see lib/public-track.ts. The
                   server refuses a collaborator deleting someone else's upload,
                   so an ungated control was offered and then silently 404'd. */}

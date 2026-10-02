@@ -134,6 +134,23 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "accent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "This playlist's accent colour, one of the shipped palette (#fc0, #f80, #4af, #3f6, #f6a, #a6f, #6cf). Random on create; null on playlists predating it, which show the owner's account accent.",
+            "enum": [
+              "#fc0",
+              "#f80",
+              "#4af",
+              "#3f6",
+              "#f6a",
+              "#a6f",
+              "#6cf",
+              null
+            ]
           }
         },
         "required": [
@@ -925,7 +942,8 @@
               }
             }
           }
-        }
+        },
+        "description": "The new playlist gets a random accent from the palette."
       }
     },
     "/playlists/{id}": {
@@ -1001,7 +1019,7 @@
       },
       "patch": {
         "summary": "Update a playlist",
-        "description": "Requires a session in the playlist's locker: the owner or one of their collaborators may rename it. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1). isPublic is the locker owner's to change — a collaborator changing it in either direction is refused with 403.",
+        "description": "Requires a session in the playlist's locker: the owner or one of their collaborators may rename it. Accepts partial updates to name, artworkKey, and isPublic (toggles public read access via /public/v1). isPublic is the locker owner's to change — a collaborator changing it in either direction is refused with 403. accent recolours the playlist; any locker member may change it, and a value outside the palette is refused with 400.",
         "operationId": "updatePlaylist",
         "security": [
           {
@@ -1038,6 +1056,10 @@
                   "isPublic": {
                     "type": "boolean",
                     "description": "When true, the playlist becomes readable anonymously via /public/v1/playlists/{id}."
+                  },
+                  "accent": {
+                    "type": "string",
+                    "description": "One of the palette colours; anything else is 400. Any locker member may change it."
                   }
                 }
               }
@@ -1874,10 +1896,9 @@
     },
     "/tracks/{id}": {
       "patch": {
-        "summary": "Retired: moving a track between playlists",
-        "description": "Always 410. A track no longer belongs to one playlist. Add or remove membership with POST and DELETE /playlists/{id}/tracks.",
-        "operationId": "moveTrackRetired",
-        "deprecated": true,
+        "summary": "Rename a track",
+        "description": "Requires a session in the track's locker: the owner or any of their collaborators may rename it, as with playlists (a title is not destructive, so DELETE's uploaded-by narrowing does not apply). A track outside the caller's locker is 404, same as a missing one. The title is trimmed and must be non-empty. This route used to move a track between playlists; a body that still carries playlistId is refused with 410. Add or remove membership with POST and DELETE /playlists/{id}/tracks.",
+        "operationId": "renameTrack",
         "security": [
           {
             "bearerAuth": []
@@ -1895,13 +1916,79 @@
           }
         ],
         "responses": {
-          "410": {
-            "description": "Route retired.",
+          "200": {
+            "description": "Renamed track.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "track": {
+                      "$ref": "#/components/schemas/Track"
+                    }
+                  },
+                  "required": [
+                    "track"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or empty title.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such track in the caller's locker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Body carried playlistId: moving a track between playlists is retired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title"
+                ]
               }
             }
           }
@@ -2644,7 +2731,7 @@
                         "#6cf",
                         null
                       ],
-                      "description": "The playlist owner's accent colour, so a shared locker keeps its colours for listeners. Null when the owner never set one."
+                      "description": "The playlist's own accent, or the owner's account accent for a playlist predating per-playlist accents. Null when neither was ever set."
                     }
                   },
                   "required": [

@@ -161,6 +161,9 @@ export type Playlist = {
   ownerId: string;
   artworkKey: string | null;
   isPublic: boolean;
+  // One of ACCENTS in lib/theme.ts. Null on playlists predating per-playlist
+  // accents, which show the account accent instead.
+  accent?: string | null;
   createdAt: string;
   updatedAt: string;
   // ATTRIBUTION, not permission: whether the requesting session created this
@@ -220,7 +223,7 @@ export const playlists = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
-  update: (id: string, data: Partial<Pick<Playlist, "name" | "artworkKey" | "isPublic">>) =>
+  update: (id: string, data: Partial<Pick<Playlist, "name" | "artworkKey" | "isPublic" | "accent">>) =>
     request<{ playlist: Playlist }>(`/playlists/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -335,6 +338,11 @@ export const tracks = {
     const auth = t ? `?token=${encodeURIComponent(t)}` : "";
     return `${API_URL}/tracks/${id}/download${auth}`;
   },
+  rename: (id: string, title: string) =>
+    request<{ track: Track }>(`/tracks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),
   // One play, posted by lib/audio.ts when playback of a track starts.

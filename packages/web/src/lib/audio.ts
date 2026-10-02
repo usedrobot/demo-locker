@@ -27,6 +27,11 @@ export function getAudioElement(): HTMLAudioElement {
 let playlist: Track[] = [];
 let playlistId: string | null = null;
 let currentIndex = -1;
+// The loaded track itself, not just its slot. setPlaylist can hand over a
+// reordered (or entirely different) queue mid-play; the index is re-derived
+// from this so the display keeps naming what is actually coming out of the
+// speakers.
+let current: Track | null = null;
 let listeners: Listener[] = [];
 
 const VOLUME_KEY = "playerVolume";
@@ -55,7 +60,7 @@ let unreportedTrackId: string | null = null;
 
 function getState(): PlayerState {
   return {
-    track: currentIndex >= 0 ? playlist[currentIndex] : null,
+    track: current,
     playlistId,
     playing: !audio.paused,
     currentTime: audio.currentTime,
@@ -82,7 +87,7 @@ audio.addEventListener("playing", () => {
 });
 audio.addEventListener("ended", () => {
   // auto-advance
-  if (currentIndex < playlist.length - 1) {
+  if (currentIndex >= 0 && currentIndex < playlist.length - 1) {
     playIndex(currentIndex + 1);
   } else {
     notify();
@@ -93,6 +98,7 @@ function playIndex(index: number) {
   if (index < 0 || index >= playlist.length) return;
   currentIndex = index;
   const track = playlist[index];
+  current = track;
   if (!track.hasStream) return;
 
   audio.src = tracksApi.streamUrl(track.id);
@@ -116,6 +122,11 @@ export const player = {
   setPlaylist(tracks: Track[], id: string | null = null) {
     playlist = tracks;
     playlistId = id;
+    // Re-anchor on the loaded track. -1 when the new queue does not contain
+    // it: it keeps playing and stays named, and the queue ends with it.
+    currentIndex = current ? tracks.findIndex((t) => t.id === current!.id) : -1;
+    if (currentIndex >= 0) current = tracks[currentIndex];
+    notify();
   },
 
   play(trackId?: string) {
@@ -161,12 +172,23 @@ export const player = {
     notify();
   },
 
+  // Merge changed fields (e.g. a new title) into a track wherever the queue or
+  // the loaded slot holds it, without touching playback. Merged rather than
+  // replaced: a playlist queue's copy carries per-playlist fields (position,
+  // plays) that the caller's copy may not.
+  updateTrack(id: string, changes: Partial<Track>) {
+    playlist = playlist.map((t) => (t.id === id ? { ...t, ...changes } : t));
+    if (current?.id === id) current = { ...current, ...changes };
+    notify();
+  },
+
   // Stop playback and unload the current track (e.g. when it's deleted).
   clear() {
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
     currentIndex = -1;
+    current = null;
     unreportedTrackId = null;
     notify();
   },

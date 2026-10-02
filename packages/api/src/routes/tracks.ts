@@ -304,12 +304,51 @@ tracksRouter.get("/:id/download", async (c) => {
   });
 });
 
-// Retired by the playlist_tracks migration. A track no longer has one
-// playlist to move between; membership is added and removed per playlist via
-// POST/DELETE /playlists/:id/tracks. 410 rather than 404 so a stale web bundle
-// fails with a message instead of looking like a missing track.
+// Rename a track. Body: { title }. Any member of the track's locker may
+// rename it, as with playlists — a title is not destructive, so the
+// uploaded-by narrowing that guards DELETE does not apply.
+//
+// The route used to move a track between playlists, retired by the
+// playlist_tracks migration: membership is added and removed per playlist via
+// POST/DELETE /playlists/:id/tracks. A body that still carries playlistId gets
+// 410 rather than a silent no-op, so a stale web bundle fails with a message.
 tracksRouter.patch("/:id", requireAuth, async (c) => {
-  return c.json({ error: "moved: use POST/DELETE /playlists/:id/tracks" }, 410);
+  const body = (await c.req.json().catch(() => null)) as { title?: unknown; playlistId?: unknown } | null;
+  if (body && "playlistId" in body) {
+    return c.json({ error: "moved: use POST/DELETE /playlists/:id/tracks" }, 410);
+  }
+  const title = typeof body?.title === "string" ? body.title.trim() : "";
+  if (!title) return c.json({ error: "title required" }, 400);
+
+  const trackId = c.req.param("id");
+  const db = getDb(c.env.DB);
+  const user = c.get("user");
+  const lockerId = lockerIdOf(user);
+
+  const [track] = await db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .limit(1);
+  // Wrong locker entirely — non-enumerable, same 404 a missing row gets.
+  if (!track || track.ownerId !== lockerId) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  const [updated] = await db
+    .update(tracks)
+    .set({ title })
+    .where(eq(tracks.id, trackId))
+    .returning();
+  const names = await resolveDisplayNames(db, user.id, lockerId, [updated.uploadedBy]);
+  const membership = await playlistIdsForTracks(db, [updated.id]);
+  const playCounts = await playCountsForTracks(db, [updated.id]);
+  return c.json({
+    track: publicTrack(updated, user.id, names, {
+      playlistIds: membership.get(updated.id) ?? [],
+      plays: playCounts.get(updated.id) ?? 0,
+    }),
+  });
 });
 
 // Delete a track. The locker owner may delete anything in their locker; a

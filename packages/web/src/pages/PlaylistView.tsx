@@ -356,7 +356,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
           ) : (
             <AsciiText text={playlist.name} />
           )}
-          <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.4rem" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem 0.75rem", marginTop: "0.4rem" }}>
             {canManage && !renaming && (
               <button
                 onClick={() => {
@@ -380,6 +380,15 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
                 [{playlist.isPublic ? "make private" : "make public"}]
               </button>
             )}
+            {canManage && (
+              <button
+                onClick={() => (showAddTracks ? setShowAddTracks(false) : openAddTracks())}
+                aria-expanded={showAddTracks}
+                style={{ ...linkStyle, color: "var(--accent)" }}
+              >
+                [+ add tracks]
+              </button>
+            )}
           </div>
           {renameError && (
             <div style={{ color: "#f44", fontSize: "12px" }}>{renameError}</div>
@@ -390,6 +399,36 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
           onUpdated={(p) => setPlaylist(p)}
         />
       </div>
+
+      {showAddTracks && (
+        <div style={{ borderTop: "1px solid var(--border)", marginBottom: "1rem" }}>
+          {libraryTracks.length === 0 && (
+            <div style={{ color: "var(--fg-dim)", padding: "0.75rem 0", fontSize: "12px" }}>
+              every track in your library is already in this playlist — upload from the main page
+            </div>
+          )}
+          {libraryTracks.map((t) => (
+            <div
+              key={t.id}
+              style={{
+                padding: "0.5rem 0",
+                borderBottom: "1px solid var(--border)",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem",
+              }}
+            >
+              <span style={{ flex: 1 }}>{t.title}</span>
+              <button
+                onClick={() => addTrack(t.id)}
+                style={{ ...linkStyle, color: "var(--accent)" }}
+              >
+                [+ add]
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
         <TrackList
@@ -491,48 +530,7 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
 
       {/* Sharing */}
       <div style={{ marginTop: "2rem" }}>
-        <SharePanel
-          playlistId={playlistId}
-          extraAction={
-            canManage ? (
-              <button
-                onClick={() => (showAddTracks ? setShowAddTracks(false) : openAddTracks())}
-                className="tui-btn"
-              >
-                [+ add tracks]
-              </button>
-            ) : null
-          }
-        />
-        {showAddTracks && (
-          <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
-            {libraryTracks.length === 0 && (
-              <div style={{ color: "var(--fg-dim)", padding: "0.75rem 0", fontSize: "12px" }}>
-                every track in your library is already in this playlist — upload from the main page
-              </div>
-            )}
-            {libraryTracks.map((t) => (
-              <div
-                key={t.id}
-                style={{
-                  padding: "0.5rem 0",
-                  borderBottom: "1px solid var(--border)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.75rem",
-                }}
-              >
-                <span style={{ flex: 1 }}>{t.title}</span>
-                <button
-                  onClick={() => addTrack(t.id)}
-                  style={{ ...linkStyle, color: "var(--accent)" }}
-                >
-                  [+ add]
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <SharePanel playlistId={playlistId} />
       </div>
 
       {/* Playlist-level comments */}

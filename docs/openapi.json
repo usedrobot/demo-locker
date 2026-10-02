@@ -1874,10 +1874,9 @@
     },
     "/tracks/{id}": {
       "patch": {
-        "summary": "Retired: moving a track between playlists",
-        "description": "Always 410. A track no longer belongs to one playlist. Add or remove membership with POST and DELETE /playlists/{id}/tracks.",
-        "operationId": "moveTrackRetired",
-        "deprecated": true,
+        "summary": "Rename a track",
+        "description": "Requires a session in the track's locker: the owner or any of their collaborators may rename it, as with playlists (a title is not destructive, so DELETE's uploaded-by narrowing does not apply). A track outside the caller's locker is 404, same as a missing one. The title is trimmed and must be non-empty. This route used to move a track between playlists; a body that still carries playlistId is refused with 410. Add or remove membership with POST and DELETE /playlists/{id}/tracks.",
+        "operationId": "renameTrack",
         "security": [
           {
             "bearerAuth": []
@@ -1895,13 +1894,79 @@
           }
         ],
         "responses": {
-          "410": {
-            "description": "Route retired.",
+          "200": {
+            "description": "Renamed track.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "track": {
+                      "$ref": "#/components/schemas/Track"
+                    }
+                  },
+                  "required": [
+                    "track"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or empty title.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such track in the caller's locker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Body carried playlistId: moving a track between playlists is retired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title"
+                ]
               }
             }
           }

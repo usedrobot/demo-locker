@@ -279,3 +279,39 @@ describe("public and comments through the join table", () => {
     expect(body.tracks.map((t) => t.position)).toEqual(body.tracks.map((_, i) => i));
   });
 });
+
+describe("renaming a track", () => {
+  function patch(id: string, token: string, body: unknown) {
+    return app.request(
+      `/tracks/${id}`,
+      { method: "PATCH", headers: { ...auth(token), "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      env
+    );
+  }
+
+  it("renames, trims, and the library shows the new title", async () => {
+    const t = await seedTrack(db, { ownerId, title: "old name", playlistIds: [playlistA] });
+    const res = await patch(t.id, ownerToken, { title: "  new name  " });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { track: { id: string; title: string; playlistIds: string[] } };
+    expect(body.track).toMatchObject({ id: t.id, title: "new name", playlistIds: [playlistA] });
+    const lib = (await (await app.request(`/tracks`, { headers: auth(ownerToken) }, env)).json()) as {
+      tracks: { id: string; title: string }[];
+    };
+    expect(lib.tracks.find((x) => x.id === t.id)!.title).toBe("new name");
+  });
+
+  it("refuses an empty title", async () => {
+    expect((await patch(libraryOnly, ownerToken, { title: "   " })).status).toBe(400);
+    expect((await patch(libraryOnly, ownerToken, {})).status).toBe(400);
+  });
+
+  it("404s a stranger and leaves the title alone", async () => {
+    const t = await seedTrack(db, { ownerId, title: "keep me" });
+    expect((await patch(t.id, strangerToken, { title: "pwned" })).status).toBe(404);
+    const lib = (await (await app.request(`/tracks`, { headers: auth(ownerToken) }, env)).json()) as {
+      tracks: { id: string; title: string }[];
+    };
+    expect(lib.tracks.find((x) => x.id === t.id)!.title).toBe("keep me");
+  });
+});

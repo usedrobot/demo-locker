@@ -108,3 +108,36 @@ describe("volume", () => {
     expect(seen).toContain(0.25);
   });
 });
+
+describe("queue replaced mid-play", () => {
+  it("keeps naming the playing track after a reorder, and advances from its new slot", () => {
+    player.setPlaylist([track("a"), track("b"), track("c")], "pl-1");
+    player.play("a");
+    // Drag the playing track to the end, as PlaylistView.handleReorder does.
+    player.setPlaylist([track("b"), track("c"), track("a")], "pl-1");
+    expect(player.getState().track?.id).toBe("a");
+    player.prev();
+    expect(player.getState().track?.id).toBe("c");
+  });
+
+  it("keeps naming the playing track when the new queue does not contain it", () => {
+    player.setPlaylist([track("a"), track("b")], "pl-1");
+    player.play("a");
+    player.setPlaylist([track("x"), track("y")], null);
+    expect(player.getState().track?.id).toBe("a");
+    // The old queue is gone: reaching the end does not jump into the new one.
+    getAudioElement().dispatchEvent(new Event("ended"));
+    expect(player.getState().track?.id).toBe("a");
+  });
+});
+
+describe("updateTrack", () => {
+  it("renames the loaded track in place without restarting it", () => {
+    player.setPlaylist([track("a"), track("b")], "pl-1");
+    player.play("a");
+    recordPlay.mockClear();
+    player.updateTrack("a", { title: "Renamed" });
+    expect(player.getState().track).toMatchObject({ id: "a", title: "Renamed" });
+    expect(recordPlay).not.toHaveBeenCalled();
+  });
+});

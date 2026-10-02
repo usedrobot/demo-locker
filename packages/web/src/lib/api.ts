@@ -335,6 +335,11 @@ export const tracks = {
     const auth = t ? `?token=${encodeURIComponent(t)}` : "";
     return `${API_URL}/tracks/${id}/download${auth}`;
   },
+  rename: (id: string, title: string) =>
+    request<{ track: Track }>(`/tracks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
   delete: (id: string) =>
     request(`/tracks/${id}`, { method: "DELETE" }),
   // One play, posted by lib/audio.ts when playback of a track starts.

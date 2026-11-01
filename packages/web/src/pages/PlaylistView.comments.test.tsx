@@ -178,7 +178,7 @@ describe("who may moderate comments in PlaylistView", () => {
     await flush();
 
     const row = container.querySelector<HTMLElement>(
-      'div[title="Click to play · Drag to reorder"]'
+      'div[data-track-row]'
     );
     expect(row).not.toBeNull();
     act(() => row!.click());

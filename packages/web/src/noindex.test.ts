@@ -6,19 +6,15 @@
 // Do NOT "fix" indexing with a robots.txt Disallow: a crawler that may not
 // fetch the page never sees the noindex, and the bare URL stays listed.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
-const root = resolve(__dirname, "..");
+import html from "../index.html?raw";
+import headers from "../public/_headers?raw";
 
 describe("search engines are told to stay out", () => {
   it("index.html carries a noindex robots meta tag", () => {
-    const html = readFileSync(resolve(root, "index.html"), "utf8");
     expect(html).toMatch(/<meta\s+name="robots"\s+content="noindex, nofollow"\s*\/?>/);
   });
 
   it("public/_headers sends X-Robots-Tag: noindex on every path", () => {
-    const headers = readFileSync(resolve(root, "public/_headers"), "utf8");
     expect(headers).toMatch(/^\/\*\n\s+X-Robots-Tag: noindex, nofollow$/m);
   });
 });

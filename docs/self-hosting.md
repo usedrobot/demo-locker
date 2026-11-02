@@ -10,6 +10,10 @@ any S3-compatible bucket. If you just want your music online without
 building from source, use the standalone image and see
 [Host Your Music](host-your-music.md) instead.
 
+**You're running the server, so updates are on you:** Demo Locker releases,
+your OS's security patches (and the reboot they need), and HTTPS in front of
+it. See [Keeping it up to date](host-your-music.md#keeping-it-up-to-date).
+
 ## Requirements
 
 - **Docker** + **Docker Compose** (recommended)

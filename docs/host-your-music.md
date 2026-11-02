@@ -201,6 +201,22 @@ directly) in front of it, or a hosted Demo Locker plan we manage for you
 
 ## Keeping it up to date
 
+**If you host it yourself, keeping it safe is your job.** On Paths 1 and 2
+(and the platform-as-a-service option) you're running the server, so you're
+responsible for:
+
+- **Demo Locker itself.** It doesn't update on its own. Security fixes only
+  reach your copy when you pull the new version.
+- **The machine under it.** Install your operating system's security updates,
+  and restart when they ask you to. A new Linux kernel doesn't protect you
+  until the machine reboots.
+- **What's open to the internet.** Serve it over HTTPS (Caddy, or a Cloudflare
+  tunnel or proxy, as above), and don't leave other ports open that you don't
+  need.
+
+On Path 3, Cloudflare looks after the servers, and keeping Demo Locker itself
+current is the only part left to you.
+
 New versions ship regularly. Updating keeps your tracks, playlists and
 comments — the data lives in a volume that the update doesn't touch. The
 commands for each way of running it are in [Upgrading](upgrading.md). Back up

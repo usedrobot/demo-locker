@@ -1,4 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode, type CSSProperties } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type Announcements,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
+import { CSS } from "@dnd-kit/utilities";
 import type { Track } from "../lib/api";
 import { tracks as tracksApi, playlists as playlistsApi } from "../lib/api";
 import { player } from "../lib/audio";
@@ -7,7 +26,9 @@ import PlayCount from "./PlayCount";
 
 type Props = {
   tracks: Track[];
-  onReorder: (trackIds: string[]) => void;
+  // Called ONCE per drag, on drop, with the final order. Omit it for a reader
+  // who cannot reorder (a listen-only share link): the rows then have no handle.
+  onReorder?: (trackIds: string[]) => void;
   // Removes the track from THIS playlist. The track and its files survive and
   // stay in every other playlist and in the library. Named onRemove, not
   // onDelete, because it used to call DELETE /tracks/:id while every label
@@ -58,8 +79,83 @@ function ProgressBar({ trackId }: { trackId: string }) {
   );
 }
 
+// One sortable row. The drag starts from the handle only — the old version made
+// the whole row draggable, so click-to-play, text selection and drag all fought
+// over the same gesture. Other rows slide aside while dragging (transforms
+// only); nothing is reordered until the drop.
+function SortableRow({
+  id,
+  index,
+  canReorder,
+  title,
+  onClick,
+  style,
+  children,
+}: {
+  id: string;
+  index: number;
+  canReorder: boolean;
+  title: string;
+  onClick: () => void;
+  style: CSSProperties;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id, disabled: !canReorder });
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-track-row={index}
+      onClick={onClick}
+      title="Click to play"
+      style={{
+        ...style,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        position: "relative",
+        zIndex: isDragging ? 1 : undefined,
+        background: isDragging ? "var(--bg)" : style.background,
+        outline: isDragging ? "1px solid var(--accent)" : undefined,
+        boxShadow: isDragging ? "0 6px 20px rgba(0,0,0,0.6)" : undefined,
+      }}
+    >
+      {canReorder ? (
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label={`Reorder ${title}`}
+          title="Drag to reorder"
+          onClick={(e) => e.stopPropagation()}
+          className="drag-handle"
+          style={{
+            background: "none",
+            border: "none",
+            color: "var(--fg-dim)",
+            fontFamily: "var(--font)",
+            fontSize: "14px",
+            lineHeight: 1,
+            // A real target, not an 11px glyph. touch-action:none on the
+            // handle alone, so a finger elsewhere on the row still scrolls.
+            padding: "0.4rem 0.35rem",
+            margin: "-0.4rem 0 -0.4rem -0.1rem",
+            cursor: isDragging ? "grabbing" : "grab",
+            touchAction: "none",
+            userSelect: "none",
+          }}
+        >
+          ⠿
+        </button>
+      ) : null}
+      {children}
+    </div>
+  );
+}
+
 export default function TrackList({ tracks, playlistId, onReorder, onRemove, selectedId, onSelect }: Props) {
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const canReorder = !!onReorder;
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   // A refused detach used to be an unhandled rejection — the row simply stayed
   // put with nothing on screen.
@@ -68,24 +164,34 @@ export default function TrackList({ tracks, playlistId, onReorder, onRemove, sel
 
   useEffect(() => player.subscribe(setPlayerState), []);
 
-  function handleDragStart(index: number) {
-    setDragIndex(index);
+  const sensors = useSensors(
+    // A few px of travel before a drag begins, so a tap on the handle is not a
+    // drag. Pointer events cover mouse, pen and touch alike.
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  // The list is reordered once, here, from the order at drag START. The old
+  // version rewrote the list (and fired a PATCH) on every row crossed; those
+  // requests raced and the server could keep an intermediate order.
+  function handleDragEnd({ active, over }: DragEndEvent) {
+    if (!onReorder || !over || active.id === over.id) return;
+    const from = tracks.findIndex((t) => t.id === active.id);
+    const to = tracks.findIndex((t) => t.id === over.id);
+    if (from < 0 || to < 0) return;
+    onReorder(arrayMove(tracks, from, to).map((t) => t.id));
   }
 
-  function handleDragOver(e: React.DragEvent, index: number) {
-    e.preventDefault();
-    if (dragIndex === null || dragIndex === index) return;
-
-    const reordered = [...tracks];
-    const [moved] = reordered.splice(dragIndex, 1);
-    reordered.splice(index, 0, moved);
-    onReorder(reordered.map((t) => t.id));
-    setDragIndex(index);
-  }
-
-  function handleDragEnd() {
-    setDragIndex(null);
-  }
+  const titleOf = (id: string | number) => tracks.find((t) => t.id === id)?.title ?? "track";
+  const positionOf = (id: string | number) => tracks.findIndex((t) => t.id === id) + 1;
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `Picked up ${titleOf(active.id)}, position ${positionOf(active.id)} of ${tracks.length}.`,
+    onDragOver: ({ active, over }) =>
+      over ? `${titleOf(active.id)} is over position ${positionOf(over.id)} of ${tracks.length}.` : undefined,
+    onDragEnd: ({ active, over }) =>
+      over ? `${titleOf(active.id)} dropped at position ${positionOf(over.id)} of ${tracks.length}.` : `${titleOf(active.id)} dropped.`,
+    onDragCancel: ({ active }) => `Reorder cancelled. ${titleOf(active.id)} returned to its place.`,
+  };
 
   async function handleRemove(e: React.MouseEvent, trackId: string) {
     e.stopPropagation();
@@ -127,42 +233,39 @@ export default function TrackList({ tracks, playlistId, onReorder, onRemove, sel
           {removeError}
         </div>
       )}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+        onDragEnd={handleDragEnd}
+        accessibility={{ announcements }}
+      >
+      <SortableContext items={tracks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
       {tracks.map((track, i) => {
         const isPlaying = playerState.track?.id === track.id && playerState.playing;
         const isSelected = selectedId === track.id;
 
         return (
-          <div
+          <SortableRow
             key={track.id}
-            draggable
-            onDragStart={() => handleDragStart(i)}
-            onDragOver={(e) => handleDragOver(e, i)}
-            onDragEnd={handleDragEnd}
+            id={track.id}
+            index={i}
+            canReorder={canReorder}
+            title={track.title}
             onClick={() => {
               onSelect?.(track.id);
               player.play(track.id);
             }}
-            title="Click to play · Drag to reorder"
             style={{
               display: "flex",
               alignItems: "center",
               gap: "0.75rem",
               padding: "0.5rem 0.25rem",
               borderBottom: "1px solid var(--border)",
-              cursor: "grab",
-              opacity: dragIndex === i ? 0.4 : 1,
+              cursor: "pointer",
               background: isSelected ? "rgba(68,170,255,0.06)" : "transparent",
-              position: "relative",
             }}
           >
-            {/* Drag handle */}
-            <span
-              style={{ color: "var(--fg-dim)", fontSize: "11px", cursor: "grab", userSelect: "none" }}
-              title="Drag to reorder"
-            >
-              ⠿
-            </span>
-
             {/* Track number */}
             <span style={{ color: "var(--fg-dim)", width: "2ch", textAlign: "right", fontSize: "12px" }}>
               {String(i + 1).padStart(2, "0")}
@@ -267,9 +370,11 @@ export default function TrackList({ tracks, playlistId, onReorder, onRemove, sel
 
             {/* Progress bar for playing track */}
             <ProgressBar trackId={track.id} />
-          </div>
+          </SortableRow>
         );
       })}
+      </SortableContext>
+      </DndContext>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 import { player } from "../lib/audio";
 import { previewAccent } from "../lib/theme";
 import TrackList from "../components/TrackList";
+import DownloadAllButton from "../components/DownloadAllButton";
 import Comments from "../components/Comments";
 function PoweredBy() {
   return (
@@ -28,6 +29,7 @@ export default function Invite({ token }: Props) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [permission, setPermission] = useState<string>("listen");
   const [error, setError] = useState("");
+  const [reorderError, setReorderError] = useState("");
   const [playerState, setPlayerState] = useState(player.getState());
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
 
@@ -68,9 +70,19 @@ export default function Invite({ token }: Props) {
     const reordered = trackIds
       .map((id) => tracks.find((t) => t.id === id)!)
       .filter(Boolean);
+    const before = tracks;
     setTracks(reordered);
     player.setPlaylist(reordered, playlist.id);
-    await playlistsApi.reorder(playlist.id, trackIds);
+    try {
+      await playlistsApi.reorder(playlist.id, trackIds);
+      setReorderError("");
+    } catch (err) {
+      // Put it back, as PlaylistView does. This used to be an unhandled
+      // rejection that left the page showing an order the server never took.
+      setTracks(before);
+      player.setPlaylist(before, playlist.id);
+      setReorderError(err instanceof Error ? err.message : "couldn't reorder those tracks");
+    }
   }
 
   // adjust state during render to mirror the currently-playing track
@@ -114,13 +126,21 @@ export default function Invite({ token }: Props) {
             shared playlist · {canReorder ? "listen + re-arrange" : "listen"}
           </div>
           <AsciiText text={playlist.name} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem 0.75rem", marginTop: "0.4rem" }}>
+            <DownloadAllButton tracks={tracks} playlistName={playlist.name} />
+          </div>
         </div>
       </div>
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
+        {reorderError && (
+          <div role="alert" style={{ color: "#f44", fontSize: "12px", padding: "0.5rem 0" }}>
+            {reorderError}
+          </div>
+        )}
         <TrackList
           tracks={tracks}
-          onReorder={canReorder ? handleReorder : () => {}}
+          onReorder={canReorder ? handleReorder : undefined}
           selectedId={selectedTrackId}
           onSelect={setSelectedTrackId}
         />

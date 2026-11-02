@@ -9,6 +9,7 @@ import {
 import { player } from "../lib/audio";
 import { previewAccent } from "../lib/theme";
 import TrackList from "../components/TrackList";
+import DownloadAllButton from "../components/DownloadAllButton";
 import Comments from "../components/Comments";
 function PoweredBy() {
   return (
@@ -125,6 +126,9 @@ export default function Invite({ token }: Props) {
             shared playlist · {canReorder ? "listen + re-arrange" : "listen"}
           </div>
           <AsciiText text={playlist.name} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem 0.75rem", marginTop: "0.4rem" }}>
+            <DownloadAllButton tracks={tracks} playlistName={playlist.name} />
+          </div>
         </div>
       </div>
 

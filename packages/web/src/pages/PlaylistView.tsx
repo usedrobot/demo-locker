@@ -10,6 +10,7 @@ import {
 import { player } from "../lib/audio";
 import { getAccent, nextAccent, previewAccent } from "../lib/theme";
 import TrackList from "../components/TrackList";
+import DownloadAllButton from "../components/DownloadAllButton";
 import Comments from "../components/Comments";
 import SharePanel from "../components/SharePanel";
 import AsciiText from "../components/AsciiText";
@@ -413,6 +414,8 @@ export default function PlaylistView({ playlistId, onBack }: Props) {
                 [+ add tracks]
               </button>
             )}
+            <DownloadAllButton tracks={tracks} playlistName={playlist.name} />
+
             {canManage && (
               <button
                 onClick={cycleAccent}
